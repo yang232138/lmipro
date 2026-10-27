@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Xiaomi Redmi K30 Pro / K30 Pro Zoom Edition (lmi / lmipro, M2001J11C),
+// Qualcomm SM8250 (kona).
+//
+// CPU topology, GICv3, timer rate and the UFS/GPU/QUPv3 register ranges come
+// from the shared UniXNU-sm8250-common dts/sm8250.dtsi, which follows
+// arch/arm64/boot/dts/qcom/sm8250.dtsi in Linux 6.6.
+//
+// Board memory, reserved regions, panel and peripheral wiring belong in this
+// file and are read from the handset's own live device tree. The zero ranges
+// below are the template placeholders the porting guide prescribes; they are not
+// hardware observations and the image cannot boot until they carry real values.
+
+/dts-v1/;
+/include/ "sm8250.dtsi"
+
+/ {
+    model = "Xiaomi Redmi K30 Pro";
+    compatible = "xiaomi,lmi", "qcom,sm8250";
+
+    // REQUIRED: base and size of the first DRAM bank, from /memory in the
+    // handset's live device tree. The ADT handoff describes one contiguous range;
+    // additional banks stay disabled until it can describe them.
+    memory@80000000 {
+        device_type = "memory";
+        reg = <0x0 0x80000000 0x0 0x0>;
+    };
+
+    reserved-memory {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+
+        // The framebuffer the bootloader leaves behind for UEFI. The base is the
+        // display region the lmi UEFI work reports; REQUIRED: size from the same
+        // observation (the bootloader's /reserved-memory cont_splash_region).
+        framebuffer: framebuffer@9c000000 {
+            reg = <0x0 0x9c000000 0x0 0x0>;
+            label = "cont_splash_region";
+            no-map;
+        };
+    };
+};
+
+// Kryo 585: four Cortex-A55 cores in the "E" cluster and four Cortex-A77 cores in
+// the "P" cluster. The SoC's native-smp-type-clusters.patch derives the processor
+// sets from this property, and its topology parser needs it on every enabled CPU:
+// without a cluster type all cores land in one cluster and the Edge scheduler has
+// nothing to migrate between.
+&cpu0 { unixnu,cluster-type = "E"; };
+&cpu1 { unixnu,cluster-type = "E"; };
+&cpu2 { unixnu,cluster-type = "E"; };
+&cpu3 { unixnu,cluster-type = "E"; };
+&cpu4 { unixnu,cluster-type = "P"; };
+&cpu5 { unixnu,cluster-type = "P"; };
+&cpu6 { unixnu,cluster-type = "P"; };
+&cpu7 { unixnu,cluster-type = "P"; };

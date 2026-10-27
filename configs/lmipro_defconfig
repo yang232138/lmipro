@@ -1,0 +1,15 @@
+# lmipro_defconfig: board-level kernel configuration.
+#
+# The arch, SoC and OS fragments listed in board.toml [kernel] config_fragments
+# are applied first; every CONFIG_XNU_<NAME> here becomes XNU_<NAME> and overrides
+# them. Only what differs from the shared layers belongs in this file.
+#
+# The shared layers already set the generic path this port starts from:
+#   CONFIG_XNU_ARM_DT_PLATFORM, CONFIG_XNU_ARMCPU, CONFIG_XNU_NATIVE_ARCH_TIMER,
+#   CONFIG_XNU_NATIVE_PAN, CONFIG_XNU_SOURCE_CORECRYPTO14, CONFIG_XNU_SOURCE_PTHREAD,
+#   CONFIG_XNU_BUILD_ARCHIVES and CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked".
+#
+# No board driver is settled yet. Each entry below turns on only when its component
+# is selected in board.toml and its hardware input exists (see porting.toml).
+# CONFIG_XNU_NATIVE_UFS is not set
+# CONFIG_XNU_NATIVE_ADRENO is not set

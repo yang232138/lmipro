@@ -1,0 +1,10 @@
+# Shared SM8250 / SM8250-AC (kona) support: CPU topology, GICv3, timer,
+# UFS/GPU/QUPv3 register ranges, the kernel config fragment and the two SMP
+# patches. Pinned to the commit reviewed for this port (2026-10-27), which is the
+# first revision that carries native-smp-secondary.patch and
+# native-smp-type-clusters.patch.
+[[source]]
+name = "sm8250"
+kind = "soc"
+git = "https://github.com/FFT-infra/UniXNU-sm8250-common"
+commit = "a6e7e36caab58f5b9a5625dbdb8da2bf290fa5cc"

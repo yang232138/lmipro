@@ -1,0 +1,402 @@
+schema_version = 1
+
+[device]
+name = "lmipro"
+soc = "SM8250"
+os_profile = "ipados-17.7.11-21H461"
+summary = "Xiaomi Redmi K30 Pro / K30 Pro Zoom Edition (lmi / lmipro, SM8250). Structure and shared support are in place; no hardware input has been read from the handset and no image has been built."
+
+[[area]]
+id = "configuration"
+status = "planned"
+components = ["ArmDTPlatform"]
+paths = ["board.toml", "feeds.toml", "configs/**", "dts/**", ".github/**", ".gitignore", "local.toml.example"]
+inputs = [
+  "SoC support: UniXNU-sm8250-common at a6e7e36caab58f5b9a5625dbdb8da2bf290fa5cc (Kryo 585 topology, GICv3, 19.2 MHz timer, UFS/GPU/QUPv3 ranges, config fragment, two SMP patches).",
+  "OS support: the ipados-17.7.11-21H461 profile (XNU 10063.141.1; iPad7,1 donor, build 21H461, j120ap).",
+  "Board identity: Xiaomi Redmi K30 Pro / K30 Pro Zoom Edition, model M2001J11C, Qualcomm SM8250 (kona), 8x Kryo 585, Adreno 650, 6.67-inch 1080x2400 AMOLED, FocalTech FT3518 touch, QCA6390 Wi-Fi.",
+]
+configuration = [
+  "board.toml: name lmipro, soc SM8250, soc_source sm8250, os_profile ipados-17.7.11-21H461, kit lmipro.",
+  "Components: ArmDTPlatform, ArmCpu, SoftwareAES, XnuPrelink, DarwinBoot. The device list repeats the ARM64 profile entries because a device array replaces the inherited array.",
+  "kernel.config_fragments: arch:configs/common.config, soc:configs/sm8250.config, os:configs/ipados.config. patch_series: arch, soc, os and device layers in that order.",
+]
+procedure = [
+  "python unixnu defconfig lmipro_defconfig -D ../UniXNU-lmipro",
+  "python unixnu fetch -D ../UniXNU-lmipro",
+  "python unixnu status --json -D ../UniXNU-lmipro",
+]
+findings = [
+  "The SoC pin a6e7e36 is the first revision that carries native-smp-secondary.patch and native-smp-type-clusters.patch; the cluster-type properties in dts/lmipro.dts exist because the second patch derives processor sets from them.",
+  "The ARM64 profile already selects ArmDTPlatform, ArmCpu, SoftwareAES and XnuPrelink and supplies kernel.archives, so the device file adds only DarwinBoot, the SoC pin and the board layers.",
+]
+completion = [
+  "unixnu status resolves the arch, SoC, OS and device layers without an error and reports the intended patch order and component sources.",
+  "unixnu.lock pins every source and the porting-record checker accepts this file.",
+]
+limits = [
+  "No hardware input has been read from the handset; the device tree still carries zero memory ranges.",
+  "The sources have not been fetched in this environment, so unixnu.lock does not exist yet and status cannot run here.",
+]
+next_action = [
+  "Run defconfig, fetch and status on a host with GitHub access, commit the generated unixnu.lock, then read the handset device tree to fill dts/lmipro.dts.",
+]
+evidence = []
+
+[[area]]
+id = "firmware"
+status = "planned"
+components = []
+paths = ["board.toml", "proprietary-files.txt", "scripts/**", "package/**"]
+inputs = [
+  "Mu-Silicium lmi platform source: the public lmi UEFI work documents a Platforms/.../lmiPkg package, a BootShim with an ARM64 kernel header, a BootManager entry and the patched Qualcomm DXE modules from the handset XBL.",
+  "Firmware binaries from this handset's own XBL and vendor partitions; the published overlay does not ship them.",
+]
+configuration = [
+  "board.toml [firmware]: config lmipro, DSC Platforms/Xiaomi/lmiproPkg/lmipro.dsc, FV Build/lmiproPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd.",
+  "board.toml [firmware.defines]: ENABLE_SECUREBOOT 0, DEVICE_MODEL 0, MEMORY_PROTECTION TRUE, SHIP_MODE FALSE, BUILDID_STRING lmipro-research.",
+]
+procedure = [
+  "Create uefi-lmipro with Platforms/Xiaomi/lmiproPkg derived from the lmi overlay, add UniXNURamDiskDxe, DiskIoDxe and FAT support to its DSC/FDF, then run unixnu build firmware --uefi ../uefi-lmipro.",
+  "Add the firmware log exporter (QR code) from the log-capture guide before the first boot.",
+]
+findings = [
+  "The lmi UEFI work reports the framebuffer at 0x9c000000 and a historic 3 MiB FD placed at 0x9fc00000; those are the only board memory facts recorded so far.",
+  "uefi-lmipro does not exist, so the DSC, FDF and the firmware volume paths in board.toml point at a repository that still has to be created.",
+]
+completion = [
+  "The firmware volume builds, enters UniXNU, publishes the framebuffer and preserves the documented reserved ranges.",
+  "The UniXNU menu and DarwinBoot handoff work on the handset with the firmware log exporter enabled.",
+]
+limits = [
+  "No DSC, FDF, Binaries or patched XBL are in place; no firmware has been built or run.",
+]
+next_action = [
+  "Derive Platforms/Xiaomi/lmiproPkg and the BootShim/BootManager entries from the lmi overlay, then record the FD size and load address.",
+]
+evidence = []
+
+[[area]]
+id = "cpu"
+status = "planned"
+components = ["ArmCpu"]
+paths = ["dts/**", "configs/**"]
+inputs = [
+  "Kryo 585: cpu0-3 are Cortex-A55 (MPIDR Aff0 0x0-0x300) and cpu4-7 are Cortex-A77 (0x400-0x700), as declared in the shared sm8250.dtsi.",
+  "GICv3 distributor at 0x17a00000 and redistributors at 0x17a60000 with a 0x20000 stride, exported to the ADT as intc; architectural timer at 19.2 MHz; PSCI 1.0 over SMC.",
+]
+configuration = [
+  "dts/lmipro.dts sets unixnu,cluster-type = 'E' on cpu0-3 and 'P' on cpu4-7.",
+  "ArmCpu and ArmDTPlatform are selected; the arch fragment enables CONFIG_XNU_ARMCPU, CONFIG_XNU_ARM_DT_PLATFORM, CONFIG_XNU_NATIVE_ARCH_TIMER and CONFIG_XNU_NATIVE_PAN.",
+]
+procedure = [
+  "python unixnu build kernel -D ../UniXNU-lmipro, then build the payload and inspect the generated ADT for eight cpu nodes and their cluster-type values.",
+]
+findings = [
+  "Without a cluster type the SoC topology patch maps a P core to cluster index one while MAX_CPU_CLUSTERS was one, and the parser writes past cluster_phys_to_logical on the stack.",
+  "native-smp-secondary.patch is required because the reset vector otherwise masks MPIDR with 0xFF, which selects Aff0 = 0 for every kona core and hands every secondary the boot CPU's reset data.",
+]
+completion = [
+  "All eight CPUs reach their entry checkpoint, the timer runs on each CPU, and IPIs reach the secondary cores.",
+]
+limits = [
+  "Nothing has been compiled or run; the properties above are source facts from the SoC repository, not measurements.",
+]
+next_action = [
+  "Build the kernel and check the ADT cpu nodes before any handset attempt.",
+]
+evidence = []
+
+[[area]]
+id = "memory"
+status = "planned"
+components = []
+paths = ["dts/**", "board.toml"]
+inputs = [
+  "DRAM base 0x80000000 (SM8250 platform) and the size of the first bank, read from /memory in the handset's live device tree.",
+  "Reserved ranges: the bootloader framebuffer at 0x9c000000 from the lmi UEFI work; splash/dfps sizes and the remaining reservations are unread.",
+]
+configuration = [
+  "dts/lmipro.dts declares memory@80000000 and framebuffer@9c000000 with zero sizes as the guide's REQUIRED placeholders.",
+  "The ADT handoff accepts one contiguous DRAM range, so a single enabled memory node is kept; the two higher banks of this platform stay disabled until the handoff can describe them.",
+]
+procedure = [
+  "Dump /proc/device-tree/memory and /proc/device-tree/reserved-memory on the handset (or from a UEFI dump) and fill the two reg values.",
+]
+findings = [
+  "Both reg size cells are zero: the device tree compiles but the ADT describes no DRAM and the kernel would fail in arm_vm_init.",
+]
+completion = [
+  "The enabled memory range equals the handset's usable DRAM, every reserved region is excluded, and the kernel reaches arm_vm_init with a real DRAM size.",
+]
+limits = [
+  "No live device tree has been read for this repository; all memory values are unset.",
+]
+next_action = [
+  "Record the live /memory and /reserved-memory nodes, then fill the board DTS.",
+]
+evidence = []
+
+[[area]]
+id = "storage"
+status = "planned"
+components = []
+paths = ["board.toml", "dts/**", "configs/**", "drivers/**", "scripts/**"]
+inputs = [
+  "UFS host controller at 0x1d84000 and PHY at 0x1d87000 from the shared dtsi; QUPv3 wrapper 0 at 0x9c0000 for the serial engines.",
+  "The GPT of UFS LUN 0: the userdata entry (first and last LBA), the boot_a/boot_b size and the vendor partition that carries the firmware.",
+  "The UFS stream identifiers this SoC routes (0x0e0 and 0x4e0) and the driver's admission keys.",
+]
+configuration = [
+  "board.toml [userdata]: lba_bytes 4096, windows OS and Cryptex1,SystemOS; first_lba and last_lba stay zero until they are read from the handset.",
+  "CONFIG_XNU_NATIVE_UFS is not set and no storage component is selected.",
+]
+procedure = [
+  "sgdisk -p /dev/block/sda on the handset, record the userdata and boot entries, then select a storage component once its board inputs exist.",
+]
+findings = [
+  "ShengUfs is the catalog storage component, but its board inputs in the catalog are sheng's (SM8550) and nothing about them has been verified on lmipro.",
+  "Zero LBAs are deliberate: copying another phone's geometry would write the OS windows into the wrong range.",
+]
+completion = [
+  "SCSI capacity and GPT match the handset, the OS and SystemOS windows stay inside userdata, and the root volume mounts with launchd starting.",
+]
+limits = [
+  "No partition geometry, no storage component, no root path.",
+]
+next_action = [
+  "Read the GPT and record userdata and boot sizes before selecting a storage implementation.",
+]
+evidence = []
+
+[[area]]
+id = "display"
+status = "planned"
+components = []
+paths = ["package/**", "dts/**", "scripts/**"]
+inputs = [
+  "6.67-inch 1080x2400 AMOLED at 60 Hz; the lmi UEFI port keeps the panel as the bootloader initialized it and reports the framebuffer at 0x9c000000.",
+  "Panel timing, DSI lanes and backlight control are unread.",
+]
+configuration = [
+  "No display component is selected; the device tree only reserves the framebuffer range.",
+]
+procedure = [
+  "Build the firmware, read the GOP geometry and stride from the UniXNU menu, then select GopFramebuffer.",
+]
+findings = [
+  "The framebuffer base is the only display fact recorded; the resolution and stride reported by GOP still have to be captured.",
+]
+completion = [
+  "A known frame appears with the correct geometry and colors, then userland presents and the backlight is controlled.",
+]
+limits = [
+  "No display component, no panel data, no backlight service.",
+]
+next_action = [
+  "Record the GOP geometry and stride from the firmware menu.",
+]
+evidence = []
+
+[[area]]
+id = "input"
+status = "planned"
+components = []
+paths = ["package/**", "dts/**", "drivers/**", "scripts/**"]
+inputs = [
+  "FocalTech FT3518 touch controller on a QUPv3 GENI SPI serial engine; the public lmi UEFI/touch work identifies the part and its HID path.",
+  "Power and volume keys wired to the PMIC; the lmi UEFI work patches its ButtonsDxe so the power key maps to Enter.",
+]
+configuration = [
+  "No touch component and no board touch kit are in this repository.",
+]
+procedure = [
+  "Read the touch node from the handset DT (serial engine, address, GPIOs, interrupt), add a board kit, then select ShengHidInput.",
+]
+findings = [
+  "The catalog touch path is Novatek (ShengNovatekTouch); this board needs a FocalTech probe, so a board kit is required instead of a plain component selection.",
+]
+completion = [
+  "Touches map to the display, simultaneous contacts keep stable IDs, release events arrive, and buttons produce HID reports.",
+]
+limits = [
+  "No input code or device-tree node.",
+]
+next_action = [
+  "Record the touch bus, address, GPIOs and interrupt line, then write the board kit.",
+]
+evidence = []
+
+[[area]]
+id = "gpu"
+status = "planned"
+components = []
+paths = ["package/**", "dts/**", "scripts/**", "configs/**"]
+inputs = [
+  "Adreno 650 at 0x3d00000, GMU at 0x3d6a000 and the GPU SMMU at 0x3da0000 from the shared dtsi; the a650_gmu.bin firmware comes from the vendor partition.",
+]
+configuration = [
+  "CONFIG_XNU_NATIVE_ADRENO is not set; the shared fragment also leaves it off.",
+]
+procedure = [
+  "Build the Sm8250Platform kit (A650Gmu) and its host tests from the SoC repository, then select a GPU component once the A650 path exists in the catalog.",
+]
+findings = [
+  "The catalog GPU component is Adreno740 for SM8550; SM8250 instead ships the A650 GMU cold-start kit, so the GPU path here is SoC and board work, not a catalog selection.",
+]
+completion = [
+  "GPU submissions complete, mapping and fences are correct, and a known image renders through the selected Metal client.",
+]
+limits = [
+  "No GPU component, no firmware recorded, the A650 kit has not been built.",
+]
+next_action = [
+  "Build the A650 GMU kit tests, then wire A650Gmu to the board device tree.",
+]
+evidence = []
+
+[[area]]
+id = "network"
+status = "planned"
+components = []
+paths = ["package/**", "dts/**", "drivers/**", "scripts/**"]
+inputs = [
+  "QCA6390 Wi-Fi; the public lmi UEFI/touch/GPU work records QCA6390 platform adaptation as its remaining networking work.",
+]
+configuration = [
+  "No network component is selected.",
+]
+procedure = [
+  "Record the Wi-Fi transport (PCIe or MHI) and firmware files from the handset, then select a Wi-Fi component once one matches QCA6390.",
+]
+findings = [
+  "The catalog Wi-Fi component is Ath12kWifi (ath12k), which does not match QCA6390.",
+]
+completion = [
+  "Scanning, association, address configuration and sustained receive/transmit traffic pass.",
+]
+limits = [
+  "No radio code and no firmware recorded.",
+]
+next_action = [
+  "Record the QCA6390 firmware files and the transport node before choosing a driver.",
+]
+evidence = []
+
+[[area]]
+id = "audio"
+status = "planned"
+components = []
+paths = ["package/**", "dts/**", "scripts/**", "proprietary-files.txt"]
+inputs = [
+  "ADSP, CDSP and SLPI firmware from the vendor partition; GPR/GLink transport; the speaker and headset routes are unread.",
+]
+configuration = [
+  "No audio component is selected.",
+]
+procedure = [
+  "Extract the DSP firmware, record hashes in proprietary-files.txt, then select the DSP and audio components.",
+]
+findings = [
+  "Audio depends on firmware files that have not been extracted, so it stays behind the storage and firmware steps.",
+]
+completion = [
+  "Each declared route carries audio through playback or capture and handles start and stop.",
+]
+limits = [
+  "No firmware file recorded and no audio code.",
+]
+next_action = [
+  "Extract adsp, cdsp and slpi and record their hashes.",
+]
+evidence = []
+
+[[area]]
+id = "power"
+status = "planned"
+components = ["SoftwareAES"]
+paths = ["package/**", "dts/**", "configs/**", "scripts/**"]
+inputs = [
+  "PM8150-family PMICs, RPMh, the fuel gauge and the power/volume keys; none has been read from the handset.",
+  "SoftwareAES replaces the hardware crypto engine for the kernel path.",
+]
+configuration = [
+  "SoftwareAES is selected; CONFIG_XNU_NATIVE_AES is on through the arch fragment.",
+]
+procedure = [
+  "Add board PMIC, battery and RPMh services in package/ once their inputs exist, then record each vote and reading.",
+]
+findings = [
+  "No PMIC interaction is implemented; the power path is limited to the shared software crypto choice.",
+]
+completion = [
+  "Declared power controls and battery readings match observations, and each claimed sleep/resume transition restores its dependent peripherals.",
+]
+limits = [
+  "No power service, no battery reading, no RPMh interaction.",
+]
+next_action = [
+  "Record the PMIC model, the RPMh register base and the battery fuel gauge.",
+]
+evidence = []
+
+[[area]]
+id = "packaging"
+status = "planned"
+components = ["XnuPrelink", "DarwinBoot"]
+paths = ["board.toml", "patches/**", "package/**", "scripts/**"]
+inputs = [
+  "Boot image format: Android boot header, 4096-byte pages; boot_a/boot_b size unread.",
+  "Payload inputs: the kernel and its ADT, a trust cache bundle, a dense or packed Data seed, and the platform seed passed with --unique-chip-id.",
+  "The firmware volume must carry UniXNURamDiskDxe, DiskIoDxe and FAT support for the initrd payload.",
+]
+configuration = [
+  "board.toml [payload]: volume LMIPROESP, size_mib 192 (guide template value), loader firmware, kernel_args -v serial=3.",
+  "board.toml [payload.adt]: unique_chip_id required, so no seed is stored in the repository.",
+  "XnuPrelink and DarwinBoot are selected; the OS profile supplies the donor IPSW, prelink roots, early-security address and text fixups.",
+]
+procedure = [
+  "python unixnu build payload -D ../UniXNU-lmipro --unique-chip-id <hex> --trust-cache <bundle> --data-ramdisk <seed>",
+  "python unixnu bootimg -D ../UniXNU-lmipro --uefi ../uefi-lmipro --dtb <firmware.dtb>",
+]
+findings = [
+  "size_mib 192 is the guide's template value, not this handset's boot partition; flashing an oversized volume fails at the bootloader.",
+]
+completion = [
+  "Kernel and prelink succeed, the payload contains every declared input, and the boot image matches the bootloader format and size limit.",
+]
+limits = [
+  "Nothing has been built; the trust cache, Data seed and firmware volume are external inputs that are not in place.",
+]
+next_action = [
+  "Record the boot partition size, then build the payload and boot image once the device tree carries real memory ranges.",
+]
+evidence = []
+
+[[area]]
+id = "diagnostics"
+status = "planned"
+components = []
+paths = ["scripts/**", "package/**", "dts/**"]
+inputs = [
+  "No serial console is available through the SoC UART with the XNU backend; the lmi UEFI work reports through firmware menus, the panel and a USB CDC-ACM console.",
+]
+configuration = [
+  "No diagnostic path is integrated in this repository.",
+]
+procedure = [
+  "Integrate the firmware log exporter (QR code) from the log-capture guide, and photograph the panel for each bring-up stage.",
+]
+findings = [
+  "First-boot evidence has to come from the firmware menu and the panel until a working text channel exists.",
+]
+completion = [
+  "Every claimed milestone has a reproducible command, a matching revision and an accessible result.",
+]
+limits = [
+  "No log capture, no probe and no recorded observation.",
+]
+next_action = [
+  "Integrate the firmware log exporter before the first handset boot.",
+]
+evidence = []

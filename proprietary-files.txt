@@ -1,0 +1,16 @@
+# Required firmware inputs: relative path | source | SHA-256 | consumer
+#
+# Every file is taken from this handset's own vendor partition (or the recovery
+# package that carries it); the SHA-256 value records the file that was actually
+# read and is never a placeholder. The list stays empty until the first file is
+# extracted, so the firmware volume is not built from unverified input.
+#
+# Inputs this board is expected to need, recorded when extracted:
+#   vendor/firmware/adsp.mbn          ADSP image            DSP/audio power path
+#   vendor/firmware/adspr.jsn         ADSP signature        DSP/audio power path
+#   vendor/firmware/cdsp.mbn          CDSP image            DSP/audio power path
+#   vendor/firmware/slpi.mbn          SLPI image            sensors/DSP
+#   vendor/firmware/modem.mbn         modem image           not used by iOS; needed by UEFI
+#   vendor/firmware/wlan/qca6390/*    QCA6390 WLAN          Wi-Fi component (not selected yet)
+#
+# Touch (FocalTech FT3518) and the panel report no separate firmware file.
