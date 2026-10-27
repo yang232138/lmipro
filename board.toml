@@ -5,7 +5,7 @@ name = "lmipro"
 soc = "SM8250"
 soc_source = "sm8250"
 os_profile = "ipados-17.7.11-21H461"
-description = "Xiaomi Redmi K30 Pro Zoom Edition (lmipro, M2001J11C, SM8250)"
+description = "Xiaomi Redmi K30 Pro Zoom Edition (lmipro, SM8250)"
 kit = "lmipro"
 
 [components]

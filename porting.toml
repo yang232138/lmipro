@@ -14,7 +14,7 @@ paths = ["board.toml", "feeds.toml", "configs/**", "dts/**", ".github/**", ".git
 inputs = [
   "SoC support: UniXNU-sm8250-common at a6e7e36caab58f5b9a5625dbdb8da2bf290fa5cc (Kryo 585 topology, GICv3, 19.2 MHz timer, UFS/GPU/QUPv3 ranges, config fragment, two SMP patches).",
   "OS support: the ipados-17.7.11-21H461 profile (XNU 10063.141.1; iPad7,1 donor, build 21H461, j120ap).",
-  "Board identity: Xiaomi Redmi K30 Pro / K30 Pro Zoom Edition, model M2001J11C, Qualcomm SM8250 (kona), 8x Kryo 585, Adreno 650, 6.67-inch 1080x2400 AMOLED, FocalTech FT3518 touch, QCA6390 Wi-Fi.",
+  "Board identity: Xiaomi Redmi K30 Pro / K30 Pro Zoom Edition, Qualcomm SM8250 (kona), 8x Kryo 585, Adreno 650, 6.67-inch 1080x2400 AMOLED, FocalTech FT3518 touch, QCA6390 Wi-Fi.",
 ]
 configuration = [
   "board.toml: name lmipro, soc SM8250, soc_source sm8250, os_profile ipados-17.7.11-21H461, kit lmipro.",
@@ -205,14 +205,14 @@ status = "planned"
 components = []
 paths = ["package/**", "dts/**", "drivers/**", "scripts/**"]
 inputs = [
-  "FocalTech FT3518 touch controller on a QUPv3 GENI SPI serial engine; the public lmi UEFI/touch work identifies the part and its HID path.",
+  "FocalTech FT3518 touch controller; the public lmi UEFI/touch work identifies the part and its HID path, but the transport has not been read from the handset (FocalTech parts are usually I2C, while the catalog touch path is SPI).",
   "Power and volume keys wired to the PMIC; the lmi UEFI work patches its ButtonsDxe so the power key maps to Enter.",
 ]
 configuration = [
   "No touch component and no board touch kit are in this repository.",
 ]
 procedure = [
-  "Read the touch node from the handset DT (serial engine, address, GPIOs, interrupt), add a board kit, then select ShengHidInput.",
+  "Read the touch node from the handset DT (bus, address, GPIOs, interrupt), add a board kit, then select ShengHidInput.",
 ]
 findings = [
   "The catalog touch path is Novatek (ShengNovatekTouch); this board needs a FocalTech probe, so a board kit is required instead of a plain component selection.",

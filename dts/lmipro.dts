@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Xiaomi Redmi K30 Pro / K30 Pro Zoom Edition (lmi / lmipro, M2001J11C),
+// Xiaomi Redmi K30 Pro / K30 Pro Zoom Edition (lmi / lmipro),
 // Qualcomm SM8250 (kona).
 //
 // CPU topology, GICv3, timer rate and the UFS/GPU/QUPv3 register ranges come
