@@ -1,0 +1,6 @@
+# Keep the repository byte-identical on every host: the DTS, patch series and defconfig
+# are consumed by Linux and macOS build hosts.
+* text=auto eol=lf
+*.patch text eol=lf
+*.dts text eol=lf
+*.dtsi text eol=lf

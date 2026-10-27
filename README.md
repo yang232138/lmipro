@@ -22,12 +22,12 @@ carries the per-area record, limits and next action.
 | --- | --- |
 | SoC | SM8250 (kona), 4x Cortex-A55 + 4x Cortex-A77 |
 | Donor | `iPad7,1`, iPadOS `17.7.11`, build `21H461`, `j120ap` |
-| Display | 6.67-inch 1080x2400 AMOLED, 60 Hz; framebuffer at `0x9c000000` |
+| Display | 6.67-inch 1080x2400 AMOLED, 60 Hz; reserve at `0x9c000000` + 36 MiB |
 | Touch | FocalTech FT3518 over QUPv3 GENI SPI |
 | Wi-Fi | QCA6390 |
 | Userdata | REQUIRED: first and last LBA of the `userdata` GPT entry |
-| Firmware config / DSC | `lmipro` / `Platforms/Xiaomi/lmiproPkg/lmipro.dsc` |
-| Firmware volume | `Build/lmiproPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd` |
+| Firmware config / DSC | `lmi` / `Platforms/Xiaomi/lmiPkg/lmi.dsc` |
+| Firmware volume | `Build/lmiPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd` |
 
 ## Build
 

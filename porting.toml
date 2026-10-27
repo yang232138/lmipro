@@ -53,16 +53,16 @@ inputs = [
   "Firmware binaries from this handset's own XBL and vendor partitions; the published overlay does not ship them.",
 ]
 configuration = [
-  "board.toml [firmware]: config lmipro, DSC Platforms/Xiaomi/lmiproPkg/lmipro.dsc, FV Build/lmiproPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd.",
+  "board.toml [firmware]: config lmi, DSC Platforms/Xiaomi/lmiPkg/lmi.dsc, FV Build/lmiPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd.",
   "board.toml [firmware.defines]: ENABLE_SECUREBOOT 0, DEVICE_MODEL 0, MEMORY_PROTECTION TRUE, SHIP_MODE FALSE, BUILDID_STRING lmipro-research.",
 ]
 procedure = [
-  "Create uefi-lmipro with Platforms/Xiaomi/lmiproPkg derived from the lmi overlay, add UniXNURamDiskDxe, DiskIoDxe and FAT support to its DSC/FDF, then run unixnu build firmware --uefi ../uefi-lmipro.",
+  "Create uefi-lmipro with Platforms/Xiaomi/lmiPkg derived from the public lmi overlay, add UniXNURamDiskDxe, DiskIoDxe and FAT support to its DSC/FDF, then run unixnu build firmware --uefi ../uefi-lmipro.",
   "Add the firmware log exporter (QR code) from the log-capture guide before the first boot.",
 ]
 findings = [
-  "The lmi UEFI work reports the framebuffer at 0x9c000000 and a historic 3 MiB FD placed at 0x9fc00000; those are the only board memory facts recorded so far.",
-  "uefi-lmipro does not exist, so the DSC, FDF and the firmware volume paths in board.toml point at a repository that still has to be created.",
+  "The public lmi overlay carries Platforms/Xiaomi/lmiPkg with lmi.dsc, lmi.fdf, MemoryMapLib and ConfigurationMapLib; board.toml uses that package name and its paths.",
+  "The overlay's MemoryMapLib places UEFI FD at 0x9fc00000 (3 MiB) and Display Reserved at 0x9c000000 (36 MiB); uefi-lmipro itself does not exist, so the DSC and FV paths still point at a repository that has to be created from that overlay.",
 ]
 completion = [
   "The firmware volume builds, enters UniXNU, publishes the framebuffer and preserves the documented reserved ranges.",
@@ -72,7 +72,7 @@ limits = [
   "No DSC, FDF, Binaries or patched XBL are in place; no firmware has been built or run.",
 ]
 next_action = [
-  "Derive Platforms/Xiaomi/lmiproPkg and the BootShim/BootManager entries from the lmi overlay, then record the FD size and load address.",
+  "Derive Platforms/Xiaomi/lmiPkg and the BootShim/BootManager entries from the public lmi overlay, then record the FD size and load address.",
 ]
 evidence = []
 
@@ -114,26 +114,27 @@ components = []
 paths = ["dts/**", "board.toml"]
 inputs = [
   "DRAM base 0x80000000 (SM8250 platform) and the size of the first bank, read from /memory in the handset's live device tree.",
-  "Reserved ranges: the bootloader framebuffer at 0x9c000000 from the lmi UEFI work; splash/dfps sizes and the remaining reservations are unread.",
+  "Reserved ranges from the historical lmi map in Platforms/Xiaomi/lmiPkg/Library/MemoryMapLib/MemoryMapLib.c: SMEM 0x80900000+0x200000, TZApps 0x80b00000+0x5500000, PIL 0x86000000+0xd200000, Display Reserved 0x9c000000+0x2400000, UEFI FD 0x9fc00000+0x300000.",
 ]
 configuration = [
-  "dts/lmipro.dts declares memory@80000000 and framebuffer@9c000000 with zero sizes as the guide's REQUIRED placeholders.",
-  "The ADT handoff accepts one contiguous DRAM range, so a single enabled memory node is kept; the two higher banks of this platform stay disabled until the handoff can describe them.",
+  "dts/lmipro.dts declares memory@80000000 with a zero size as the guide's REQUIRED placeholder, plus the four reserved regions above.",
+  "The ADT handoff accepts one contiguous DRAM range, so a single enabled memory node is kept; the higher banks of this platform stay disabled until the handoff can describe them.",
 ]
 procedure = [
   "Dump /proc/device-tree/memory and /proc/device-tree/reserved-memory on the handset (or from a UEFI dump) and fill the two reg values.",
 ]
 findings = [
-  "Both reg size cells are zero: the device tree compiles but the ADT describes no DRAM and the kernel would fail in arm_vm_init.",
+  "The memory node still has a zero size: the device tree compiles but the ADT describes no DRAM and the kernel would fail in arm_vm_init.",
+  "The historical lmi map covers 0x80000000-0xa0000000 for the firmware and lists the four reserved regions now in the board DTS; it says nothing about the rest of the DRAM, so the bank size stays REQUIRED.",
 ]
 completion = [
   "The enabled memory range equals the handset's usable DRAM, every reserved region is excluded, and the kernel reaches arm_vm_init with a real DRAM size.",
 ]
 limits = [
-  "No live device tree has been read for this repository; all memory values are unset.",
+  "The DRAM bank size is unset, and the reserved regions are the vendor map rather than a measurement on this handset.",
 ]
 next_action = [
-  "Record the live /memory and /reserved-memory nodes, then fill the board DTS.",
+  "Record /memory and /reserved-memory from the handset's live device tree, then confirm or correct the four reserved regions.",
 ]
 evidence = []
 

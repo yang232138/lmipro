@@ -40,11 +40,11 @@ windows = [
 
 [firmware]
 # Mu-Silicium board package. uefi-lmipro does not exist yet: create it from the
-# lmi platform overlay (Platforms/Xiaomi/lmiproPkg) before running
-# `unixnu build firmware --uefi ../uefi-lmipro`. See porting.toml / firmware.
-config = "lmipro"
-dsc = "Platforms/Xiaomi/lmiproPkg/lmipro.dsc"
-fd = "Build/lmiproPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+# public lmi platform overlay (Platforms/Xiaomi/lmiPkg with lmi.dsc and lmi.fdf)
+# before running `unixnu build firmware --uefi ../uefi-lmipro`.
+config = "lmi"
+dsc = "Platforms/Xiaomi/lmiPkg/lmi.dsc"
+fd = "Build/lmiPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
 submodules = ["Binaries", "Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI",
               "Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl"]
 packages = [

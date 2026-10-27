@@ -31,11 +31,36 @@
         #size-cells = <2>;
         ranges;
 
-        // The framebuffer the bootloader leaves behind for UEFI. The base is the
-        // display region the lmi UEFI work reports; REQUIRED: size from the same
-        // observation (the bootloader's /reserved-memory cont_splash_region).
+        // The reserved regions below come from the historical lmi map in
+        // Platforms/Xiaomi/lmiPkg/Library/MemoryMapLib/MemoryMapLib.c (Mu-Silicium
+        // lmiPkg). The map is the vendor layout, not a measurement on this handset:
+        // the comments in that file still mark firmware validation as pending.
+
+        // "SMEM": the shared-memory region the bootloader and the remote processors use.
+        smem_region: smem@80900000 {
+            reg = <0x0 0x80900000 0x0 0x200000>;
+            label = "smem";
+            no-map;
+        };
+
+        // "TZApps Reserved": the trusted-application region.
+        tzapps_region: tzapps@80b00000 {
+            reg = <0x0 0x80b00000 0x0 0x5500000>;
+            label = "tzapps";
+            no-map;
+        };
+
+        // "PIL Reserved": the firmware images the remote processors load.
+        pil_region: pil@86000000 {
+            reg = <0x0 0x86000000 0x0 0xd200000>;
+            label = "pil";
+            no-map;
+        };
+
+        // "Display Reserved": the framebuffer the bootloader leaves behind and the
+        // region the lmi UEFI port reports at 0x9c000000.
         framebuffer: framebuffer@9c000000 {
-            reg = <0x0 0x9c000000 0x0 0x0>;
+            reg = <0x0 0x9c000000 0x0 0x2400000>;
             label = "cont_splash_region";
             no-map;
         };
