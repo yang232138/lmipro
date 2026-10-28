@@ -7,14 +7,15 @@ Device repository for the Xiaomi Redmi K30 Pro / K30 Pro Zoom Edition
 | --- | --- |
 | [UniXNU](https://github.com/UniXNU/UniXNU) | Build tools, component catalog, ARM64 and OS profiles |
 | [UniXNU-sm8250-common](https://github.com/FFT-infra/UniXNU-sm8250-common) | SM8250 resources, DTSI, config fragment, SMP patches |
-| `uefi-lmipro` (to create) | Mu-Silicium UEFI port |
+| [uefi-lmipro](https://github.com/yang232138/uefi-lmipro) | Mu-Silicium board overlay with UniXNU integration |
 
 ## State
 
-Structure only. `board.toml`, the SoC pin, the board device tree and the defconfig
-are in place; no hardware input has been read from the handset, no component beyond
-the shared kernel path is selected, and no image has been built. `porting.toml`
-carries the per-area record, limits and next action.
+Structure plus a first green build. `board.toml`, the SoC pin, the board device tree
+and the defconfig are in place; the GitHub macOS runner builds the kernel and prelinks
+it (`kernel.macho` sha256 `7007ffec…`, run 40607908733). No payload or boot image has
+been produced, because the DRAM size, the userdata geometry and the firmware binaries
+still have to come from the handset. `porting.toml` carries the per-area record.
 
 ## Inputs
 
