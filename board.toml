@@ -39,9 +39,10 @@ windows = [
 ]
 
 [firmware]
-# Mu-Silicium board package. uefi-lmipro does not exist yet: create it from the
-# public lmi platform overlay (Platforms/Xiaomi/lmiPkg with lmi.dsc and lmi.fdf)
-# before running `unixnu build firmware --uefi ../uefi-lmipro`.
+# Mu-Silicium board package: yang232138/uefi-lmipro carries the lmi overlay
+# (Platforms/Xiaomi/lmiPkg) with the four UniXNU modules wired into its DSC/FDF.
+# It still needs Binaries/lmi extracted from the handset XBL before
+# `unixnu build firmware --uefi ../uefi-lmipro` can produce a volume.
 config = "lmi"
 dsc = "Platforms/Xiaomi/lmiPkg/lmi.dsc"
 fd = "Build/lmiPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
