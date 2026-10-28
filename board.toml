@@ -41,12 +41,13 @@ windows = [
 [firmware]
 # Mu-Silicium board package: yang232138/uefi-lmipro carries the lmi overlay
 # (Platforms/Xiaomi/lmiPkg) with the four UniXNU modules wired into its DSC/FDF.
-# It still needs Binaries/lmi extracted from the handset XBL before
-# `unixnu build firmware --uefi ../uefi-lmipro` can produce a volume.
+# Its Binaries/lmi is the vendor DXE build input, so the "Binaries" submodule is
+# not listed here: uefi-lmipro's workflow copies the overlay's Binaries/lmi into
+# the Mu-Silicium tree instead of pulling Device-Binaries.
 config = "lmi"
 dsc = "Platforms/Xiaomi/lmiPkg/lmi.dsc"
 fd = "Build/lmiPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
-submodules = ["Binaries", "Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI",
+submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI",
               "Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl"]
 packages = [
   "{uefi}",
