@@ -73,10 +73,10 @@ BUILDID_STRING = "lmipro-research"
 
 [payload]
 volume = "LMIPROESP"
-# REQUIRED: boot_a/boot_b size on this handset. 192 MiB is the guide's template
-# value; confirm the real partition before flashing, because the payload volume has
-# to fit it together with the shim, the firmware volume and the appended device tree.
-size_mib = 192
+# boot is 128 MiB on this handset (single slot; from fastboot getvar
+# partition-size:boot = 0x8000000), so the payload volume stays at 96 MiB: shim +
+# 3 MiB firmware volume + device tree + FAT volume must fit if the image is flashed.
+size_mib = 96
 loader = "firmware"
 title = "Redmi K30 Pro"
 kernel_args = ["-v", "serial=3"]
@@ -84,4 +84,7 @@ kernel_args = ["-v", "serial=3"]
 [payload.adt]
 # The platform seed is never stored in a repository: payload builds take it from
 # --unique-chip-id or UNIXNU_UNIQUE_CHIP_ID.
+# chip-id seeds the platform identity together with that seed; it matches the donor
+# build's chip id from the OS profile.
+chip_id = "0x8011"
 unique_chip_id = "required"
