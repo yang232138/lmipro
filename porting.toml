@@ -57,22 +57,22 @@ configuration = [
   "board.toml [firmware.defines]: ENABLE_SECUREBOOT 0, DEVICE_MODEL 0, MEMORY_PROTECTION TRUE, SHIP_MODE FALSE, BUILDID_STRING lmipro-research.",
 ]
 procedure = [
-  "Create uefi-lmipro with Platforms/Xiaomi/lmiPkg derived from the public lmi overlay, add UniXNURamDiskDxe, DiskIoDxe and FAT support to its DSC/FDF, then run unixnu build firmware --uefi ../uefi-lmipro.",
+  "yang232138/uefi-lmipro is the board overlay: Platforms/Xiaomi/lmiPkg with the four UniXNU modules in lmi.dsc and lmi.fdf. Extract Binaries/lmi from the handset XBL, then run unixnu build firmware --uefi ../uefi-lmipro.",
   "Add the firmware log exporter (QR code) from the log-capture guide before the first boot.",
 ]
 findings = [
   "The public lmi overlay carries Platforms/Xiaomi/lmiPkg with lmi.dsc, lmi.fdf, MemoryMapLib and ConfigurationMapLib; board.toml uses that package name and its paths.",
-  "The overlay's MemoryMapLib places UEFI FD at 0x9fc00000 (3 MiB) and Display Reserved at 0x9c000000 (36 MiB); uefi-lmipro itself does not exist, so the DSC and FV paths still point at a repository that has to be created from that overlay.",
+  "The overlay's MemoryMapLib places UEFI FD at 0x9fc00000 (3 MiB) and Display Reserved at 0x9c000000 (36 MiB). uefi-lmipro now exists as that overlay and wires UniXNURamDiskDxe, UniXNUDxe, UniXNU and DarwinBoot before BdsDxe, but no firmware can build until Binaries/lmi is extracted.",
 ]
 completion = [
   "The firmware volume builds, enters UniXNU, publishes the framebuffer and preserves the documented reserved ranges.",
   "The UniXNU menu and DarwinBoot handoff work on the handset with the firmware log exporter enabled.",
 ]
 limits = [
-  "No DSC, FDF, Binaries or patched XBL are in place; no firmware has been built or run.",
+  "No Binaries/lmi and no DSC build; the firmware volume has not been produced.",
 ]
 next_action = [
-  "Derive Platforms/Xiaomi/lmiPkg and the BootShim/BootManager entries from the public lmi overlay, then record the FD size and load address.",
+  "Extract Binaries/lmi from the handset XBL (docs/firmware-inputs.md in uefi-lmipro), then build the firmware and record the FD size and load address.",
 ]
 evidence = []
 
@@ -362,17 +362,20 @@ procedure = [
 ]
 findings = [
   "size_mib 192 is the guide's template value, not this handset's boot partition; flashing an oversized volume fails at the bootloader.",
+  "The macOS build workflow (run 40607908733) built this device at the pinned sources: the kernel link and prelink succeeded and reported kernel.macho sha256 7007ffec6383e02f63c4cdb07202371a92bcc125232aac80292389f30e7e0f3e. No payload or boot image was produced.",
 ]
 completion = [
   "Kernel and prelink succeed, the payload contains every declared input, and the boot image matches the bootloader format and size limit.",
 ]
 limits = [
-  "Nothing has been built; the trust cache, Data seed and firmware volume are external inputs that are not in place.",
+  "The payload and boot image need the real DRAM size, the userdata geometry, a trust cache and a Data seed; the firmware volume needs Binaries/lmi.",
 ]
 next_action = [
-  "Record the boot partition size, then build the payload and boot image once the device tree carries real memory ranges.",
+  "Record the boot partition size and the handset memory map, then build the payload and boot image.",
 ]
-evidence = []
+evidence = [
+  { kind = "host", reference = "https://github.com/yang232138/UniXNU/actions/runs/40607908733", command = "macOS build: device_repository=yang232138/lmipro, device_ref=main, defconfig=lmipro_defconfig, steps=kernel", revision = "1823680bc66ed1844b3473d8cec227b6a8a5ca45", result = "kernel step succeeded; prelink reported kernel.macho sha256 7007ffec6383e02f63c4cdb07202371a92bcc125232aac80292389f30e7e0f3e" },
+]
 
 [[area]]
 id = "diagnostics"
