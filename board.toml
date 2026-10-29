@@ -74,9 +74,10 @@ BUILDID_STRING = "lmipro-research"
 [payload]
 volume = "LMIPROESP"
 # boot is 128 MiB on this handset (single slot; from fastboot getvar
-# partition-size:boot = 0x8000000), so the payload volume stays at 96 MiB: shim +
-# 3 MiB firmware volume + device tree + FAT volume must fit if the image is flashed.
-size_mib = 96
+# partition-size:boot = 0x8000000). 64 MiB matches the 64 MiB the firmware
+# reserves at 0x93200000 for the ramdisk: 3 MiB firmware volume + device
+# tree + FAT volume must fit if the image is flashed.
+size_mib = 64
 loader = "firmware"
 title = "Redmi K30 Pro"
 kernel_args = ["-v", "serial=3"]
