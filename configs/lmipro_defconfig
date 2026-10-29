@@ -17,3 +17,7 @@
 # Use the upstream validated device-tree panic region on this SM8250 board.
 # BCM2837's fixed 0x3c0fc000 panic buffer is not a board input for lmipro.
 CONFIG_XNU_DT_PANIC_REGION=y
+
+
+# Opt-in ABI-gated original PMGR integration; runtime mode defaults off.
+CONFIG_XNU_SHENG_PMGR=y

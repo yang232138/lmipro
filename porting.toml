@@ -26,10 +26,7 @@ procedure = [
   "python unixnu fetch -D ../UniXNU-lmipro",
   "python unixnu status --json -D ../UniXNU-lmipro",
 ]
-findings = [
-  "The SoC pin a6e7e36 is the first revision that carries native-smp-secondary.patch and native-smp-type-clusters.patch; the cluster-type properties in dts/lmipro.dts exist because the second patch derives processor sets from them.",
-  "The ARM64 profile already selects ArmDTPlatform, ArmCpu, SoftwareAES and XnuPrelink and supplies kernel.archives, so the device file adds only DarwinBoot, the SoC pin and the board layers.",
-]
+findings = ["The SM8250 and OS pins are retained. The complete inherited archive list is repeated before the board PMGR recipe because arrays replace inherited arrays.", "The existing SHENG_PMGR build option provides the compiler flag and archive input; a guarded device patch invokes the lmipro wrapper before calendar/AMFI initialization."]
 completion = [
   "unixnu status resolves the arch, SoC, OS and device layers without an error and reports the intended patch order and component sources.",
   "unixnu.lock pins every source and the porting-record checker accepts this file.",
@@ -60,10 +57,7 @@ procedure = [
   "yang232138/uefi-lmipro is the board overlay: Platforms/Xiaomi/lmiPkg with the four UniXNU modules in lmi.dsc and lmi.fdf. Extract Binaries/lmi from the handset XBL, then run unixnu build firmware --uefi ../uefi-lmipro.",
   "Add the firmware log exporter (QR code) from the log-capture guide before the first boot.",
 ]
-findings = [
-  "The public lmi overlay carries Platforms/Xiaomi/lmiPkg with lmi.dsc, lmi.fdf, MemoryMapLib and ConfigurationMapLib; board.toml uses that package name and its paths.",
-  "The overlay's MemoryMapLib places UEFI FD at 0x9fc00000 (3 MiB) and Display Reserved at 0x9c000000 (36 MiB). uefi-lmipro now exists as that overlay and wires UniXNURamDiskDxe, UniXNUDxe, UniXNU and DarwinBoot before BdsDxe, but no firmware can build until Binaries/lmi is extracted.",
-]
+findings = ["The public lmi overlay carries Platforms/Xiaomi/lmiPkg with lmi.dsc, lmi.fdf, MemoryMapLib and ConfigurationMapLib; board.toml uses that package name and its paths.", "The overlay's MemoryMapLib places UEFI FD at 0x9fc00000 (3 MiB) and Display Reserved at 0x9c000000 (36 MiB). uefi-lmipro now exists as that overlay and wires UniXNURamDiskDxe, UniXNUDxe, UniXNU and DarwinBoot before BdsDxe, but no firmware can build until Binaries/lmi is extracted.", "The PMGR work is a source-kernel ABI integration; tests reuse the verified UEFI FD 720481eb15e6cb3a6552c717ee6e912649a9c81eef18c95ab00dff7627530ee6."]
 completion = [
   "The firmware volume builds, enters UniXNU, publishes the framebuffer and preserves the documented reserved ranges.",
   "The UniXNU menu and DarwinBoot handoff work on the handset with the firmware log exporter enabled.",
@@ -92,10 +86,7 @@ configuration = [
 procedure = [
   "python unixnu build kernel -D ../UniXNU-lmipro, then build the payload and inspect the generated ADT for eight cpu nodes and their cluster-type values.",
 ]
-findings = [
-  "Without a cluster type the SoC topology patch maps a P core to cluster index one while MAX_CPU_CLUSTERS was one, and the parser writes past cluster_phys_to_logical on the stack.",
-  "native-smp-secondary.patch is required because the reset vector otherwise masks MPIDR with 0xFF, which selects Aff0 = 0 for every kona core and hands every secondary the boot CPU's reset data.",
-]
+findings = ["Without a cluster type the SoC topology patch maps a P core to cluster index one while MAX_CPU_CLUSTERS was one, and the parser writes past cluster_phys_to_logical on the stack.", "native-smp-secondary.patch is required because the reset vector otherwise masks MPIDR with 0xFF, which selects Aff0 = 0 for every kona core and hands every secondary the boot CPU's reset data.", "The guarded provider refuses unimplemented CPU power/idle methods; it does not qualify secondary-core, frequency or sleep operations."]
 completion = [
   "All eight CPUs reach their entry checkpoint, the timer runs on each CPU, and IPIs reach the secondary cores.",
 ]
@@ -123,10 +114,7 @@ configuration = [
 procedure = [
   "Dump /proc/device-tree/memory and /proc/device-tree/reserved-memory on the handset (or from a UEFI dump) and fill the two reg values.",
 ]
-findings = [
-  "The memory node still has a zero size: the device tree compiles but the ADT describes no DRAM and the kernel would fail in arm_vm_init.",
-  "The historical lmi map covers 0x80000000-0xa0000000 for the firmware and lists the four reserved regions now in the board DTS; it says nothing about the rest of the DRAM, so the bank size stays REQUIRED.",
-]
+findings = ["The memory node still has a zero size: the device tree compiles but the ADT describes no DRAM and the kernel would fail in arm_vm_init.", "The historical lmi map covers 0x80000000-0xa0000000 for the firmware and lists the four reserved regions now in the board DTS; it says nothing about the rest of the DRAM, so the bank size stays REQUIRED.", "The opaque original-provider storage uses the existing size-aware kernel object heap. No DRAM range, MMIO map or DMA window is added."]
 completion = [
   "The enabled memory range equals the handset's usable DRAM, every reserved region is excluded, and the kernel reaches arm_vm_init with a real DRAM size.",
 ]
@@ -155,10 +143,7 @@ configuration = [
 procedure = [
   "sgdisk -p /dev/block/sda on the handset, record the userdata and boot entries, then select a storage component once its board inputs exist.",
 ]
-findings = [
-  "ShengUfs is the catalog storage component, but its board inputs in the catalog are sheng's (SM8550) and nothing about them has been verified on lmipro.",
-  "Zero LBAs are deliberate: copying another phone's geometry would write the OS windows into the wrong range.",
-]
+findings = ["ShengUfs is the catalog storage component, but its board inputs in the catalog are sheng's (SM8550) and nothing about them has been verified on lmipro.", "Zero LBAs are deliberate: copying another phone's geometry would write the OS windows into the wrong range.", "The new recipe prepares the PMGR service boundary before AMFI. It adds no storage controls, LUN selection or userdata geometry; storage/root qualification remains pending."]
 completion = [
   "SCSI capacity and GPT match the handset, the OS and SystemOS windows stay inside userdata, and the root volume mounts with launchd starting.",
 ]
@@ -185,9 +170,7 @@ configuration = [
 procedure = [
   "Build the firmware, read the GOP geometry and stride from the UniXNU menu, then select GopFramebuffer.",
 ]
-findings = [
-  "The framebuffer base is the only display fact recorded; the resolution and stride reported by GOP still have to be captured.",
-]
+findings = ["The framebuffer base is the only display fact recorded; the resolution and stride reported by GOP still have to be captured.", "The PMGR bridge adds no display power operation. Its lifecycle result uses the existing official panic-screen and GOP mapping."]
 completion = [
   "A known frame appears with the correct geometry and colors, then userland presents and the backlight is controlled.",
 ]
@@ -214,9 +197,7 @@ configuration = [
 procedure = [
   "Read the touch node from the handset DT (bus, address, GPIOs, interrupt), add a board kit, then select ShengHidInput.",
 ]
-findings = [
-  "The catalog touch path is Novatek (ShengNovatekTouch); this board needs a FocalTech probe, so a board kit is required instead of a plain component selection.",
-]
+findings = ["The catalog touch path is Novatek (ShengNovatekTouch); this board needs a FocalTech probe, so a board kit is required instead of a plain component selection.", "The PMGR board package adds no touch, button or GPIO operation; input controller and power wiring remain pending."]
 completion = [
   "Touches map to the display, simultaneous contacts keep stable IDs, release events arrive, and buttons produce HID reports.",
 ]
@@ -242,9 +223,7 @@ configuration = [
 procedure = [
   "Build the Sm8250Platform kit (A650Gmu) and its host tests from the SoC repository, then select a GPU component once the A650 path exists in the catalog.",
 ]
-findings = [
-  "The catalog GPU component is Adreno740 for SM8550; SM8250 instead ships the A650 GMU cold-start kit, so the GPU path here is SoC and board work, not a catalog selection.",
-]
+findings = ["The catalog GPU component is Adreno740 for SM8550; SM8250 instead ships the A650 GMU cold-start kit, so the GPU path here is SoC and board work, not a catalog selection.", "The new guarded provider adds no GPU clock or power sequence. Unsupported original power slots stop instead of reporting success."]
 completion = [
   "GPU submissions complete, mapping and fences are correct, and a known image renders through the selected Metal client.",
 ]
@@ -270,9 +249,7 @@ configuration = [
 procedure = [
   "Record the Wi-Fi transport (PCIe or MHI) and firmware files from the handset, then select a Wi-Fi component once one matches QCA6390.",
 ]
-findings = [
-  "The catalog Wi-Fi component is Ath12kWifi (ath12k), which does not match QCA6390.",
-]
+findings = ["The catalog Wi-Fi component is Ath12kWifi (ath12k), which does not match QCA6390.", "The original-PMGR bridge adds no network firmware, transport or domain operation; network qualification remains pending."]
 completion = [
   "Scanning, association, address configuration and sustained receive/transmit traffic pass.",
 ]
@@ -298,9 +275,7 @@ configuration = [
 procedure = [
   "Extract the DSP firmware, record hashes in proprietary-files.txt, then select the DSP and audio components.",
 ]
-findings = [
-  "Audio depends on firmware files that have not been extracted, so it stays behind the storage and firmware steps.",
-]
+findings = ["Audio depends on firmware files that have not been extracted, so it stays behind the storage and firmware steps.", "The PMGR integration adds no DSP, codec, audio routing or power operation; audio dependencies remain pending."]
 completion = [
   "Each declared route carries audio through playback or capture and handles start and stop.",
 ]
@@ -314,33 +289,21 @@ evidence = []
 
 [[area]]
 id = "power"
-status = "planned"
+status = "implemented"
 components = ["SoftwareAES"]
-paths = ["package/**", "dts/**", "configs/**", "scripts/**"]
-inputs = [
-  "PM8150-family PMICs, RPMh, the fuel gauge and the power/volume keys; none has been read from the handset.",
-  "SoftwareAES replaces the hardware crypto engine for the kernel path.",
-]
-configuration = [
-  "SoftwareAES is selected; CONFIG_XNU_NATIVE_AES is on through the arch fragment.",
-]
-procedure = [
-  "Add board PMIC, battery and RPMh services in package/ once their inputs exist, then record each vote and reading.",
-]
-findings = [
-  "No PMIC interaction is implemented; the power path is limited to the shared software crypto choice.",
-]
-completion = [
-  "Declared power controls and battery readings match observations, and each claimed sleep/resume transition restores its dependent peripherals.",
-]
-limits = [
-  "No power service, no battery reading, no RPMh interaction.",
-]
-next_action = [
-  "Record the PMIC model, the RPMh register base and the battery fuel gauge.",
-]
-evidence = []
+paths = ["package/*Power*", "package/PMGR-*", "scripts/*platform-power*", "patches/xnu/lmipro-platform-pmgr.patch", "docs/pmgr-abi.md"]
+inputs = ["Pinned iPad7,1 iPadOS 17.7.11 / 21H461 AMFI/ApplePMGR contract; native IOPMGR ABI; freshly built candidate JSON and verified original kernelcache."]
+configuration = ["CONFIG_XNU_SHENG_PMGR=y selects the guarded archive and pre-AMFI hook. Runtime default off; sheng-pmgr=1 is the unpublished lifecycle test."]
+procedure = ["Build a flag-off reference; prepare the audited candidate, JSON and cache; restore config, compile/link the archive through the official driver; temporarily boot the mode-1 panic-screen image."]
+findings = ["The current kernel reaches AMFI: No PMGR? at ConfigurationSettings.cpp:235 after passing the console-creation checkpoint.", "The catalog has no standalone PMGR component. The documented guarded original-provider/nub integration is adapted as board package code, retaining runtime identities and refusing unimplemented power operations."]
+completion = ["Original-module audit, exact storage and all 340 provider slots pass; actual allocation, original methods and release counts reach the mode-1 PASS; genuine service publication is qualified separately."]
+limits = ["No functional clock, regulator, CPU-power, sleep/resume or battery backend. Mode 1 publishes no service. Runtime qualification and full system boot remain pending."]
+next_action = ["Build the ABI-gated kernel and observe the explicit unpublished lifecycle diagnostic before enabling mode 2."]
 
+[[area.evidence]]
+kind = "source"
+reference = "docs/pmgr-abi.md"
+result = "Pinned original-provider source, exact ABI gates, build inputs and default-off scope documented; runtime qualification pending"
 [[area]]
 id = "packaging"
 status = "planned"
@@ -360,10 +323,7 @@ procedure = [
   "python unixnu build payload -D ../UniXNU-lmipro --unique-chip-id <hex> --trust-cache <bundle> --data-ramdisk <seed>",
   "python unixnu bootimg -D ../UniXNU-lmipro --uefi ../uefi-lmipro --dtb <firmware.dtb>",
 ]
-findings = [
-  "size_mib 192 is the guide's template value, not this handset's boot partition; flashing an oversized volume fails at the bootloader.",
-  "The macOS build workflow (run 40607908733) built this device at the pinned sources: the kernel link and prelink succeeded and reported kernel.macho sha256 7007ffec6383e02f63c4cdb07202371a92bcc125232aac80292389f30e7e0f3e. No payload or boot image was produced.",
-]
+findings = ["The verified current UEFI is reused by hash. The next payload uses sheng-pmgr=1 and the official no-reset panic screen after linking the PMGR archive."]
 completion = [
   "Kernel and prelink succeed, the payload contains every declared input, and the boot image matches the bootloader format and size limit.",
 ]
@@ -391,9 +351,7 @@ configuration = [
 procedure = [
   "Integrate the firmware log exporter (QR code) from the log-capture guide, and photograph the panel for each bring-up stage.",
 ]
-findings = [
-  "First-boot evidence has to come from the firmware menu and the panel until a working text channel exists.",
-]
+findings = ["Image 5f5cbdfb0350d8a345ce9fc8dc87e70ddeb38acb41642243935ffca0c908b35e produced actual AMFI: No PMGR? at ConfigurationSettings.cpp:235; photograph 1793311356118.jpg.", "The next mode-1 diagnostic reports PASS only after actual ABI, binding, read-value and cleanup checks; this is separate from functional power support."]
 completion = [
   "Every claimed milestone has a reproducible command, a matching revision and an accessible result.",
 ]
@@ -403,7 +361,6 @@ limits = [
 next_action = [
   "Integrate the firmware log exporter before the first handset boot.",
 ]
-evidence = []
 
 [dt_panic_region_bringup]
 source_kernel_sha256 = "3d3482ae0edd15dbc0fc4c0ba339a64f77c0699f4a9480168fd151c7c139d0f8"
@@ -417,3 +374,11 @@ config = "CONFIG_XNU_DT_PANIC_REGION=y"
 new_hardware_addresses_added = false
 root_cause_proven = false
 hardware_test = "pending new kernel build"
+
+
+[[area.evidence]]
+kind = "device"
+reference = "docs/observations/amfi-no-pmgr-20261030.md"
+result = "Actual lmipro AMFI No PMGR panic with the verified UEFI and DT-panic-region kernel"
+command = "fastboot -s 9ed74861 boot boot.img"
+revision = "856eac9bad80ebea9ae5a1ba7968b011983e0697"

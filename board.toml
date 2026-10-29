@@ -21,6 +21,18 @@ defconfig = "lmipro_defconfig"
 config_fragments = ["arch:configs/common.config", "soc:configs/sm8250.config", "os:configs/ipados.config"]
 patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "os:patches/xnu/series", "device:patches/xnu/series"]
 
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "component:ArmDTPlatform",
+  "component:ArmCpu",
+  "component:SoftwareAES",
+  "build-software-aes-bindings.py",
+  "build-mockfs-fixture.py",
+  "build-libpthread-kernel.py",
+  "build-lmipro-platform-power.py",
+]
+
 [device_tree]
 source = "device:dts/lmipro.dts"
 include_dirs = ["soc:dts"]
@@ -89,3 +101,4 @@ kernel_args = ["-v", "serial=3"]
 # build's chip id from the OS profile.
 chip_id = "0x8011"
 unique_chip_id = "required"
+
