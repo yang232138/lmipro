@@ -404,3 +404,16 @@ next_action = [
   "Integrate the firmware log exporter before the first handset boot.",
 ]
 evidence = []
+
+[dt_panic_region_bringup]
+source_kernel_sha256 = "3d3482ae0edd15dbc0fc4c0ba339a64f77c0699f4a9480168fd151c7c139d0f8"
+firmware_run = 40877381481
+firmware_sha256 = "720481eb15e6cb3a6552c717ee6e912649a9c81eef18c95ab00dff7627530ee6"
+last_confirmed_checkpoint = "ml_io_map_wcomb inside PE_create_console returned, then approximately six-second reset"
+post_console_checkpoint = "three colors for more than 15 seconds without reset"
+baseline_fixed_panic_buffer = "0x3c0fc000 + 0x4000"
+upstream_patch = "native-dt-panic-region.patch"
+config = "CONFIG_XNU_DT_PANIC_REGION=y"
+new_hardware_addresses_added = false
+root_cause_proven = false
+hardware_test = "pending new kernel build"
