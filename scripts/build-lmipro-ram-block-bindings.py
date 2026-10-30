@@ -305,7 +305,11 @@ mode_at=section['fileoff']+store_names['_native_ufs_store_mode']-section['va']
 require(struct.unpack_from('<2I',store_data,mode_at) in ((0x52800000,0xd65f03c0),(0x2a1f03e0,0xd65f03c0)),
         'RAM-only mode must return zero immediately without calls or hardware access')
 archive.unlink(missing_ok=True)
-subprocess.run(['xcrun', 'ar', 'rcs', archive, obj_path, out / 'original-bindings.o',store_object], check=True)
+transport=json.loads((out/'verified-transport-build.json').read_text())
+require(transport['compiled_transport_object_sha256']==hashlib.sha256(obj).hexdigest(),'Actual adapted object must be the audited vtable input')
+primitive=out/'LmiproVerifiedRamIo.o'
+require(transport['read_primitive_object_sha256']==hashlib.sha256(primitive.read_bytes()).hexdigest(),'Actual authenticated-read primitive changed')
+subprocess.run(['xcrun', 'ar', 'rcs', archive, obj_path, out / 'original-bindings.o',store_object,primitive], check=True)
 (out / 'bindings.json').write_text(json.dumps(dict(original_candidate_sha256=audit['candidate_sha256'],
     compiled_object_sha256=hashlib.sha256(obj).hexdigest(), virtual_methods_checked=190,
     concrete_overrides=overrides, unresolved_original_imports=0,

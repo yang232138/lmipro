@@ -1,26 +1,28 @@
-diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -1097,3 +1097,22 @@
+@@ -967,7 +967,25 @@
+ 			}
+ #endif
  			if (autherr && !owner_authorized) {
-+#if defined(XNU_VERIFIED_ROOT_PROBE) && XNU_VERIFIED_ROOT_PROBE
++#if defined(XNU_OWNER_ROOT_AUDIT) && XNU_OWNER_ROOT_AUDIT
 +				extern volatile uint32_t native_verified_root_status;
-+				extern volatile uint32_t native_verified_root_results[8];
-+				extern volatile uint32_t native_ram_block_ready;
-+				extern volatile uint64_t native_ram_block_reads;
++				extern volatile int native_owner_root_decision, native_owner_root_readonly;
++				extern volatile uint32_t native_ram_verified_tamper_refused, native_ram_verified_wrong_uuid_refused;
++				extern volatile uint64_t native_ram_verified_blocks, native_ram_verified_integrity_failures;
 +				extern volatile uint64_t native_ram_block_failures;
-+				panic("LMIPRO ROOT fs=%s crypto=%u\n"
-+				    "ram=%u reads=%llu failures=%llu\n"
-+				    "checks=%u,%u,%u,%u,%u,%u,%u,%u autherr=%d",
-+				    vfs_statfs(vnode_mount(rootvnode))->f_fstypename,
-+				    native_verified_root_status, native_ram_block_ready,
-+				    (unsigned long long)native_ram_block_reads,
++				panic("LMIPRO VERIFIED fs=%s crypto=%u\n"
++				    "owner=%d ro=%d blocks=%llu\n"
++				    "tamper=%u uuid=%u io=%llu hash=%llu\n"
++				    "apple=%d trust=0",
++				    vfs_statfs(vnode_mount(rootvnode))->f_fstypename, native_verified_root_status,
++				    native_owner_root_decision, native_owner_root_readonly,
++				    (unsigned long long)native_ram_verified_blocks,
++				    native_ram_verified_tamper_refused, native_ram_verified_wrong_uuid_refused,
 +				    (unsigned long long)native_ram_block_failures,
-+				    native_verified_root_results[0], native_verified_root_results[1],
-+				    native_verified_root_results[2], native_verified_root_results[3],
-+				    native_verified_root_results[4], native_verified_root_results[5],
-+				    native_verified_root_results[6], native_verified_root_results[7], autherr);
++				    (unsigned long long)native_ram_verified_integrity_failures, autherr);
 +#else
  				panic("rootvp not authenticated after mounting");
 +#endif
  			}
+ #if defined(XNU_OWNER_ROOT_TRUST) && XNU_OWNER_ROOT_TRUST
+ 			{

@@ -1,0 +1,349 @@
+--- a/NativeRamBlock.cpp
++++ b/NativeRamBlock.cpp
+@@ -18,9 +18,20 @@
+ #include "SparseDisk.h"
+ #include "PersistOverlay.h"
+ #include "DirectDisk.h"
++#include <vm/vm_map.h>
++#include "LmiproVerifiedRamIo.h"
+ 
+ extern "C" {
+ extern unsigned long gPhysBase, gPhysSize;
++extern const struct vr_crypto vr_xnu_crypto;
++extern const uint8_t verified_root_manifest[], verified_root_key[];
++extern const uint64_t verified_root_manifest_bytes;
++volatile uint32_t native_ram_verified_ready = 0;
++volatile uint32_t native_ram_verified_tamper_refused = 0;
++volatile uint32_t native_ram_verified_wrong_uuid_refused = 0;
++volatile uint32_t native_ram_verified_root_matches = 0;
++volatile uint64_t native_ram_verified_blocks = 0;
++volatile uint64_t native_ram_verified_integrity_failures = 0;
+ int native_ram_block_volume_device(const char *, dev_t *, char *, size_t);
+ volatile uint32_t native_ram_block_ready = 0;
+ volatile uint64_t native_ram_block_bytes = 0;
+@@ -52,6 +63,13 @@
+   uint8_t *memory = nullptr;
+   uint64_t capacity = 0;
+   bool online = false;
++  struct vr_view verified = {};
++  vm_offset_t verifiedStorage = 0;
++  vm_size_t verifiedStorageBytes = 0;
++  uint8_t *verifiedSnapshot = nullptr;
++  bool configureVerification(uint64_t logical);
++  bool loadVerifiedPage(uint64_t offset, void *target, size_t bytes) const;
++  bool verificationSelftest();
+   RamSparseDisk sparse = {};
+   // A disk above 2 GiB keeps only the nonzero pages of its seed (SeedDisk.h), in memory proportional to the content, and is served by the
+   // direct (store-backed) path alone: it needs the persistent store open read-write, or its requests fail.
+@@ -78,7 +96,7 @@
+   // sheng-data-reset=1 or 2 starts the overlay over (the old pages are dropped, not applied); 2 also asks for Setup (BootWatchdogPolicy.c).
+   static bool discardRequested() { uint32_t v = 0; return PE_parse_boot_argn("sheng-data-reset", &v, sizeof v) && (v == 1 || v == 2); }
+   void attachStore() {
+-    if (!gate) return;
++    if (!gate || verifiedStorage) return; // Signed root never attaches a persistent overlay.
+     IOLockLock(gate);
+     if (storeAttached) { IOLockUnlock(gate); return; }
+     storeAttached = true;
+@@ -146,6 +164,7 @@
+     IOLockUnlock(gate);
+   }
+ 
++  bool authenticatesVolume(const char *uuid);
+   bool available() const { return online && (memory || sparse.pages || isBig) && capacity; }
+   bool seedInfo(uint64_t *base,uint64_t *bytes,uint8_t hash[32]) {
+     if(!gate || !base || !bytes || !hash)return false;
+@@ -162,7 +181,7 @@
+   char *getVendorString() override { return const_cast<char *>("Native"); }
+   char *getProductString() override { return const_cast<char *>("Owned RAM block storage"); }
+   char *getRevisionString() override { return const_cast<char *>("1.0"); }
+-  char *getAdditionalDeviceInfoString() override { return const_cast<char *>("volatile storage; no persistent trust claim"); }
++  char *getAdditionalDeviceInfoString() override { return const_cast<char *>("signed read-only RAM root; no persistent store"); }
+   IOReturn reportBlockSize(UInt64 *value) override { *value = 512; return kIOReturnSuccess; }
+   IOReturn reportEjectability(bool *value) override { *value = false; return kIOReturnSuccess; }
+   IOReturn reportMaxValidBlock(UInt64 *value) override { *value = capacity - 1; return kIOReturnSuccess; }
+@@ -170,7 +189,7 @@
+     *present = online; if (changed) *changed = false; return kIOReturnSuccess;
+   }
+   IOReturn reportRemovability(bool *value) override { *value = false; return kIOReturnSuccess; }
+-  IOReturn reportWriteProtection(bool *value) override { *value = false; return kIOReturnSuccess; }
++  IOReturn reportWriteProtection(bool *value) override { *value = true; return kIOReturnSuccess; }
+   IOReturn doSynchronizeCache() override {
+     if (!online) return kIOReturnNotReady;
+     // Every changed page is on the medium, with its bitmap bit, before its write completed (PersistOverlay.h): nothing to flush.
+@@ -206,7 +225,7 @@
+   if (!memory || !(gate = IOLockAlloc())) return false;
+   uint64_t logical=bytes;
+   if(packedInput){
+-    if(!ramPackedLayout(memory,bytes,&logical))return false;
++    if(!ramPackedLayout(memory,bytes,&logical) || !configureVerification(logical))return false;
+     struct ImportOps {uint8_t *allocate(){return static_cast<uint8_t *>(IOMallocZero(4096));}} ops;
+     if(logical>0x80000000ULL){
+       uint64_t nonzero=0;
+@@ -222,6 +241,7 @@
+       if(!ramSparseImport(sparse,memory,bytes,ops))return false;
+     }
+   }
++  if(!packedInput && !configureVerification(logical))return false;
+   capacity = logical / 512;
+   SHA256_CTX context;
+   SHA256_Init(&context);
+@@ -237,12 +257,14 @@
+   }else SHA256_Update(&context, memory, bytes);
+   SHA256_Final(seedHash, &context);
+   }
++  if(memcmp(seedHash,verified.image_sha256,32) || !verificationSelftest())return false;
+   memcpy(native_ram_block_seed_sha256,seedHash,32);
+   native_ram_block_bytes = logical;
+   native_ram_block_sparse=(sparse.pages||isBig)?1:0;
+   native_ram_block_resident_bytes=isBig?big.resident:sparse.pages?sparse.resident:logical;
+   online = true;
+   native_ram_block_ready = 1;
++  native_ram_verified_ready = 1;
+   registerService();
+   return true;
+ }
+@@ -250,104 +272,48 @@
+ IOReturn NativeRamBlock::doAsyncReadWrite(IOMemoryDescriptor *buffer, UInt64 block, UInt64 count,
+     IOStorageAttributes *, IOStorageCompletion *completion)
+ {
+-  if (!buffer || !completion || !completion->action || !count || block >= capacity ||
+-      count > capacity - block || buffer->getLength() < count * 512 ||
+-      (buffer->getDirection() != kIODirectionIn && buffer->getDirection() != kIODirectionOut)) return kIOReturnBadArgument;
+-  if (!gate) return kIOReturnNotReady;
+-  const uint64_t bytes = count * 512;
++  if(!buffer || !completion || !completion->action || !count || block>=capacity ||
++     count>capacity-block || buffer->getLength()<count*512) return kIOReturnBadArgument;
++  if(buffer->getDirection()!=kIODirectionIn) return kIOReturnNotWritable;
++  if(!gate) return kIOReturnNotReady;
+   IOLockLock(gate);
+-  if (!online) { IOLockUnlock(gate); return kIOReturnNotReady; }
+-  uint64_t actual;bool noMemory=false;
+-  if(isBig && !direct) {
+-    // Before the store is attached (APFS probes the disk for its volume UUID long before the kernel asks for the Data volume, which is what
+-    // attaches the store) a disk this size is read from its seed alone; it has no volatile mode, so writes wait.
+-    if(buffer->getDirection()==kIODirectionIn) {
+-      struct SeedReadOps {
+-        IOMemoryDescriptor *buffer;
+-        uint64_t copy(uint64_t at,const void *p,uint64_t n){return buffer->writeBytes(at,p,n);}
+-      } rops={buffer};
+-      static const uint8_t zero[4096]={};
+-      uint64_t done=0,offset=block*512;
+-      while(done<bytes) {
+-        uint64_t at=offset+done,index=at/4096,skip=at&4095,n=4096-skip;
+-        if(n>bytes-done)n=bytes-done;
+-        const uint8_t *page=big.find(index);
+-        uint64_t got=rops.copy(done,(page?page:zero)+skip,n);
+-        done+=got;if(got!=n)break;
+-      }
+-      __atomic_fetch_add(&native_ram_block_reads,1,__ATOMIC_RELAXED);
+-      IOReturn early=done==bytes?kIOReturnSuccess:kIOReturnIOError;
+-      if(early)__atomic_fetch_add(&native_ram_block_failures,1,__ATOMIC_RELAXED);
+-      IOLockUnlock(gate);
+-      completion->action(completion->target,completion->parameter,early,done);
+-      return kIOReturnSuccess;
+-    }
+-    IOLockUnlock(gate);return kIOReturnNotReady;
+-  }
+-  if(sparse.pages||isBig){
+-    struct Operations {
+-      IOMemoryDescriptor *buffer;
+-      uint8_t *allocate(){return static_cast<uint8_t *>(IOMallocZero(4096));}
+-      uint64_t read(uint64_t at,void *p,uint64_t n){return buffer->readBytes(at,p,n);}
+-      uint64_t copy(uint64_t at,const void *p,uint64_t n){return buffer->writeBytes(at,p,n);}
+-    } ops={buffer};
+-    bool write=buffer->getDirection()==kIODirectionOut;
+-    if(direct){
+-      struct BufferOps {
+-        IOMemoryDescriptor *buffer;
+-        uint64_t read(uint64_t at,void *p,uint64_t n){return buffer->readBytes(at,p,n);}
+-        uint64_t copy(uint64_t at,const void *p,uint64_t n){return buffer->writeBytes(at,p,n);}
+-      } bops={buffer};
+-      StoreOps store;bool storeError=false;
+-      if(write && directFailed)actual=0;
+-      else actual=isBig?directDiskIO(big,overlay,store,stage,kStagePages,write,block*512,bytes,bops,&storeError)
+-                       :directDiskIO(sparse,overlay,store,stage,kStagePages,write,block*512,bytes,bops,&storeError);
+-      if(storeError){
+-        if(write)directFailed=true;
+-        native_data_persist_state=5;__atomic_fetch_add(&native_data_persist_errors,1,__ATOMIC_RELAXED);
+-      }
+-      if(write && actual){__atomic_fetch_add(&native_data_persist_writes,(actual+4095)/4096,__ATOMIC_RELAXED);__atomic_fetch_add(&native_data_persist_syncs,1,__ATOMIC_RELAXED);native_data_persist_present=overlay.present;}
+-    } else {
+-    actual=ramSparseIO(sparse,write,block*512,bytes,ops,noMemory);
+-    }
+-    if(!direct && write && actual==bytes && overlay.active && !overlay.readOnly){
+-      StoreOps store;
+-      uint64_t firstPage=block*512/4096,lastPage=(block*512+bytes-1)/4096;
+-      for(uint64_t i=firstPage;i<=lastPage && overlay.active;){
+-        uint32_t n=0;
+-        while(n<kStagePages && i+n<=lastPage && sparse.pages[i+n]){memcpy(stage+(uint64_t)n*persist::kBlock,sparse.pages[i+n],persist::kBlock);++n;}
+-        if(!n || !overlay.writeRun(store,i,n,stage)){persistFailed();break;}
+-        __atomic_fetch_add(&native_data_persist_writes,n,__ATOMIC_RELAXED);
+-        __atomic_fetch_add(&native_data_persist_syncs,1,__ATOMIC_RELAXED);   // one run = one durable commit
+-        native_data_persist_present=overlay.present;
+-        i+=n;
+-      }
+-    }
+-    if(write)__atomic_fetch_add(&native_ram_block_writes,1,__ATOMIC_RELAXED);
+-    else __atomic_fetch_add(&native_ram_block_reads,1,__ATOMIC_RELAXED);
+-    native_ram_block_resident_bytes=isBig?big.resident:sparse.resident;
+-  }else if (buffer->getDirection() == kIODirectionIn) {
+-    actual = buffer->writeBytes(0, memory + block * 512, bytes);
+-    __atomic_fetch_add(&native_ram_block_reads, 1, __ATOMIC_RELAXED);
+-  } else {
+-    actual = buffer->readBytes(0, memory + block * 512, bytes);
+-    __atomic_fetch_add(&native_ram_block_writes, 1, __ATOMIC_RELAXED);
+-  }
+-  IOReturn status = actual == bytes ? kIOReturnSuccess : noMemory ? kIOReturnNoMemory : kIOReturnIOError;
+-  if (status) __atomic_fetch_add(&native_ram_block_failures, 1, __ATOMIC_RELAXED);
++  if(!online || !verifiedSnapshot || !verified.hashes){IOLockUnlock(gate);return kIOReturnNotReady;}
++  struct Context {NativeRamBlock *self;IOMemoryDescriptor *buffer;} context={this,buffer};
++  struct lr_io io={&context,
++    [](void *c,uint64_t at,void *p,size_t n)->int {
++      return static_cast<Context *>(c)->self->loadVerifiedPage(at,p,n)?1:0;
++    },
++    [](void *c,uint64_t at,const void *p,size_t n)->size_t {
++      return static_cast<Context *>(c)->buffer->writeBytes(at,p,n);
++    }};
++  uint64_t actual=0,blocks=0;
++  int result=lmipro_verified_ram_read(&verified,&vr_xnu_crypto,block*512,
++      static_cast<size_t>(count*512),&io,verifiedSnapshot,&actual,&blocks);
++  __atomic_fetch_add(&native_ram_verified_blocks,blocks,__ATOMIC_RELAXED);
++  __atomic_fetch_add(&native_ram_block_reads,1,__ATOMIC_RELAXED);
++  IOReturn status=result==LR_OK?kIOReturnSuccess:result==LR_INTEGRITY?kIOReturnNotPrivileged:kIOReturnIOError;
++  if(result!=LR_OK){
++    __atomic_fetch_add(&native_ram_block_failures,1,__ATOMIC_RELAXED);
++    if(result==LR_INTEGRITY)__atomic_fetch_add(&native_ram_verified_integrity_failures,1,__ATOMIC_RELAXED);
++    online=false; // Fail closed after a source/copy/integrity failure.
++    native_ram_verified_ready=0;
++  }
+   IOLockUnlock(gate);
+-  completion->action(completion->target, completion->parameter, status, actual);
++  completion->action(completion->target,completion->parameter,status,actual);
+   return kIOReturnSuccess;
+ }
+ 
+ void NativeRamBlock::stop(IOService *provider)
+ {
+-  if (gate) { IOLockLock(gate); online = false; IOLockUnlock(gate); }
++  if (gate) { IOLockLock(gate); online = false; native_ram_verified_ready=0; IOLockUnlock(gate); }
+   IOBlockStorageDevice::stop(provider);
+ }
+ 
+ void NativeRamBlock::free()
+ {
++  if(verifiedSnapshot){IOFree(verifiedSnapshot,VR_BLOCK_BYTES);verifiedSnapshot=nullptr;}
++  if(verifiedStorage){kmem_free(kernel_map,verifiedStorage,verifiedStorageBytes);verifiedStorage=0;verifiedStorageBytes=0;}
++  verified={};
+   if (overlayBits) { IOFree(overlayBits, persist::bitmapBlocks(sparse.bytes / 4096) * persist::kBlock); overlayBits = nullptr; }
+   if (stage) { IOFree(stage, kStagePages * persist::kBlock); stage = nullptr; }
+   if (isBig) {
+@@ -451,3 +417,109 @@
+   *base=0;*bytes=0;memset(digest,0,32);
+   return selectVolumeSeed(uuid,device,path,size,base,bytes,digest);
+ }
++
++
++// Actual policy/key storage is independently protected read-only, following
++// the canonical VerifiedRoot/VirtioMmioBlock lifetime contract.
++bool NativeRamBlock::configureVerification(uint64_t logical)
++{
++  if(!logical || logical>UINT64_C(0x80000000) || logical%VR_BLOCK_BYTES ||
++     verified_root_manifest_bytes<VR_HEADER_BYTES+VR_SIGNATURE_BYTES ||
++     verified_root_manifest_bytes>UINT64_C(32)*1024*1024)return false;
++  vm_size_t tableBytes=round_page(static_cast<vm_size_t>(verified_root_manifest_bytes));
++  if(tableBytes<verified_root_manifest_bytes || tableBytes>UINT64_MAX-4096)return false;
++  verifiedStorageBytes=tableBytes+4096;
++  if(kmem_alloc(kernel_map,&verifiedStorage,verifiedStorageBytes,
++      static_cast<kma_flags_t>(KMA_KOBJECT|KMA_DATA),VM_KERN_MEMORY_SECURITY)!=KERN_SUCCESS)return false;
++  memcpy(reinterpret_cast<void *>(verifiedStorage),verified_root_manifest,verified_root_manifest_bytes);
++  auto *key=reinterpret_cast<uint8_t *>(verifiedStorage+tableBytes);
++  memcpy(key,verified_root_key,VR_KEY_BYTES);
++  if(vm_map_protect(kernel_map,verifiedStorage,verifiedStorage+verifiedStorageBytes,
++      VM_PROT_READ,TRUE)!=KERN_SUCCESS)return false;
++  if(vr_open(reinterpret_cast<const uint8_t *>(verifiedStorage),verified_root_manifest_bytes,
++      key,1,&vr_xnu_crypto,&verified)!=VR_OK || verified.image_bytes!=logical)return false;
++  verifiedSnapshot=static_cast<uint8_t *>(IOMalloc(VR_BLOCK_BYTES));
++  return verifiedSnapshot!=nullptr;
++}
++
++bool NativeRamBlock::loadVerifiedPage(uint64_t offset,void *target,size_t bytes) const
++{
++  if(!target || offset%VR_BLOCK_BYTES || !bytes || bytes>VR_BLOCK_BYTES ||
++     offset>=capacity*512 || bytes>capacity*512-offset || isBig || direct)return false;
++  if(sparse.pages){
++    const uint8_t *page=sparse.pages[offset/VR_BLOCK_BYTES];
++    if(page)memcpy(target,page,bytes);else bzero(target,bytes);
++  }else if(memory)memcpy(target,memory+offset,bytes);
++  else return false;
++  return true;
++}
++
++bool NativeRamBlock::verificationSelftest()
++{
++  if(!verifiedSnapshot || !loadVerifiedPage(0,verifiedSnapshot,VR_BLOCK_BYTES))return false;
++  if(vr_verify_block(&verified,0,verifiedSnapshot,VR_BLOCK_BYTES,&vr_xnu_crypto)!=VR_OK)return false;
++  verifiedSnapshot[7]^=1; // Isolated private scratch; root seed is never modified.
++  bool refused=vr_verify_block(&verified,0,verifiedSnapshot,VR_BLOCK_BYTES,&vr_xnu_crypto)==VR_BLOCK;
++  verifiedSnapshot[7]^=1;
++  if(!refused || vr_verify_block(&verified,0,verifiedSnapshot,VR_BLOCK_BYTES,&vr_xnu_crypto)!=VR_OK)return false;
++  native_ram_verified_tamper_refused=1;
++  return true;
++}
++
++bool NativeRamBlock::authenticatesVolume(const char *uuid)
++{
++  if(!uuid || strlen(uuid)!=36 || !gate)return false;
++  IOLockLock(gate);
++  bool ready=available() && verifiedStorage && verified.hashes && verifiedSnapshot &&
++      verified.image_bytes==capacity*512 && native_ram_verified_tamper_refused &&
++      !native_ram_verified_integrity_failures && !native_ram_block_failures && !direct;
++  static const char hex[]="0123456789ABCDEF";
++  char expected[37];unsigned at=0;
++  for(unsigned i=0;i<16;++i){
++    if(i==4 || i==6 || i==8 || i==10)expected[at++]='-';
++    expected[at++]=hex[verified.volume_uuid[i]>>4];expected[at++]=hex[verified.volume_uuid[i]&15];
++  }
++  expected[at]=0;
++  bool match=ready && !strcmp(uuid,expected);
++  IOLockUnlock(gate);
++  return match;
++}
++
++// Resolve the ACTUAL mounted BSD device to exactly one IOMedia, then require
++// its signed volume UUID and this real transport in its provider ancestry.
++extern "C" int native_verified_block_root_authorized(dev_t device)
++{
++  native_ram_verified_root_matches=0;native_ram_verified_wrong_uuid_refused=0;
++  if(device==NODEV || !native_ram_verified_ready || !native_ram_verified_tamper_refused)return 0;
++  OSDictionary *matching=IOService::serviceMatching("IOMedia");
++  OSDictionary *properties=OSDictionary::withCapacity(2);
++  OSNumber *mjr=OSNumber::withNumber(static_cast<unsigned>(major(static_cast<uint32_t>(device))),32);
++  OSNumber *mnr=OSNumber::withNumber(static_cast<unsigned>(minor(static_cast<uint32_t>(device))),32);
++  if(!matching || !properties || !mjr || !mnr){
++    OSSafeReleaseNULL(mnr);OSSafeReleaseNULL(mjr);OSSafeReleaseNULL(properties);OSSafeReleaseNULL(matching);return 0;
++  }
++  bool query=properties->setObject(kIOBSDMajorKey,mjr) && properties->setObject(kIOBSDMinorKey,mnr) &&
++      matching->setObject("IOPropertyMatch",properties);
++  mnr->release();mjr->release();properties->release();
++  OSIterator *iterator=query?IOService::getMatchingServices(matching):nullptr;matching->release();
++  if(!iterator)return 0;
++  bool authenticated=false;unsigned matches=0;
++  while(OSObject *object=iterator->getNextObject()){
++    IOService *media=OSDynamicCast(IOService,object);if(!media)continue;
++    if(++matches!=1){authenticated=false;break;}
++    OSString *uuid=OSDynamicCast(OSString,media->getProperty("UUID"));
++    if(!uuid || uuid->getLength()!=36)continue;
++    unsigned depth=0;
++    for(IOService *provider=media;provider && depth++<64;provider=provider->getProvider()){
++      NativeRamBlock *ram=OSDynamicCast(NativeRamBlock,provider);if(!ram)continue;
++      authenticated=ram->authenticatesVolume(uuid->getCStringNoCopy());
++      char wrong[37];strlcpy(wrong,uuid->getCStringNoCopy(),sizeof(wrong));wrong[0]=wrong[0]=='0'?'1':'0';
++      bool refused=!ram->authenticatesVolume(wrong);
++      native_ram_verified_wrong_uuid_refused=(authenticated && refused)?1:0;
++      authenticated=authenticated && refused;
++      break;
++    }
++  }
++  iterator->release();native_ram_verified_root_matches=matches;
++  return authenticated && matches==1;
++}
