@@ -30,8 +30,8 @@ include_dirs = ["soc:dts"]
 # the handset (`sgdisk -p` on the block device, or the partition step of the
 # dual-system guide). Zero values keep the geometry unfinished on purpose: taking
 # them from another phone would wipe the wrong range.
-first_lba = 0x0
-last_lba = 0x0
+first_lba = 0x2C0000
+last_lba = 0x3B4B7FA
 lba_bytes = 4096
 windows = [
   { name = "OS", component = "OS" },
