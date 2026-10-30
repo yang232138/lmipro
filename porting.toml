@@ -4,7 +4,7 @@ schema_version = 1
 name = "lmipro"
 soc = "SM8250"
 os_profile = "ipados-17.7.11-21H461"
-summary = "lmipro SM8250: UEFI menu and XNU entry/VM/console reached; guarded original PMGR lifecycle passed and publication mode reached root-device discovery. RAM-root test integration is source work; complete OS boot is not established."
+summary = "lmipro: UEFI/XNU bring-up reached a post-mount root authentication refusal. RAM-root crypto and filesystem/counter diagnostics are implemented; owner root acceptance and complete OS boot remain unqualified."
 
 [[area]]
 id = "configuration"
@@ -14,7 +14,7 @@ paths = ["board.toml", "feeds.toml", "configs/**", "dts/**", ".github/**", ".git
 inputs = ["SoC support: UniXNU-sm8250-common at a6e7e36caab58f5b9a5625dbdb8da2bf290fa5cc (Kryo 585 topology, GICv3, 19.2 MHz timer, UFS/GPU/QUPv3 ranges, config fragment, two SMP patches).", "OS support: the ipados-17.7.11-21H461 profile (XNU 10063.141.1; iPad7,1 donor, build 21H461, j120ap).", "Board identity: Xiaomi Redmi K30 Pro / K30 Pro Zoom Edition, Qualcomm SM8250 (kona), 8x Kryo 585, Adreno 650, 6.67-inch 1080x2400 AMOLED, FocalTech FT3518 touch, QCA6390 Wi-Fi."]
 configuration = ["board.toml: name lmipro, soc SM8250, soc_source sm8250, os_profile ipados-17.7.11-21H461, kit lmipro.", "Components: ArmDTPlatform, ArmCpu, SoftwareAES, XnuPrelink, DarwinBoot. The device list repeats the ARM64 profile entries because a device array replaces the inherited array.", "kernel.config_fragments: arch:configs/common.config, soc:configs/sm8250.config, os:configs/ipados.config. patch_series: arch, soc, os and device layers in that order."]
 procedure = ["python unixnu defconfig lmipro_defconfig -D ../UniXNU-lmipro", "python unixnu fetch -D ../UniXNU-lmipro", "python unixnu status --json -D ../UniXNU-lmipro"]
-findings = ["The SM8250 and OS pins are retained. The complete inherited archive list is repeated before the board PMGR recipe because arrays replace inherited arrays.", "The existing SHENG_PMGR build option provides the compiler flag and archive input; a guarded device patch invokes the lmipro wrapper before calendar/AMFI initialization.", "Canonical RamBlock is appended to the complete component/archive lists with XNU_NATIVE_RAM_BLOCK=y; device reference/binding recipes qualify the actual original storage ABI."]
+findings = ["The SM8250 and OS pins are retained. The complete inherited archive list is repeated before the board PMGR recipe because arrays replace inherited arrays.", "The existing SHENG_PMGR build option provides the compiler flag and archive input; a guarded device patch invokes the lmipro wrapper before calendar/AMFI initialization.", "Canonical RamBlock is appended to the complete component/archive lists with XNU_NATIVE_RAM_BLOCK=y; device reference/binding recipes qualify the actual original storage ABI.", "Root-auth diagnostic selects canonical VerifiedRoot and an eight-control real-XNU crypto instrument with the host-qualified exact RAM seed. Only the existing refusal message gains filesystem/read counters; no owner-root acceptance, original Apple executable, hardware address or persistent-storage behavior changes. See docs/root-auth.md for exact limits and next integration work."]
 completion = ["unixnu status resolves the arch, SoC, OS and device layers without an error and reports the intended patch order and component sources.", "unixnu.lock pins every source and the porting-record checker accepts this file."]
 limits = ["No hardware input has been read from the handset; the device tree still carries zero memory ranges.", "The sources have not been fetched in this environment, so unixnu.lock does not exist yet and status cannot run here."]
 next_action = ["Run defconfig, fetch and status on a host with GitHub access, commit the generated unixnu.lock, then read the handset device tree to fill dts/lmipro.dts."]
@@ -24,6 +24,11 @@ kind = "source"
 reference = "docs/ram-root.md"
 result = "RAM-only root plan and scoped current observations; no complete OS or storage-I/O success claim"
 
+[[area.evidence]]
+kind = "source"
+reference = "docs/root-auth.md"
+result = "Post-mount observation separated from crypto, actual filesystem/I/O counters and future authenticated transport; root refusal retained"
+
 [[area]]
 id = "firmware"
 status = "planned"
@@ -32,7 +37,7 @@ paths = ["board.toml", "proprietary-files.txt", "scripts/**", "package/**"]
 inputs = ["Mu-Silicium lmi platform source: the public lmi UEFI work documents a Platforms/.../lmiPkg package, a BootShim with an ARM64 kernel header, a BootManager entry and the patched Qualcomm DXE modules from the handset XBL.", "Firmware binaries from this handset's own XBL and vendor partitions; the published overlay does not ship them."]
 configuration = ["board.toml [firmware]: config lmi, DSC Platforms/Xiaomi/lmiPkg/lmi.dsc, FV Build/lmiPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd.", "board.toml [firmware.defines]: ENABLE_SECUREBOOT 0, DEVICE_MODEL 0, MEMORY_PROTECTION TRUE, SHIP_MODE FALSE, BUILDID_STRING lmipro-research."]
 procedure = ["yang232138/uefi-lmipro is the board overlay: Platforms/Xiaomi/lmiPkg with the four UniXNU modules in lmi.dsc and lmi.fdf. Extract Binaries/lmi from the handset XBL, then run unixnu build firmware --uefi ../uefi-lmipro.", "Add the firmware log exporter (QR code) from the log-capture guide before the first boot."]
-findings = ["The public lmi overlay carries Platforms/Xiaomi/lmiPkg with lmi.dsc, lmi.fdf, MemoryMapLib and ConfigurationMapLib; board.toml uses that package name and its paths.", "The overlay's MemoryMapLib places UEFI FD at 0x9fc00000 (3 MiB) and Display Reserved at 0x9c000000 (36 MiB). uefi-lmipro now exists as that overlay and wires UniXNURamDiskDxe, UniXNUDxe, UniXNU and DarwinBoot before BdsDxe, but no firmware can build until Binaries/lmi is extracted.", "The PMGR work is a source-kernel ABI integration; tests reuse the verified UEFI FD 720481eb15e6cb3a6552c717ee6e912649a9c81eef18c95ab00dff7627530ee6.", "RAM-root work reuses FD 720481eb15e6cb3a6552c717ee6e912649a9c81eef18c95ab00dff7627530ee6 and unchanged shim/firmware DTB; it does not modify DXE or vendor executables.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O."]
+findings = ["The public lmi overlay carries Platforms/Xiaomi/lmiPkg with lmi.dsc, lmi.fdf, MemoryMapLib and ConfigurationMapLib; board.toml uses that package name and its paths.", "The overlay's MemoryMapLib places UEFI FD at 0x9fc00000 (3 MiB) and Display Reserved at 0x9c000000 (36 MiB). uefi-lmipro now exists as that overlay and wires UniXNURamDiskDxe, UniXNUDxe, UniXNU and DarwinBoot before BdsDxe, but no firmware can build until Binaries/lmi is extracted.", "The PMGR work is a source-kernel ABI integration; tests reuse the verified UEFI FD 720481eb15e6cb3a6552c717ee6e912649a9c81eef18c95ab00dff7627530ee6.", "RAM-root work reuses FD 720481eb15e6cb3a6552c717ee6e912649a9c81eef18c95ab00dff7627530ee6 and unchanged shim/firmware DTB; it does not modify DXE or vendor executables.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O.", "Root-auth diagnostic selects canonical VerifiedRoot and an eight-control real-XNU crypto instrument with the host-qualified exact RAM seed. Only the existing refusal message gains filesystem/read counters; no owner-root acceptance, original Apple executable, hardware address or persistent-storage behavior changes. See docs/root-auth.md for exact limits and next integration work."]
 completion = ["The firmware volume builds, enters UniXNU, publishes the framebuffer and preserves the documented reserved ranges.", "The UniXNU menu and DarwinBoot handoff work on the handset with the firmware log exporter enabled."]
 limits = ["No Binaries/lmi and no DSC build; the firmware volume has not been produced."]
 next_action = ["Extract Binaries/lmi from the handset XBL (docs/firmware-inputs.md in uefi-lmipro), then build the firmware and record the FD size and load address."]
@@ -42,6 +47,11 @@ kind = "source"
 reference = "docs/ram-root.md"
 result = "RAM-only root plan and scoped current observations; no complete OS or storage-I/O success claim"
 
+[[area.evidence]]
+kind = "source"
+reference = "docs/root-auth.md"
+result = "Post-mount observation separated from crypto, actual filesystem/I/O counters and future authenticated transport; root refusal retained"
+
 [[area]]
 id = "cpu"
 status = "planned"
@@ -50,7 +60,7 @@ paths = ["dts/**", "configs/**"]
 inputs = ["Kryo 585: cpu0-3 are Cortex-A55 (MPIDR Aff0 0x0-0x300) and cpu4-7 are Cortex-A77 (0x400-0x700), as declared in the shared sm8250.dtsi.", "GICv3 distributor at 0x17a00000 and redistributors at 0x17a60000 with a 0x20000 stride, exported to the ADT as intc; architectural timer at 19.2 MHz; PSCI 1.0 over SMC."]
 configuration = ["dts/lmipro.dts sets unixnu,cluster-type = 'E' on cpu0-3 and 'P' on cpu4-7.", "ArmCpu and ArmDTPlatform are selected; the arch fragment enables CONFIG_XNU_ARMCPU, CONFIG_XNU_ARM_DT_PLATFORM, CONFIG_XNU_NATIVE_ARCH_TIMER and CONFIG_XNU_NATIVE_PAN."]
 procedure = ["python unixnu build kernel -D ../UniXNU-lmipro, then build the payload and inspect the generated ADT for eight cpu nodes and their cluster-type values."]
-findings = ["Without a cluster type the SoC topology patch maps a P core to cluster index one while MAX_CPU_CLUSTERS was one, and the parser writes past cluster_phys_to_logical on the stack.", "native-smp-secondary.patch is required because the reset vector otherwise masks MPIDR with 0xFF, which selects Aff0 = 0 for every kona core and hands every secondary the boot CPU's reset data.", "The guarded provider refuses unimplemented CPU power/idle methods; it does not qualify secondary-core, frequency or sleep operations.", "RamBlock has no new CPU/interrupt controller inputs. No secondary-core or CPU power behavior is qualified by the root-discovery panic."]
+findings = ["Without a cluster type the SoC topology patch maps a P core to cluster index one while MAX_CPU_CLUSTERS was one, and the parser writes past cluster_phys_to_logical on the stack.", "native-smp-secondary.patch is required because the reset vector otherwise masks MPIDR with 0xFF, which selects Aff0 = 0 for every kona core and hands every secondary the boot CPU's reset data.", "The guarded provider refuses unimplemented CPU power/idle methods; it does not qualify secondary-core, frequency or sleep operations.", "RamBlock has no new CPU/interrupt controller inputs. No secondary-core or CPU power behavior is qualified by the root-discovery panic.", "Root-auth diagnostic selects canonical VerifiedRoot and an eight-control real-XNU crypto instrument with the host-qualified exact RAM seed. Only the existing refusal message gains filesystem/read counters; no owner-root acceptance, original Apple executable, hardware address or persistent-storage behavior changes. See docs/root-auth.md for exact limits and next integration work."]
 completion = ["All eight CPUs reach their entry checkpoint, the timer runs on each CPU, and IPIs reach the secondary cores."]
 limits = ["Nothing has been compiled or run; the properties above are source facts from the SoC repository, not measurements."]
 next_action = ["Build the kernel and check the ADT cpu nodes before any handset attempt."]
@@ -60,6 +70,11 @@ kind = "source"
 reference = "docs/ram-root.md"
 result = "RAM-only root plan and scoped current observations; no complete OS or storage-I/O success claim"
 
+[[area.evidence]]
+kind = "source"
+reference = "docs/root-auth.md"
+result = "Post-mount observation separated from crypto, actual filesystem/I/O counters and future authenticated transport; root refusal retained"
+
 [[area]]
 id = "memory"
 status = "planned"
@@ -68,7 +83,7 @@ paths = ["dts/**", "board.toml"]
 inputs = ["DRAM base 0x80000000 (SM8250 platform) and the size of the first bank, read from /memory in the handset's live device tree.", "Reserved ranges from the historical lmi map in Platforms/Xiaomi/lmiPkg/Library/MemoryMapLib/MemoryMapLib.c: SMEM 0x80900000+0x200000, TZApps 0x80b00000+0x5500000, PIL 0x86000000+0xd200000, Display Reserved 0x9c000000+0x2400000, UEFI FD 0x9fc00000+0x300000."]
 configuration = ["dts/lmipro.dts declares memory@80000000 with a zero size as the guide's REQUIRED placeholder, plus the four reserved regions above.", "The ADT handoff accepts one contiguous DRAM range, so a single enabled memory node is kept; the higher banks of this platform stay disabled until the handoff can describe them."]
 procedure = ["Dump /proc/device-tree/memory and /proc/device-tree/reserved-memory on the handset (or from a UEFI dump) and fill the two reg values."]
-findings = ["The memory node still has a zero size: the device tree compiles but the ADT describes no DRAM and the kernel would fail in arm_vm_init.", "The historical lmi map covers 0x80000000-0xa0000000 for the firmware and lists the four reserved regions now in the board DTS; it says nothing about the rest of the DRAM, so the bank size stays REQUIRED.", "The opaque original-provider storage uses the existing size-aware kernel object heap. No DRAM range, MMIO map or DMA window is added.", "PackedRAMDisk is loader-owned volatile memory with sparse nonzero-page backing; logical disk capacity does not reserve new physical memory ranges or introduce DMA."]
+findings = ["The memory node still has a zero size: the device tree compiles but the ADT describes no DRAM and the kernel would fail in arm_vm_init.", "The historical lmi map covers 0x80000000-0xa0000000 for the firmware and lists the four reserved regions now in the board DTS; it says nothing about the rest of the DRAM, so the bank size stays REQUIRED.", "The opaque original-provider storage uses the existing size-aware kernel object heap. No DRAM range, MMIO map or DMA window is added.", "PackedRAMDisk is loader-owned volatile memory with sparse nonzero-page backing; logical disk capacity does not reserve new physical memory ranges or introduce DMA.", "Root-auth diagnostic selects canonical VerifiedRoot and an eight-control real-XNU crypto instrument with the host-qualified exact RAM seed. Only the existing refusal message gains filesystem/read counters; no owner-root acceptance, original Apple executable, hardware address or persistent-storage behavior changes. See docs/root-auth.md for exact limits and next integration work."]
 completion = ["The enabled memory range equals the handset's usable DRAM, every reserved region is excluded, and the kernel reaches arm_vm_init with a real DRAM size."]
 limits = ["The DRAM bank size is unset, and the reserved regions are the vendor map rather than a measurement on this handset."]
 next_action = ["Record /memory and /reserved-memory from the handset's live device tree, then confirm or correct the four reserved regions."]
@@ -78,23 +93,40 @@ kind = "source"
 reference = "docs/ram-root.md"
 result = "RAM-only root plan and scoped current observations; no complete OS or storage-I/O success claim"
 
+[[area.evidence]]
+kind = "source"
+reference = "docs/root-auth.md"
+result = "Post-mount observation separated from crypto, actual filesystem/I/O counters and future authenticated transport; root refusal retained"
+
 [[area]]
 id = "storage"
 status = "implemented"
-components = ["RamBlock"]
+components = ["RamBlock", "VerifiedRoot"]
 paths = ["board.toml", "dts/**", "configs/**", "drivers/**", "scripts/**"]
 inputs = ["Pinned original iPad7,1 21H461 storage/APFS closure and public IOStorageFamily headers; unmodified RamBlock; fresh APFS virtual seed and measured UUID."]
 configuration = ["CONFIG_XNU_NATIVE_RAM_BLOCK=y; canonical RamBlock archive and board-specific measured original-class binding recipe; no native UFS or persistent backend."]
 procedure = ["Build kernel with the pinned qualified reference and original cache; verify dispatch/imports; pack fresh seed with official DBRDISK1; add measured root-match UUID and test only with fastboot boot."]
-findings = ["ShengUfs is the catalog storage component, but its board inputs in the catalog are sheng's (SM8550) and nothing about them has been verified on lmipro.", "Zero LBAs are deliberate: copying another phone's geometry would write the OS windows into the wrong range.", "The new recipe prepares the PMGR service boundary before AMFI. It adds no storage controls, LUN selection or userdata geometry; storage/root qualification remains pending.", "Photo1793314717812.jpg shows Failed to mount root device before any root media existed. Select unmodified RamBlock with exact static IOStorageFamily bindings and a fresh packed APFS seed; actual device I/O and mount are pending.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O."]
+findings = ["ShengUfs is the catalog storage component, but its board inputs in the catalog are sheng's (SM8550) and nothing about them has been verified on lmipro.", "Zero LBAs are deliberate: copying another phone's geometry would write the OS windows into the wrong range.", "The new recipe prepares the PMGR service boundary before AMFI. It adds no storage controls, LUN selection or userdata geometry; storage/root qualification remains pending.", "Photo1793314717812.jpg shows Failed to mount root device before any root media existed. Select unmodified RamBlock with exact static IOStorageFamily bindings and a fresh packed APFS seed; actual device I/O and mount are pending.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O.", "Root-auth diagnostic selects canonical VerifiedRoot and an eight-control real-XNU crypto instrument with the host-qualified exact RAM seed. Only the existing refusal message gains filesystem/read counters; no owner-root acceptance, original Apple executable, hardware address or persistent-storage behavior changes. See docs/root-auth.md for exact limits and next integration work.", "User reports rootvp not authenticated after mounting at bsd_init.c1098 on verified boot613d6869. Source confirms root vnode exists after successful mount. Direct filesystem/counter observation and root trust are separate pending checks."]
 completion = ["SCSI capacity and GPT match the handset, the OS and SystemOS windows stay inside userdata, and the root volume mounts with launchd starting."]
 limits = ["Source integration and static ABI validation do not prove actual media publication, I/O, APFS compatibility, root authentication or mount. The test seed has no userland."]
-next_action = ["Verify host artifacts and actual FAT/ADT/seed identity, then photograph the next kernel result from a temporary handset boot."]
+next_action = ["Build and verify this instrument, run official eight-control XNU crypto on the handset, capture real root filesystem and I/O counters, then implement real authenticated readonly transport before owner-root acceptance."]
 
 [[area.evidence]]
 kind = "source"
 reference = "docs/ram-root.md"
 result = "RAM-only root plan and scoped current observations; no complete OS or storage-I/O success claim"
+
+[[area.evidence]]
+kind = "source"
+reference = "docs/root-auth.md"
+result = "Post-mount observation separated from crypto, actual filesystem/I/O counters and future authenticated transport; root refusal retained"
+
+[[area.evidence]]
+kind = "host"
+reference = "https://github.com/yang232138/uefi-lmi/actions/runs/41033006023"
+command = "VerifiedRoot/tests/check.py plus manifest.py and verify_image.py on exact complete RAM test seed"
+revision = "69a24bed3be1a570817b1b22fd6d01daeed8c7ec"
+result = "Seven real-C/RSA host check groups and all65526 exact image blocks passed; no hardware/root authentication claim"
 
 [[area]]
 id = "display"
@@ -104,7 +136,7 @@ paths = ["package/**", "dts/**", "scripts/**"]
 inputs = ["6.67-inch 1080x2400 AMOLED at 60 Hz; the lmi UEFI port keeps the panel as the bootloader initialized it and reports the framebuffer at 0x9c000000.", "Panel timing, DSI lanes and backlight control are unread."]
 configuration = ["No display component is selected; the device tree only reserves the framebuffer range."]
 procedure = ["Build the firmware, read the GOP geometry and stride from the UniXNU menu, then select GopFramebuffer."]
-findings = ["The framebuffer base is the only display fact recorded; the resolution and stride reported by GOP still have to be captured.", "The PMGR bridge adds no display power operation. Its lifecycle result uses the existing official panic-screen and GOP mapping.", "The existing panic screen made the root-discovery failure visible. RamBlock changes no framebuffer/scanout driver and does not qualify acceleration.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O."]
+findings = ["The framebuffer base is the only display fact recorded; the resolution and stride reported by GOP still have to be captured.", "The PMGR bridge adds no display power operation. Its lifecycle result uses the existing official panic-screen and GOP mapping.", "The existing panic screen made the root-discovery failure visible. RamBlock changes no framebuffer/scanout driver and does not qualify acceleration.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O.", "Root-auth diagnostic selects canonical VerifiedRoot and an eight-control real-XNU crypto instrument with the host-qualified exact RAM seed. Only the existing refusal message gains filesystem/read counters; no owner-root acceptance, original Apple executable, hardware address or persistent-storage behavior changes. See docs/root-auth.md for exact limits and next integration work."]
 completion = ["A known frame appears with the correct geometry and colors, then userland presents and the backlight is controlled."]
 limits = ["No display component, no panel data, no backlight service."]
 next_action = ["Record the GOP geometry and stride from the firmware menu."]
@@ -114,6 +146,11 @@ kind = "source"
 reference = "docs/ram-root.md"
 result = "RAM-only root plan and scoped current observations; no complete OS or storage-I/O success claim"
 
+[[area.evidence]]
+kind = "source"
+reference = "docs/root-auth.md"
+result = "Post-mount observation separated from crypto, actual filesystem/I/O counters and future authenticated transport; root refusal retained"
+
 [[area]]
 id = "input"
 status = "planned"
@@ -122,7 +159,7 @@ paths = ["package/**", "dts/**", "drivers/**", "scripts/**"]
 inputs = ["FocalTech FT3518 touch controller; the public lmi UEFI/touch work identifies the part and its HID path, but the transport has not been read from the handset (FocalTech parts are usually I2C, while the catalog touch path is SPI).", "Power and volume keys wired to the PMIC; the lmi UEFI work patches its ButtonsDxe so the power key maps to Enter."]
 configuration = ["No touch component and no board touch kit are in this repository."]
 procedure = ["Read the touch node from the handset DT (bus, address, GPIOs, interrupt), add a board kit, then select ShengHidInput."]
-findings = ["The catalog touch path is Novatek (ShengNovatekTouch); this board needs a FocalTech probe, so a board kit is required instead of a plain component selection.", "The PMGR board package adds no touch, button or GPIO operation; input controller and power wiring remain pending.", "RAM-root preparation adds no input driver or input-device hardware claim.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O."]
+findings = ["The catalog touch path is Novatek (ShengNovatekTouch); this board needs a FocalTech probe, so a board kit is required instead of a plain component selection.", "The PMGR board package adds no touch, button or GPIO operation; input controller and power wiring remain pending.", "RAM-root preparation adds no input driver or input-device hardware claim.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O.", "Root-auth diagnostic selects canonical VerifiedRoot and an eight-control real-XNU crypto instrument with the host-qualified exact RAM seed. Only the existing refusal message gains filesystem/read counters; no owner-root acceptance, original Apple executable, hardware address or persistent-storage behavior changes. See docs/root-auth.md for exact limits and next integration work."]
 completion = ["Touches map to the display, simultaneous contacts keep stable IDs, release events arrive, and buttons produce HID reports."]
 limits = ["No input code or device-tree node."]
 next_action = ["Record the touch bus, address, GPIOs and interrupt line, then write the board kit."]
@@ -132,6 +169,11 @@ kind = "source"
 reference = "docs/ram-root.md"
 result = "RAM-only root plan and scoped current observations; no complete OS or storage-I/O success claim"
 
+[[area.evidence]]
+kind = "source"
+reference = "docs/root-auth.md"
+result = "Post-mount observation separated from crypto, actual filesystem/I/O counters and future authenticated transport; root refusal retained"
+
 [[area]]
 id = "gpu"
 status = "planned"
@@ -140,7 +182,7 @@ paths = ["package/**", "dts/**", "scripts/**", "configs/**"]
 inputs = ["Adreno 650 at 0x3d00000, GMU at 0x3d6a000 and the GPU SMMU at 0x3da0000 from the shared dtsi; the a650_gmu.bin firmware comes from the vendor partition."]
 configuration = ["CONFIG_XNU_NATIVE_ADRENO is not set; the shared fragment also leaves it off."]
 procedure = ["Build the Sm8250Platform kit (A650Gmu) and its host tests from the SoC repository, then select a GPU component once the A650 path exists in the catalog."]
-findings = ["The catalog GPU component is Adreno740 for SM8550; SM8250 instead ships the A650 GMU cold-start kit, so the GPU path here is SoC and board work, not a catalog selection.", "The new guarded provider adds no GPU clock or power sequence. Unsupported original power slots stop instead of reporting success.", "RAM-root preparation adds no GPU component, registers, firmware or acceleration claim.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O."]
+findings = ["The catalog GPU component is Adreno740 for SM8550; SM8250 instead ships the A650 GMU cold-start kit, so the GPU path here is SoC and board work, not a catalog selection.", "The new guarded provider adds no GPU clock or power sequence. Unsupported original power slots stop instead of reporting success.", "RAM-root preparation adds no GPU component, registers, firmware or acceleration claim.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O.", "Root-auth diagnostic selects canonical VerifiedRoot and an eight-control real-XNU crypto instrument with the host-qualified exact RAM seed. Only the existing refusal message gains filesystem/read counters; no owner-root acceptance, original Apple executable, hardware address or persistent-storage behavior changes. See docs/root-auth.md for exact limits and next integration work."]
 completion = ["GPU submissions complete, mapping and fences are correct, and a known image renders through the selected Metal client."]
 limits = ["No GPU component, no firmware recorded, the A650 kit has not been built."]
 next_action = ["Build the A650 GMU kit tests, then wire A650Gmu to the board device tree."]
@@ -150,6 +192,11 @@ kind = "source"
 reference = "docs/ram-root.md"
 result = "RAM-only root plan and scoped current observations; no complete OS or storage-I/O success claim"
 
+[[area.evidence]]
+kind = "source"
+reference = "docs/root-auth.md"
+result = "Post-mount observation separated from crypto, actual filesystem/I/O counters and future authenticated transport; root refusal retained"
+
 [[area]]
 id = "network"
 status = "planned"
@@ -158,7 +205,7 @@ paths = ["package/**", "dts/**", "drivers/**", "scripts/**"]
 inputs = ["QCA6390 Wi-Fi; the public lmi UEFI/touch/GPU work records QCA6390 platform adaptation as its remaining networking work."]
 configuration = ["No network component is selected."]
 procedure = ["Record the Wi-Fi transport (PCIe or MHI) and firmware files from the handset, then select a Wi-Fi component once one matches QCA6390."]
-findings = ["The catalog Wi-Fi component is Ath12kWifi (ath12k), which does not match QCA6390.", "The original-PMGR bridge adds no network firmware, transport or domain operation; network qualification remains pending.", "RAM-root preparation adds no network component or radio hardware claim.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O."]
+findings = ["The catalog Wi-Fi component is Ath12kWifi (ath12k), which does not match QCA6390.", "The original-PMGR bridge adds no network firmware, transport or domain operation; network qualification remains pending.", "RAM-root preparation adds no network component or radio hardware claim.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O.", "Root-auth diagnostic selects canonical VerifiedRoot and an eight-control real-XNU crypto instrument with the host-qualified exact RAM seed. Only the existing refusal message gains filesystem/read counters; no owner-root acceptance, original Apple executable, hardware address or persistent-storage behavior changes. See docs/root-auth.md for exact limits and next integration work."]
 completion = ["Scanning, association, address configuration and sustained receive/transmit traffic pass."]
 limits = ["No radio code and no firmware recorded."]
 next_action = ["Record the QCA6390 firmware files and the transport node before choosing a driver."]
@@ -168,6 +215,11 @@ kind = "source"
 reference = "docs/ram-root.md"
 result = "RAM-only root plan and scoped current observations; no complete OS or storage-I/O success claim"
 
+[[area.evidence]]
+kind = "source"
+reference = "docs/root-auth.md"
+result = "Post-mount observation separated from crypto, actual filesystem/I/O counters and future authenticated transport; root refusal retained"
+
 [[area]]
 id = "audio"
 status = "planned"
@@ -176,7 +228,7 @@ paths = ["package/**", "dts/**", "scripts/**", "proprietary-files.txt"]
 inputs = ["ADSP, CDSP and SLPI firmware from the vendor partition; GPR/GLink transport; the speaker and headset routes are unread."]
 configuration = ["No audio component is selected."]
 procedure = ["Extract the DSP firmware, record hashes in proprietary-files.txt, then select the DSP and audio components."]
-findings = ["Audio depends on firmware files that have not been extracted, so it stays behind the storage and firmware steps.", "The PMGR integration adds no DSP, codec, audio routing or power operation; audio dependencies remain pending.", "RAM-root preparation adds no audio component or codec hardware claim.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O."]
+findings = ["Audio depends on firmware files that have not been extracted, so it stays behind the storage and firmware steps.", "The PMGR integration adds no DSP, codec, audio routing or power operation; audio dependencies remain pending.", "RAM-root preparation adds no audio component or codec hardware claim.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O.", "Root-auth diagnostic selects canonical VerifiedRoot and an eight-control real-XNU crypto instrument with the host-qualified exact RAM seed. Only the existing refusal message gains filesystem/read counters; no owner-root acceptance, original Apple executable, hardware address or persistent-storage behavior changes. See docs/root-auth.md for exact limits and next integration work."]
 completion = ["Each declared route carries audio through playback or capture and handles start and stop."]
 limits = ["No firmware file recorded and no audio code."]
 next_action = ["Extract adsp, cdsp and slpi and record their hashes."]
@@ -185,6 +237,11 @@ next_action = ["Extract adsp, cdsp and slpi and record their hashes."]
 kind = "source"
 reference = "docs/ram-root.md"
 result = "RAM-only root plan and scoped current observations; no complete OS or storage-I/O success claim"
+
+[[area.evidence]]
+kind = "source"
+reference = "docs/root-auth.md"
+result = "Post-mount observation separated from crypto, actual filesystem/I/O counters and future authenticated transport; root refusal retained"
 
 [[area]]
 id = "power"
@@ -217,7 +274,7 @@ paths = ["board.toml", "patches/**", "package/**", "scripts/**"]
 inputs = ["Boot image format: Android boot header, 4096-byte pages; boot_a/boot_b size unread.", "Payload inputs: the kernel and its ADT, a trust cache bundle, a dense or packed Data seed, and the platform seed passed with --unique-chip-id.", "The firmware volume must carry UniXNURamDiskDxe, DiskIoDxe and FAT support for the initrd payload."]
 configuration = ["board.toml [payload]: volume LMIPROESP, size_mib 192 (guide template value), loader firmware, kernel_args -v serial=3.", "board.toml [payload.adt]: unique_chip_id required, so no seed is stored in the repository.", "XnuPrelink and DarwinBoot are selected; the OS profile supplies the donor IPSW, prelink roots, early-security address and text fixups."]
 procedure = ["python unixnu build payload -D ../UniXNU-lmipro --unique-chip-id <hex> --trust-cache <bundle> --data-ramdisk <seed>", "python unixnu bootimg -D ../UniXNU-lmipro --uefi ../uefi-lmipro --dtb <firmware.dtb>"]
-findings = ["The verified current UEFI is reused by hash. The next payload uses sheng-pmgr=1 and the official no-reset panic screen after linking the PMGR archive.", "Test payload will carry a <=8 MiB official DBRDISK1 APFS seed and its measured volume UUID within the current 64 MiB FAT; this is not a complete system image.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O."]
+findings = ["The verified current UEFI is reused by hash. The next payload uses sheng-pmgr=1 and the official no-reset panic screen after linking the PMGR archive.", "Test payload will carry a <=8 MiB official DBRDISK1 APFS seed and its measured volume UUID within the current 64 MiB FAT; this is not a complete system image.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O.", "Root-auth diagnostic selects canonical VerifiedRoot and an eight-control real-XNU crypto instrument with the host-qualified exact RAM seed. Only the existing refusal message gains filesystem/read counters; no owner-root acceptance, original Apple executable, hardware address or persistent-storage behavior changes. See docs/root-auth.md for exact limits and next integration work."]
 completion = ["Kernel and prelink succeed, the payload contains every declared input, and the boot image matches the bootloader format and size limit."]
 limits = ["The payload and boot image need the real DRAM size, the userdata geometry, a trust cache and a Data seed; the firmware volume needs Binaries/lmi."]
 next_action = ["Record the boot partition size and the handset memory map, then build the payload and boot image."]
@@ -234,6 +291,11 @@ kind = "source"
 reference = "docs/ram-root.md"
 result = "RAM-only root plan and scoped current observations; no complete OS or storage-I/O success claim"
 
+[[area.evidence]]
+kind = "source"
+reference = "docs/root-auth.md"
+result = "Post-mount observation separated from crypto, actual filesystem/I/O counters and future authenticated transport; root refusal retained"
+
 [[area]]
 id = "diagnostics"
 status = "planned"
@@ -242,10 +304,10 @@ paths = ["scripts/**", "package/**", "dts/**"]
 inputs = ["No serial console is available through the SoC UART with the XNU backend; the lmi UEFI work reports through firmware menus, the panel and a USB CDC-ACM console."]
 configuration = ["Official entry/panic screen on a payload copy, no deliberate reset; record exact image SHA and actual photographed stop."]
 procedure = ["Integrate the firmware log exporter (QR code) from the log-capture guide, and photograph the panel for each bring-up stage."]
-findings = ["Image 5f5cbdfb0350d8a345ce9fc8dc87e70ddeb38acb41642243935ffca0c908b35e produced actual AMFI: No PMGR? at ConfigurationSettings.cpp:235; photograph 1793311356118.jpg.", "The next mode-1 diagnostic reports PASS only after actual ABI, binding, read-value and cleanup checks; this is separate from functional power support.", "Publication image fec97f0894a44d6633fa1def3b821508604a5953fb645eee6e271e607d6e0dc6 reached IOKitBSDInit.cpp984 on the handset. Root discovery, filesystem mount and userland launch must be recorded separately.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O."]
+findings = ["Image 5f5cbdfb0350d8a345ce9fc8dc87e70ddeb38acb41642243935ffca0c908b35e produced actual AMFI: No PMGR? at ConfigurationSettings.cpp:235; photograph 1793311356118.jpg.", "The next mode-1 diagnostic reports PASS only after actual ABI, binding, read-value and cleanup checks; this is separate from functional power support.", "Publication image fec97f0894a44d6633fa1def3b821508604a5953fb645eee6e271e607d6e0dc6 reached IOKitBSDInit.cpp984 on the handset. Root discovery, filesystem mount and userland launch must be recorded separately.", "Run41023291769 stopped in the host registration-name guard: a literal backslash-zero was compared instead of a NUL terminator. Corrected only the host comparator and replayed original registration0xfffffff00496f09c against candidate49334c98; no runtime driver, security or hardware inputs changed.", "Run41026312928 passed the complete 190-slot RamBlock ABI audit, then the static kernel link required definitions for all six weak optional native_ufs_store callbacks. The board RAM-only selection returns mode0 and failure for every persistent I/O; actual ARM64 code is checked. This does not implement or touch UFS and does not claim successful disk I/O.", "Root-auth diagnostic selects canonical VerifiedRoot and an eight-control real-XNU crypto instrument with the host-qualified exact RAM seed. Only the existing refusal message gains filesystem/read counters; no owner-root acceptance, original Apple executable, hardware address or persistent-storage behavior changes. See docs/root-auth.md for exact limits and next integration work."]
 completion = ["Every claimed milestone has a reproducible command, a matching revision and an accessible result."]
 limits = ["Screen evidence covers the current panic, not a complete boot log or full system boot."]
-next_action = ["Distinguish root-device discovery from mount and userland startup using the next actual panic screen."]
+next_action = ["Capture LMIPRO ROOT filesystem, RAM read/failure counts, crypto status and eight result codes after checksum-verified temporary boot."]
 
 [[area.evidence]]
 kind = "device"
@@ -258,3 +320,8 @@ revision = "856eac9bad80ebea9ae5a1ba7968b011983e0697"
 kind = "source"
 reference = "docs/ram-root.md"
 result = "RAM-only root plan and scoped current observations; no complete OS or storage-I/O success claim"
+
+[[area.evidence]]
+kind = "source"
+reference = "docs/root-auth.md"
+result = "Post-mount observation separated from crypto, actual filesystem/I/O counters and future authenticated transport; root refusal retained"

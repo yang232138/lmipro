@@ -24,3 +24,6 @@ CONFIG_XNU_SHENG_PMGR=y
 
 # Canonical RAM-only block transport; no UFS driver or persistent store.
 CONFIG_XNU_NATIVE_RAM_BLOCK=y
+
+# Official crypto instrument only; owner root trust remains disabled.
+CONFIG_XNU_VERIFIED_ROOT_PROBE=y

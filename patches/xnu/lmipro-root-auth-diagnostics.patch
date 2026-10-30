@@ -1,0 +1,26 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1097,3 +1097,22 @@
+ 			if (autherr && !owner_authorized) {
++#if defined(XNU_VERIFIED_ROOT_PROBE) && XNU_VERIFIED_ROOT_PROBE
++				extern volatile uint32_t native_verified_root_status;
++				extern volatile uint32_t native_verified_root_results[8];
++				extern volatile uint32_t native_ram_block_ready;
++				extern volatile uint64_t native_ram_block_reads;
++				extern volatile uint64_t native_ram_block_failures;
++				panic("LMIPRO ROOT fs=%s crypto=%u\n"
++				    "ram=%u reads=%llu failures=%llu\n"
++				    "checks=%u,%u,%u,%u,%u,%u,%u,%u autherr=%d",
++				    vfs_statfs(vnode_mount(rootvnode))->f_fstypename,
++				    native_verified_root_status, native_ram_block_ready,
++				    (unsigned long long)native_ram_block_reads,
++				    (unsigned long long)native_ram_block_failures,
++				    native_verified_root_results[0], native_verified_root_results[1],
++				    native_verified_root_results[2], native_verified_root_results[3],
++				    native_verified_root_results[4], native_verified_root_results[5],
++				    native_verified_root_results[6], native_verified_root_results[7], autherr);
++#else
+ 				panic("rootvp not authenticated after mounting");
++#endif
+ 			}

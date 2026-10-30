@@ -14,7 +14,7 @@ kit = "lmipro"
 # repeated here and DarwinBoot, which the firmware volume carries, is added.
 # Storage, display, input, GPU and Wi-Fi components are selected only when their
 # board inputs and evidence exist; see porting.toml.
-include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "RamBlock"]
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "RamBlock", "VerifiedRoot"]
 
 [kernel]
 defconfig = "lmipro_defconfig"
@@ -34,6 +34,7 @@ archives = [
   "component:RamBlock",
   "build-lmipro-ram-block-bindings.py",
   "build-lmipro-platform-power.py",
+  "build-lmipro-root-crypto.py",
 ]
 
 [device_tree]
