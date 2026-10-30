@@ -35,3 +35,15 @@ may therefore be the next genuine failure. Do not weaken root/AMFI policy or
 claim system boot. Keep sheng-pmgr=2 and the no-reset panic screen for evidence.
 Use only fastboot boot on the checksum-verified image. No phone partitions,
 internal storage addresses, DMA windows, registers or vendor binaries change.
+
+## First host build result
+
+Run41023291769 compiled the actual unmodified RamBlock object, then correctly
+stopped at the board binding guard before kernel linking. The host comparator
+had a literal backslash-zero instead of the C class-name NUL terminator.
+The corrected guard was replayed against qualified kernel49334c98: genuine
+registration0xfffffff00496f09c, metaclass0xfffffff006add1d0, real IOService parent
+0xfffffff007b01538 and original OSMetaClass constructor import all matched.
+This corrects host validation only. No check was skipped and no driver or
+original executable instructions changed. Final archive/link/image verification
+and actual root-device I/O remain pending a successful new build and handset test.

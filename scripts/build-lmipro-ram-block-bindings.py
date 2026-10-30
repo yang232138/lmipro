@@ -196,7 +196,7 @@ for pc in range(text['va']+24,text['va']+text['size']-4,4):
         target=adradd(pc-24,0)
         if target!=meta:continue
         name=adradd(pc-16,1)
-        require(read(name,21)==b'IOBlockStorageDevice\\0','Original class name differs')
+        require(read(name,21)==b'IOBlockStorageDevice\0','Original class name differs')
         first,load=struct.unpack('<2I',read(pc-8,8))
         require(load & 0xffc003ff==0xf9400042,'Expected original parent GOT load')
         slot=adrp(pc-8,first,2)+(load>>10 & 4095)*8
