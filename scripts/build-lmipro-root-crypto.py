@@ -49,10 +49,19 @@ _verified_root_samples:
 .incbin "'''+str(samples)+'"\n')
 record=json.loads((ROOT/'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o.json').read_text().strip().rstrip(','))
 objects=[]
+pruned_includes=[]
 for source in [ROOT/'kits/VerifiedRoot/src/verified_root.c',ROOT/'kits/VerifiedRoot/adapters/xnu_crypto.c',ROOT/'scripts/qemu-entry/verified-root-probe.c']:
     destination=out/(source.stem+'.o');args=record['arguments'];command=[];i=0
     while i<len(args):
         value=args[i]
+        if value=='-I' and i+1<len(args):
+            include=Path(args[i+1])
+            if include.parts[-2:]==('EXPORT_HDRS','libsa') and not include.is_dir():
+                pruned_includes.append(str(include));i+=2;continue
+        if value.startswith('-I') and value!='-I':
+            include=Path(value[2:])
+            if include.parts[-2:]==('EXPORT_HDRS','libsa') and not include.is_dir():
+                pruned_includes.append(str(include));i+=1;continue
         if value==record['file']:command.append(str(source))
         elif value=='-o':command+=['-o',str(destination)];i+=1
         elif value in ('-MF','-MJ'):i+=1
@@ -81,6 +90,7 @@ report=dict(manifest_sha256=sha(manifest),manifest_bytes=manifest.stat().st_size
     test_image_sha256=metadata['image_sha256'],test_image_bytes=metadata['image_bytes'],
     test_image_block_count=65526,actual_sample_indices=indices,actual_sample_lengths=lengths,
     host_checks_passed=len(host['checks']),official_probe_source_unmodified=True,
+    absent_optional_libsa_include_dirs=sorted(set(pruned_includes)),strict_werror=True,
     verified_root_revision='def026642c6c6e71be0dea267d989df1d29ddc64',
     complete_os=False,boot_root_authenticated=False,owner_root_trust_enabled=False,
     real_xnu_crypto_observed=False,hardware_tested=False)

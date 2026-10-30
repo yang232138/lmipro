@@ -46,3 +46,12 @@ readonly mounted-device policy binding before accepting an owner root. A full
 system needs real OS/SystemOS images and a suitable SM8250 storage path; the
 tiny blank test seed is not a system. Do not reuse SM8550 register constants,
 change physical windows, overwrite userdata or claim complete iPadOS boot.
+
+## First source build
+
+Run41034654383 compiled the diagnostic BSD source and existing block/power
+archives, then stopped in the new crypto archive. An inherited include option
+named absent EXPORT_HDRS/libsa; strict -Werror promoted that directory warning.
+The recipe now removes only this exact optional directory when it is absent,
+records the path and retains -Werror for all three official crypto sources.
+No crypto implementation, signature result or root authentication is bypassed.
