@@ -21,3 +21,6 @@ CONFIG_XNU_DT_PANIC_REGION=y
 
 # Opt-in ABI-gated original PMGR integration; runtime mode defaults off.
 CONFIG_XNU_SHENG_PMGR=y
+
+# Canonical RAM-only block transport; no UFS driver or persistent store.
+CONFIG_XNU_NATIVE_RAM_BLOCK=y
