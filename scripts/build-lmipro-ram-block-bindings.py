@@ -288,13 +288,32 @@ assembly.write_text(''.join(f'.globl {name}\n.set {name}, {value:#x}\n' for name
 subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Werror', '-Wno-incompatible-sysroot',
                 '-c', assembly, '-o', out / 'original-bindings.o'], check=True)
 archive = out / ('lib' + canonical + '.a')
+store_source = ROOT / 'kits/lmipro/LmiproRamOnlyStore.c'
+store_object = out / 'LmiproRamOnlyStore.o'
+subprocess.run(['xcrun','clang','-target','arm64-apple-ios17.0','-O2',
+                '-ffreestanding','-fno-builtin','-fno-stack-protector','-mgeneral-regs-only',
+                '-Wall','-Wextra','-Werror','-Wno-incompatible-sysroot',
+                '-c',store_source,'-o',store_object],check=True)
+store_data = store_object.read_bytes()
+store_image = np.macho(store_data)
+store_symbols = np.exports(store_data,store_image)
+store_names = {name:address for address,names in store_symbols.items() for name in names}
+store_expected = {'_native_ufs_store_'+name for name in ('mode','open','read','write','sync','gpt_check')}
+require(store_expected <= store_names.keys(), 'All six exact optional-store signatures must be defined')
+section = next(s for seg in store_image['segments'] for s in seg['sections'] if s['name']=='__text')
+mode_at=section['fileoff']+store_names['_native_ufs_store_mode']-section['va']
+require(struct.unpack_from('<2I',store_data,mode_at) in ((0x52800000,0xd65f03c0),(0x2a1f03e0,0xd65f03c0)),
+        'RAM-only mode must return zero immediately without calls or hardware access')
 archive.unlink(missing_ok=True)
-subprocess.run(['xcrun', 'ar', 'rcs', archive, obj_path, out / 'original-bindings.o'], check=True)
+subprocess.run(['xcrun', 'ar', 'rcs', archive, obj_path, out / 'original-bindings.o',store_object], check=True)
 (out / 'bindings.json').write_text(json.dumps(dict(original_candidate_sha256=audit['candidate_sha256'],
     compiled_object_sha256=hashlib.sha256(obj).hexdigest(), virtual_methods_checked=190,
     concrete_overrides=overrides, unresolved_original_imports=0,
     bindings={name: hex(value) for name, value in bindings.items()}, original_code_modified=False,
-    actual_io_qualified=False), indent=2) + '\n')
+    actual_io_qualified=False,ram_only_store_mode=0,persistent_io_available=False,
+    ram_only_store_source_sha256=hashlib.sha256(store_source.read_bytes()).hexdigest(),
+    ram_only_store_object_sha256=hashlib.sha256(store_data).hexdigest(),
+    ram_only_store_callbacks=sorted(store_expected)), indent=2) + '\n')
 
 print('PASS: exact 190-slot static storage ABI and actual RamBlock imports; device I/O remains unqualified')
 

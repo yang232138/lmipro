@@ -47,3 +47,21 @@ registration0xfffffff00496f09c, metaclass0xfffffff006add1d0, real IOService pare
 This corrects host validation only. No check was skipped and no driver or
 original executable instructions changed. Final archive/link/image verification
 and actual root-device I/O remain pending a successful new build and handset test.
+
+## RAM-only optional-store definitions
+
+Run41026312928 passed the full original-storage and concrete RamBlock binding
+audit. Final static XNU linking then rejected the six optional weak persistence
+callbacks despite the upstream mode guard. LmiproRamOnlyStore.c explicitly
+selects mode0. Open/read/write/sync/GPT operations return unavailable/failure;
+read does not fill a buffer and write performs no operation. No successful
+persistent I/O is fabricated. The unmodified RamBlock guard skips its entire
+persistent-store path when mode0 is returned, retaining the real RAM transport.
+
+The board build adds the freestanding ordinary-ARM64/iOS17 object to the
+RamBlock archive. The six exact exported signatures and immediate mode0 return
+were checked on a locally compiled actual ARM64 Mach-O object. The final kernel
+verifier checks all six definitions and the linked mode0 instructions again.
+There are no UFS MMIO, GPT reads, persistent windows, physical-device paths,
+security changes or successful persistent-I/O claims. Hardware root discovery,
+actual RAM I/O and mounting remain pending the next qualified temporary image.
