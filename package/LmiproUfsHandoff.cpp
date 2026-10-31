@@ -57,6 +57,11 @@ extern "C" void lmipro_ufs_handoff_probe(void)
   if (parsed) {
     if (mode == 4) { lmipro_ufs_alloc_probe(); return; }
     if (mode == 8) { lmipro_ufs_window_probe(); return; }
+    if (mode == 9 || mode == 10 || mode == 11) {
+      gReadLevel = (mode == 9) ? 3 : (mode == 10) ? 4 : 5;
+      lmipro_ufs_read_probe(true);
+      return;
+    }
     if (mode == 2 || mode == 3 || mode == 5 || mode == 6) {
       gReadLevel = (mode == 5) ? 1 : (mode == 6) ? 2 : 0;
       lmipro_ufs_read_probe(mode == 3);
@@ -343,11 +348,24 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
     return reply;
   };
 
+  // level 3: submit one TUR only, before any state-changing command.
+  if (gReadLevel == 3) {
+    uint8_t turOnly[6] = { 0, 0, 0, 0, 0, 0 };
+    LmiproUfsReply only = command(0, turOnly, 6, false, 0);
+    panic("LMIPRO UFS TUR-ONLY\ndma=%llx tur=%06x hcs=%08x db=%08x is=%08x",
+          phys, replyTriplet(only), readWord(hc, 0x30), readWord(hc, 0x58), readWord(hc, 0x20));
+  }
+
   // The firmware parks the device in UFS-PowerDown; wake it through the UFS
   // Device well-known LU (0xD0), power condition ACTIVE. No user data is touched.
-  uint8_t startStop[6] = { 0x1b, 0, 0, 0, 0x10, 0 };
+  uint8_t powerCondition = (gReadLevel == 5) ? 0x01 : 0x10;
+  uint8_t startStop[6] = { 0x1b, 0, 0, 0, powerCondition, 0 };
   LmiproUfsReply wake = command(0xd0, startStop, 6, false, 0);
   for (unsigned settle = 0; settle < 30; settle++) IODelay(1000);
+  if (gReadLevel == 4 || gReadLevel == 5) {
+    panic("LMIPRO UFS SSU\npc=%02x dma=%llx ssu=%06x hcs=%08x db=%08x is=%08x",
+          powerCondition, phys, replyTriplet(wake), readWord(hc, 0x30), readWord(hc, 0x58), readWord(hc, 0x20));
+  }
 
   uint8_t testUnit[6] = { 0, 0, 0, 0, 0, 0 };
   LmiproUfsReply ready = command(0, testUnit, 6, false, 0);
