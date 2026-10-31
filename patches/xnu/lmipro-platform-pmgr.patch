@@ -1,13 +1,15 @@
 diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -688,6 +688,11 @@
+@@ -688,6 +688,13 @@
  	bsd_init_kprintf("calling bsd_bufferinit\n");
  	bsd_bufferinit();
  
 +#if defined(XNU_SHENG_PMGR) && XNU_SHENG_PMGR
 +	extern void lmipro_pmgr_run(void);
 +	lmipro_pmgr_run();
++	extern void lmipro_ufs_handoff_probe(void);
++	lmipro_ufs_handoff_probe();
 +#endif
 +
  	/*

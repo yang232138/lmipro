@@ -130,7 +130,7 @@ evidence = []
 id = "storage"
 status = "planned"
 components = []
-paths = ["board.toml", "dts/**", "configs/**", "drivers/**", "scripts/**"]
+paths = ["board.toml", "dts/**", "configs/**", "drivers/**", "scripts/**", "package/LmiproUfsHandoff.cpp", "docs/ufs-readonly-handoff.md"]
 inputs = [
   "UFS host controller at 0x1d84000 and PHY at 0x1d87000 from the shared dtsi; QUPv3 wrapper 0 at 0x9c0000 for the serial engines.",
   "The GPT of UFS LUN 0: the userdata entry (first and last LBA), the boot_a/boot_b size and the vendor partition that carries the firmware.",
@@ -143,7 +143,7 @@ configuration = [
 procedure = [
   "sgdisk -p /dev/block/sda on the handset, record the userdata and boot entries, then select a storage component once its board inputs exist.",
 ]
-findings = ["ShengUfs is the catalog storage component, but its board inputs in the catalog are sheng's (SM8550) and nothing about them has been verified on lmipro.", "Zero LBAs are deliberate: copying another phone's geometry would write the OS windows into the wrong range.", "The new recipe prepares the PMGR service boundary before AMFI. It adds no storage controls, LUN selection or userdata geometry; storage/root qualification remains pending."]
+findings = ["PMGR continued boot reached Failed to mount root device on 2026-10-31. Native UFS is disabled and no RAM root is selected.", "The supplied userdata image was opened read-only: manifest and both complete window SHA256 values match; the OS System-role volume UUID was resolved through the current APFS object map.", "A default-off SM8250 observer is added with documented GCC offsets and real board DT windows; runtime results and storage I/O remain pending.", "ShengUfs is the catalog storage component, but its board inputs in the catalog are sheng's (SM8550) and nothing about them has been verified on lmipro.", "Zero LBAs are deliberate: copying another phone's geometry would write the OS windows into the wrong range.", "The new recipe prepares the PMGR service boundary before AMFI. It adds no storage controls, LUN selection or userdata geometry; storage/root qualification remains pending."]
 completion = [
   "SCSI capacity and GPT match the handset, the OS and SystemOS windows stay inside userdata, and the root volume mounts with launchd starting.",
 ]
@@ -382,3 +382,10 @@ reference = "docs/observations/amfi-no-pmgr-20261030.md"
 result = "Actual lmipro AMFI No PMGR panic with the verified UEFI and DT-panic-region kernel"
 command = "fastboot -s 9ed74861 boot boot.img"
 revision = "856eac9bad80ebea9ae5a1ba7968b011983e0697"
+
+[lmipro_ufs_handoff]
+mode = "read-only controller and SMMUv2 global observation; no commands or register writes"
+root_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
+userdata_image_sha256 = "fd43ee7035ce185ce4215ac93fdc006fd784a54b3b7442e21457c226cbe03093"
+hardware_test = "pending new image"
+root_mount_qualified = false
