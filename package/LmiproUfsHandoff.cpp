@@ -59,6 +59,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 4) { lmipro_ufs_alloc_probe(); return; }
     if (mode == 8) { lmipro_ufs_window_probe(); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
+    if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
       gReadLevel = (mode == 9) ? 3 : (mode == 10) ? 4 : 5;
       lmipro_ufs_read_probe(true);
@@ -358,6 +359,32 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
     reply.scsi = rsp[7];
     return reply;
   };
+
+  // level 7: ring the doorbell for a NOP OUT and report immediately, without
+  // waiting for completion, so a reset can be attributed to one of the two.
+  if (gReadLevel == 7) {
+    uint8_t* utrd = virt;
+    uint8_t* ucd = virt + ucdOffset;
+    zeroRange(utrd, 32);
+    zeroRange(ucd, 1040);
+    ucd[0] = 0x00;                  // NOP OUT
+    ucd[3] = 1;                     // task tag
+    uint64_t ucdPhys = phys + ucdOffset;
+    volatile uint32_t* words = reinterpret_cast<volatile uint32_t*>(utrd);
+    words[0] = 0x10000000U;
+    words[1] = 0U;
+    words[2] = 0x0fU;
+    words[4] = uint32_t(ucdPhys);
+    words[5] = uint32_t(ucdPhys >> 32);
+    words[6] = (512U >> 2) | ((rspOffset >> 2) << 16);
+    words[7] = (prdtOffset >> 2) << 16;
+    cacheCleanRange(virt, 16384);
+    writeWord(hc, 0x20, 0xffffffffU);
+    writeWord(hc, 0x58, 1);
+    panic("LMIPRO UFS DOORBELL\ndma=%llx hcs=%08x db=%08x is=%08x\nutrd=%08x %02x %08x %08x",
+          phys, readWord(hc, 0x30), readWord(hc, 0x58), readWord(hc, 0x20),
+          words[0], words[2], words[4], words[6]);
+  }
 
   // level 6: NOP OUT, a controller-local command that never reaches the device.
   if (gReadLevel == 6) {
