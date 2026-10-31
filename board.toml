@@ -98,4 +98,6 @@ panic_screen = false
 # build's chip id from the OS profile.
 chip_id = "0x8011"
 unique_chip_id = "required"
-root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
+# root_match_volume_uuid stays out until make-adt.py grows
+# --root-match-volume-uuid: payload.py forwards it and this revision rejects it.
+# Read from the supplied OS window: 04769D26-2CA0-4825-B443-E2E5F88300F2
