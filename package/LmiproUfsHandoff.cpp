@@ -317,20 +317,23 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
     for (unsigned index = 0; index < cdbLength; index++) ucd[16 + index] = cdb[index];
     uint64_t ucdPhys = phys + ucdOffset;
     uint32_t direction = length ? (toHost ? 2U : 1U) : 0U;
-    *reinterpret_cast<uint32_t*>(utrd + 0) = 0x10000000U | (direction << 25);
-    *reinterpret_cast<uint32_t*>(utrd + 4) = 8U;       // UTP Command IU length, dwords (32 bytes)
-    *reinterpret_cast<uint32_t*>(utrd + 8) = 0x0fU;    // OCS: never completed
-    *reinterpret_cast<uint32_t*>(utrd + 16) = uint32_t(ucdPhys);
-    *reinterpret_cast<uint32_t*>(utrd + 20) = uint32_t(ucdPhys >> 32);
-    *reinterpret_cast<uint32_t*>(utrd + 24) = (512U >> 2) | ((rspOffset >> 2) << 16);
+    // The descriptor is read by the controller: volatile word stores keep the
+    // compiler from fusing neighbours (0x04/0x08) into an unaligned 64-bit store.
+    volatile uint32_t* utrdWords = reinterpret_cast<volatile uint32_t*>(utrd);
+    utrdWords[0] = 0x10000000U | (direction << 25);
+    utrdWords[1] = 8U;                                  // UTP Command IU length, dwords (32 bytes)
+    utrdWords[2] = 0x0fU;                               // OCS: never completed
+    utrdWords[4] = uint32_t(ucdPhys);
+    utrdWords[5] = uint32_t(ucdPhys >> 32);
+    utrdWords[6] = (512U >> 2) | ((rspOffset >> 2) << 16);
     if (length) {
       uint64_t dataPhys = phys + dataOffset;
-      uint8_t* prd = ucd + prdtOffset;
-      *reinterpret_cast<uint32_t*>(prd + 0) = uint32_t(dataPhys);
-      *reinterpret_cast<uint32_t*>(prd + 4) = uint32_t(dataPhys >> 32);
-      *reinterpret_cast<uint32_t*>(prd + 12) = length - 1;
+      volatile uint32_t* prdWords = reinterpret_cast<volatile uint32_t*>(ucd + prdtOffset);
+      prdWords[0] = uint32_t(dataPhys);
+      prdWords[1] = uint32_t(dataPhys >> 32);
+      prdWords[3] = length - 1;
     }
-    *reinterpret_cast<uint32_t*>(utrd + 28) = (length ? 1U : 0U) | ((prdtOffset >> 2) << 16);
+    utrdWords[7] = (length ? 1U : 0U) | ((prdtOffset >> 2) << 16);
     cacheCleanRange(virt, 16384);
     writeWord(hc, 0x20, 0xffffffffU);
     writeWord(hc, 0x58, 1);
