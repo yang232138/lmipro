@@ -21,8 +21,15 @@ command+=['-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-c99-designat
 subprocess.run(command,cwd=record['directory'],check=True,timeout=90)
 symbols=subprocess.check_output(['llvm-nm','--defined-only',str(obj)],text=True)
 assert '_lmipro_ufs_handoff_probe' in symbols and '_lmipro_ufs_handoff_observation' in symbols
+assert '_lmipro_ufs_read_probe' in symbols
 text=source.read_text()
-assert 'const volatile uint32_t*' in text and 'writeWord' not in text and 'write32' not in text
+# mode 1 keeps a read-only register surface; mode 2 adds one adopted READ(10) path
+# whose CDB set must stay read-class (TUR, SSU, READ CAPACITY, READ(10)).
+assert 'const volatile uint32_t*' in text
+for cdb in ('0x28', '0x25', '0x1b'):
+    assert cdb in text, cdb
+for forbidden in ('0x0a', '0x2a', '0x8a'):
+    assert forbidden not in text, forbidden
 archive=root/'build/sheng-platform-power/libShengPlatformPower.a'
 proofpath=archive.parent/'build-report.json';pmgr=json.loads(proofpath.read_text())
 assert pmgr['virtual_entries']==340 and not pmgr['original_executable_modified']
