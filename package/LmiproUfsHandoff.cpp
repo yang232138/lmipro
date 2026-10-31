@@ -318,6 +318,7 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
     uint64_t ucdPhys = phys + ucdOffset;
     uint32_t direction = length ? (toHost ? 2U : 1U) : 0U;
     *reinterpret_cast<uint32_t*>(utrd + 0) = 0x10000000U | (direction << 25);
+    *reinterpret_cast<uint32_t*>(utrd + 4) = 8U;       // UTP Command IU length, dwords (32 bytes)
     *reinterpret_cast<uint32_t*>(utrd + 8) = 0x0fU;    // OCS: never completed
     *reinterpret_cast<uint32_t*>(utrd + 16) = uint32_t(ucdPhys);
     *reinterpret_cast<uint32_t*>(utrd + 20) = uint32_t(ucdPhys >> 32);
