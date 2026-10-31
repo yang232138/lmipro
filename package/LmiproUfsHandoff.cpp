@@ -284,16 +284,19 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
   if (doorbell != 0) panic("LMIPRO UFS READ: request outstanding db=%08x hcs=%08x", doorbell, hcsBefore);
 
   // Quiesce the firmware's list before touching its base address.
-  writeWord(hc, 0x24, 0);
+  writeWord(hc, 0x24, 0);            // mask interrupts
+  writeWord(hc, 0x4c, 0);            // UTP interrupt aggregation off, as Linux does
   writeWord(hc, 0x60, 0);
   unsigned guard = 10000;
   while ((readWord(hc, 0x60) & 1) && guard--) IODelay(10);
   uint32_t runStop = readWord(hc, 0x60);
   if (runStop & 1) panic("LMIPRO UFS READ: list did not stop rsr=%08x hcs=%08x", runStop, readWord(hc, 0x30));
 
+  writeWord(hc, 0x5c, 0xffffffffU);  // clear the transfer request list
   writeWord(hc, 0x50, uint32_t(phys));
   writeWord(hc, 0x54, uint32_t(phys >> 32));
   writeWord(hc, 0x20, 0xffffffffU);
+  writeWord(hc, 0x70, 1);            // task management list run
   writeWord(hc, 0x60, 1);
   bool listReady = false;
   for (unsigned loops = 0; loops < 100000 && !listReady; loops++) {
