@@ -54,9 +54,11 @@ extern "C" void lmipro_ufs_handoff_probe(void)
   // mode 5: allocate, stop and restart the request list, then report.
   // mode 6: allocate, stop/restart, wake the device and TUR, then report.
   // mode 8: read the first words of the firmware UTRLBA window, write nothing.
+  // mode 12: submit one NOP OUT, which the controller completes without the device.
   if (parsed) {
     if (mode == 4) { lmipro_ufs_alloc_probe(); return; }
     if (mode == 8) { lmipro_ufs_window_probe(); return; }
+    if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
       gReadLevel = (mode == 9) ? 3 : (mode == 10) ? 4 : 5;
       lmipro_ufs_read_probe(true);
@@ -303,25 +305,30 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
           phys, runStop, hcsBefore, hcsAfter, listReady ? 1U : 0U);
   }
 
-  auto command = [&](uint8_t lun, const uint8_t* cdb, unsigned cdbLength, bool toHost, uint32_t length) -> LmiproUfsReply {
+  auto command = [&](uint8_t lun, const uint8_t* cdb, unsigned cdbLength, bool toHost, uint32_t length, bool nop = false) -> LmiproUfsReply {
     uint8_t* utrd = virt;
     uint8_t* ucd = virt + ucdOffset;
     zeroRange(utrd, 32);
     zeroRange(ucd, 1040);
     if (length) zeroRange(virt + dataOffset, length > 8192 ? 8192 : ((length + 31u) & ~31u));
-    ucd[0] = 0x01;                  // COMMAND UPIU
-    ucd[1] = toHost ? 0x40 : 0x00;  // flags: data-in
-    ucd[2] = lun;
-    ucd[3] = 0;                     // task tag
-    putBe32(ucd + 12, length);
-    for (unsigned index = 0; index < cdbLength; index++) ucd[16 + index] = cdb[index];
+    if (nop) {
+      ucd[0] = 0x00;                // NOP OUT: the controller completes it locally
+      ucd[3] = 1;                   // task tag
+    } else {
+      ucd[0] = 0x01;                // COMMAND UPIU
+      ucd[1] = toHost ? 0x40 : 0x00; // flags: data-in
+      ucd[2] = lun;
+      ucd[3] = 0;                   // task tag
+      putBe32(ucd + 12, length);
+      for (unsigned index = 0; index < cdbLength; index++) ucd[16 + index] = cdb[index];
+    }
     uint64_t ucdPhys = phys + ucdOffset;
-    uint32_t direction = length ? (toHost ? 2U : 1U) : 0U;
+    uint32_t direction = nop ? 0U : (length ? (toHost ? 2U : 1U) : 0U);
     // The descriptor is read by the controller: volatile word stores keep the
     // compiler from fusing neighbours (0x04/0x08) into an unaligned 64-bit store.
     volatile uint32_t* utrdWords = reinterpret_cast<volatile uint32_t*>(utrd);
     utrdWords[0] = 0x10000000U | (direction << 25);
-    utrdWords[1] = 8U;                                  // UTP Command IU length, dwords (32 bytes)
+    utrdWords[1] = 0U;                                  // reserved in the UTRD layout
     utrdWords[2] = 0x0fU;                               // OCS: never completed
     utrdWords[4] = uint32_t(ucdPhys);
     utrdWords[5] = uint32_t(ucdPhys >> 32);
@@ -351,6 +358,13 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
     reply.scsi = rsp[7];
     return reply;
   };
+
+  // level 6: NOP OUT, a controller-local command that never reaches the device.
+  if (gReadLevel == 6) {
+    LmiproUfsReply nop = command(0, nullptr, 0, false, 0, true);
+    panic("LMIPRO UFS NOP\ndma=%llx ocs=%02x resp=%02x scsi=%02x\nhcs=%08x db=%08x is=%08x",
+          phys, nop.ocs, nop.response, nop.scsi, readWord(hc, 0x30), readWord(hc, 0x58), readWord(hc, 0x20));
+  }
 
   // level 3: submit one TUR only, before any state-changing command.
   if (gReadLevel == 3) {
