@@ -13,3 +13,6 @@
 # is selected in board.toml and its hardware input exists (see porting.toml).
 # CONFIG_XNU_NATIVE_UFS is not set
 # CONFIG_XNU_NATIVE_ADRENO is not set
+
+CONFIG_XNU_DT_PANIC_REGION=y
+CONFIG_XNU_SHENG_PMGR=y
