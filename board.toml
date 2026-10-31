@@ -81,6 +81,9 @@ size_mib = 64
 loader = "firmware"
 title = "Redmi K30 Pro"
 kernel_args = ["-v", "serial=3", "boot-progress=2"]
+# Draw the first panic on the framebuffer: there is no serial console here,
+# and without this a panic is indistinguishable from a hang.
+panic_screen = true
 
 [payload.adt]
 # The platform seed is never stored in a repository: payload builds take it from
