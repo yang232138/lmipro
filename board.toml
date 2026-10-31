@@ -77,7 +77,7 @@ volume = "LMIPROESP"
 # partition-size:boot = 0x8000000). 64 MiB matches the 64 MiB the firmware
 # reserves at 0x93200000 for the ramdisk: 3 MiB firmware volume + device
 # tree + FAT volume must fit if the image is flashed.
-size_mib = 64
+size_mib = 86
 loader = "firmware"
 title = "Redmi K30 Pro"
 kernel_args = ["-v", "serial=3", "boot-progress=2"]
