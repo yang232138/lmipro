@@ -382,10 +382,21 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
     words[6] = (512U >> 2) | ((rspOffset >> 2) << 16);
     words[7] = (prdtOffset >> 2) << 16;
     cacheCleanRange(virt, 16384);
+    // Disable the UFS SPI at the GIC so an unserviced interrupt cannot reset the
+    // SoC; both INTID candidates (265 and 297) are cleared, a no-op if unused.
+    OSSharedPtr<IOMemoryMap> gicMap;
+    uintptr_t gicd = mapWindow(0x017a00000ULL, 0x1000, gicMap);
+    uint32_t enLow = 0, enHigh = 0;
+    if (gicd) {
+      enLow = readWord(gicd, 0x120);
+      enHigh = readWord(gicd, 0x124);
+      writeWord(gicd, 0x1a0, 1U << 9);
+      writeWord(gicd, 0x1a4, 1U << 9);
+    }
     writeWord(hc, 0x20, 0xffffffffU);
     writeWord(hc, 0x58, 1);
-    panic("LMIPRO UFS DOORBELL\ndma=%llx hcs=%08x db=%08x is=%08x\nutrd=%08x %02x %08x %08x",
-          phys, readWord(hc, 0x30), readWord(hc, 0x58), readWord(hc, 0x20),
+    panic("LMIPRO UFS DOORBELL\ngic en8=%08x en9=%08x\ndma=%llx hcs=%08x db=%08x is=%08x\nutrd=%08x %02x %08x %08x",
+          enLow, enHigh, phys, readWord(hc, 0x30), readWord(hc, 0x58), readWord(hc, 0x20),
           words[0], words[2], words[4], words[6]);
   }
 
