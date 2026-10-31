@@ -15,4 +15,7 @@
 # CONFIG_XNU_NATIVE_ADRENO is not set
 
 CONFIG_XNU_DT_PANIC_REGION=y
-CONFIG_XNU_SHENG_PMGR=y
+
+# PMGR needs the two-stage reference build (flag-off candidate -> audit ->
+# rebuild); without overlay/diagnostics it cannot produce its archive.
+# CONFIG_XNU_SHENG_PMGR is not set
