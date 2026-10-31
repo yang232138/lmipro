@@ -81,9 +81,12 @@ size_mib = 64
 loader = "firmware"
 title = "Redmi K30 Pro"
 kernel_args = ["-v", "serial=3", "boot-progress=2"]
-# Draw the first panic on the framebuffer: there is no serial console here,
-# and without this a panic is indistinguishable from a hang.
-panic_screen = true
+# Answer one question: did the kernel get past enabling the MMU? A patched
+# kernel resets this many seconds after that point; no reset means it did not.
+entry_probe_reset_delay = 6
+# panic_screen is off: its entry-probe patch stalls the kernel before the MMU
+# is enabled, which hides the very failures it is meant to show.
+panic_screen = false
 
 [payload.adt]
 # The platform seed is never stored in a repository: payload builds take it from
