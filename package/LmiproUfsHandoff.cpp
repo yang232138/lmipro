@@ -186,10 +186,15 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
     if (!regionMap) panic("LMIPRO UFS READ: DMA window map failed base=%llx", phys);
     virt = reinterpret_cast<uint8_t*>(regionMap->getVirtualAddress());
   } else {
-    // Shipping path: physically contiguous kernel DMA, the same allocation a real
-    // block driver uses. apps_smmu is disabled, so this needs no stream mapping.
+    // Physically contiguous kernel DMA. IOMallocContiguous is the only allocator
+    // that returns a physical address directly; Apple deprecates it in favour of
+    // IOBufferMemoryDescriptor, which the full driver will adopt once the window
+    // grows past a single probe request.
     IOPhysicalAddress dmaPhys = 0;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     virt = static_cast<uint8_t*>(IOMallocContiguous(16384, 16384, &dmaPhys));
+#pragma clang diagnostic pop
     if (!virt) panic("LMIPRO UFS READ: contiguous DMA allocation failed");
     phys = dmaPhys;
     if (!phys || (phys & 0xfff)) panic("LMIPRO UFS READ: unusable DMA base %llx", phys);
