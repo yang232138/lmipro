@@ -37,15 +37,29 @@ static bool branchAvailable(uint32_t value)
 }
 
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow);
+extern "C" void lmipro_ufs_alloc_probe(void);
+
+// 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
+static unsigned gReadLevel = 0;
 
 extern "C" void lmipro_ufs_handoff_probe(void)
 {
   unsigned mode = 0;
   bool parsed = PE_parse_boot_argn("lmipro-ufs-handoff", &mode, sizeof(mode));
-  // mode 2: one READ(10) on kernel-allocated contiguous DMA (the shipping path).
-  // mode 3: same command, DMA window reused from the firmware's own UTRLBA.
-  // mode 1: read-only register observation, no command.
-  if (parsed && (mode == 2 || mode == 3)) { lmipro_ufs_read_probe(mode == 3); return; }
+  // mode 1: read-only register observation, no writes.
+  // mode 2: full read on kernel-allocated contiguous DMA.
+  // mode 3: full read on the firmware's own UTRLBA window.
+  // mode 4: contiguous DMA allocation only.
+  // mode 5: allocate, stop and restart the request list, then report.
+  // mode 6: allocate, stop/restart, wake the device and TUR, then report.
+  if (parsed) {
+    if (mode == 4) { lmipro_ufs_alloc_probe(); return; }
+    if (mode == 2 || mode == 3 || mode == 5 || mode == 6) {
+      gReadLevel = (mode == 5) ? 1 : (mode == 6) ? 2 : 0;
+      lmipro_ufs_read_probe(mode == 3);
+      return;
+    }
+  }
   if (!parsed || mode != 1) return;
   OSSharedPtr<IOMemoryMap> gccMap, hcMap, smmuMap;
   // GCC + 0x77000 covers only the known SM8250 UFS clock branch page.
@@ -166,6 +180,31 @@ static inline uint32_t replyTriplet(const LmiproUfsReply& reply)
   return (reply.ocs << 16) | (reply.response << 8) | reply.scsi;
 }
 
+// mode 4: prove a physically contiguous kernel allocation is writable and that
+// its physical address is usable, without touching the controller at all.
+extern "C" void lmipro_ufs_alloc_probe(void)
+{
+  IOPhysicalAddress dmaPhys = 0;
+  uint8_t* virt = nullptr;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  virt = static_cast<uint8_t*>(IOMallocContiguous(16384, 16384, &dmaPhys));
+#pragma clang diagnostic pop
+  if (!virt) panic("LMIPRO UFS ALLOC: allocation failed");
+  zeroRange(virt, 16384);
+  volatile uint32_t* words = reinterpret_cast<volatile uint32_t*>(virt);
+  for (unsigned index = 0; index < 4096; index++) words[index] = 0xa5a50000U | index;
+  cacheCleanRange(virt, 16384);
+  cacheInvalidateRange(virt, 16384);
+  unsigned mismatch = 0;
+  for (unsigned index = 0; index < 4096; index++) {
+    if (words[index] != (0xa5a50000U | index)) mismatch++;
+  }
+  panic("LMIPRO UFS ALLOC\nphys=%llx low=%08x mismatch=%u\nfirst=%08x last=%08x",
+        static_cast<uint64_t>(dmaPhys), static_cast<uint32_t>(dmaPhys), mismatch,
+        words[0], words[4095]);
+}
+
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
 {
   OSSharedPtr<IOMemoryMap> hcMap, regionMap;
@@ -228,6 +267,10 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
     if (!listReady) IODelay(1);
   }
   uint32_t hcsAfter = readWord(hc, 0x30);
+  if (gReadLevel == 1) {
+    panic("LMIPRO UFS STOP/RESTART\ndma=%llx runstop=%08x hcs=%08x->%08x ready=%u",
+          phys, runStop, hcsBefore, hcsAfter, listReady ? 1U : 0U);
+  }
 
   auto command = [&](uint8_t lun, const uint8_t* cdb, unsigned cdbLength, bool toHost, uint32_t length) -> LmiproUfsReply {
     uint8_t* utrd = virt;
@@ -285,6 +328,10 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
   for (unsigned attempt = 0; attempt < 8 && (ready.ocs || ready.scsi); attempt++) {
     IODelay(5000);
     ready = command(0, testUnit, 6, false, 0);
+  }
+  if (gReadLevel == 2) {
+    panic("LMIPRO UFS WAKE/TUR\ndma=%llx wake=%06x tur=%06x hcs=%08x db=%08x",
+          phys, replyTriplet(wake), replyTriplet(ready), readWord(hc, 0x30), readWord(hc, 0x58));
   }
 
   uint8_t capacity[10] = { 0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
