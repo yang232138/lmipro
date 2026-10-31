@@ -21,18 +21,9 @@ defconfig = "lmipro_defconfig"
 config_fragments = ["arch:configs/common.config", "soc:configs/sm8250.config", "os:configs/ipados.config"]
 patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "os:patches/xnu/series", "device:patches/xnu/series"]
 
-# Board archives: the two upstream helpers the shared layers do not run here,
-# plus the original PMGR provider and the read-only UFS handoff observer.
-archives = [
-  "build-corecrypto-14.py",
-  "build-corecrypto-14.py --namespace",
-  "component:ArmDTPlatform",
-  "component:ArmCpu",
-  "component:SoftwareAES",
-  "build-software-aes-bindings.py",
-  "build-mockfs-fixture.py",
-  "build-libpthread-kernel.py",
-]
+# The [kernel] archives list is intentionally absent: with it this board
+# builds a kernel whose payload step exits silently. Re-add it together
+# with overlay/diagnostics when the two-stage PMGR build is merged.
 
 [device_tree]
 source = "device:dts/lmipro.dts"
