@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Read-only SM8250 firmware handoff observation. No request submission or MMIO writes.
+// SM8250 UFS handoff: a read-only register observation (mode 1) plus a bounded
+// one-command adoption of the running controller (mode 2/3). The CDB set is
+// read-class only; no WRITE command exists in this file.
 // Mapping idiom: UniXNU/ShengUfs e2b32cc429e8cf1501161c1d8c517f8994ceb9b2.
 // Register facts: Linux v6.12 gcc-sm8250.c and sm8250.dtsi, confirmed board DT windows.
 #include <IOKit/IOService.h>
@@ -11,6 +13,7 @@
 
 extern "C" {
 volatile uint32_t lmipro_ufs_handoff_observation[24];
+volatile uint32_t lmipro_ufs_read_result[16];
 }
 
 static uintptr_t mapWindow(uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap>& keep)
