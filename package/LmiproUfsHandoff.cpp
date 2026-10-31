@@ -38,6 +38,7 @@ static bool branchAvailable(uint32_t value)
 
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow);
 extern "C" void lmipro_ufs_alloc_probe(void);
+extern "C" void lmipro_ufs_window_probe(void);
 
 // 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
 static unsigned gReadLevel = 0;
@@ -52,8 +53,10 @@ extern "C" void lmipro_ufs_handoff_probe(void)
   // mode 4: contiguous DMA allocation only.
   // mode 5: allocate, stop and restart the request list, then report.
   // mode 6: allocate, stop/restart, wake the device and TUR, then report.
+  // mode 8: read the first words of the firmware UTRLBA window, write nothing.
   if (parsed) {
     if (mode == 4) { lmipro_ufs_alloc_probe(); return; }
+    if (mode == 8) { lmipro_ufs_window_probe(); return; }
     if (mode == 2 || mode == 3 || mode == 5 || mode == 6) {
       gReadLevel = (mode == 5) ? 1 : (mode == 6) ? 2 : 0;
       lmipro_ufs_read_probe(mode == 3);
@@ -203,6 +206,29 @@ extern "C" void lmipro_ufs_alloc_probe(void)
   panic("LMIPRO UFS ALLOC\nphys=%llx low=%08x mismatch=%u\nfirst=%08x last=%08x",
         static_cast<uint64_t>(dmaPhys), static_cast<uint32_t>(dmaPhys), mismatch,
         words[0], words[4095]);
+}
+
+// mode 8: read the first words of the firmware UTRLBA window without writing.
+// Tells whether the queue memory the firmware left behind is still intact or
+// has been reused by the kernel.
+extern "C" void lmipro_ufs_window_probe(void)
+{
+  OSSharedPtr<IOMemoryMap> hcMap, regionMap;
+  uintptr_t hc = mapWindow(0x01d84000ULL, 0x3000, hcMap);
+  if (!hc) panic("LMIPRO UFS WINDOW: controller map failed");
+  uint64_t phys = (uint64_t(readWord(hc, 0x54)) << 32) | readWord(hc, 0x50);
+  if (!phys) panic("LMIPRO UFS WINDOW: no UTRLBA");
+  IOMemoryDescriptor* region = IOMemoryDescriptor::withPhysicalAddress(phys, 16384, kIODirectionIn);
+  if (region) {
+    regionMap = OSSharedPtr<IOMemoryMap>(region->map(kIOMapAnywhere), OSNoRetain);
+    region->release();
+  }
+  if (!regionMap) panic("LMIPRO UFS WINDOW: window map failed %llx", phys);
+  const volatile uint32_t* words = reinterpret_cast<const volatile uint32_t*>(regionMap->getVirtualAddress());
+  panic("LMIPRO UFS WINDOW\nphys=%llx runstop=%08x hcs=%08x\n"
+        "%08x %08x %08x %08x\n%08x %08x %08x %08x",
+        phys, readWord(hc, 0x60), readWord(hc, 0x30),
+        words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7]);
 }
 
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
