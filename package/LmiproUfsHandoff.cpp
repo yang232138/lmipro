@@ -40,6 +40,7 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow);
 extern "C" void lmipro_ufs_alloc_probe(void);
 extern "C" void lmipro_ufs_window_probe(void);
 extern "C" void lmipro_ufs_state_probe(void);
+extern "C" void lmipro_ufs_uic_probe(void);
 
 // 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
 static unsigned gReadLevel = 0;
@@ -60,6 +61,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 4) { lmipro_ufs_alloc_probe(); return; }
     if (mode == 8) { lmipro_ufs_window_probe(); return; }
     if (mode == 15) { lmipro_ufs_state_probe(); return; }
+    if (mode == 17) { lmipro_ufs_uic_probe(); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
@@ -260,6 +262,29 @@ extern "C" void lmipro_ufs_state_probe(void)
         readWord(hc, 0x30), readWord(hc, 0x20), readWord(hc, 0x34),
         readWord(hc, 0x50), readWord(hc, 0x60), readWord(hc, 0x38), readWord(hc, 0x3c),
         readWord(hc, 0x74), readWord(hc, 0x78), readWord(hc, 0x7c));
+}
+
+// mode 17: exercise the UIC path only. DME_GET reads one MIB attribute from the
+// device over the UniPro link; it never touches the UTRD, the doorbell or the
+// data path. A timeout means the link does not answer at all.
+extern "C" void lmipro_ufs_uic_probe(void)
+{
+  OSSharedPtr<IOMemoryMap> hcMap;
+  uintptr_t hc = mapWindow(0x01d84000ULL, 0x3000, hcMap);
+  if (!hc) panic("LMIPRO UFS UIC: map failed");
+  writeWord(hc, 0x24, 0);
+  writeWord(hc, 0x20, 0xffffffffU);   // clear pending UIC completion
+  writeWord(hc, 0x78, 0x00001560U);   // PA_ActiveTxDataLanes
+  writeWord(hc, 0x7c, 0);
+  writeWord(hc, 0x80, 0);
+  writeWord(hc, 0x74, 0x00000001U);   // UIC_CMD_DME_GET
+  bool done = false;
+  for (unsigned index = 0; index < 200000; index++) {
+    if (readWord(hc, 0x20) & 0x400U) { done = true; break; }
+    IODelay(1);
+  }
+  panic("LMIPRO UFS UIC\ndone=%u is=%08x arg2=%08x arg3=%08x hcs=%08x",
+        done ? 1U : 0U, readWord(hc, 0x20), readWord(hc, 0x7c), readWord(hc, 0x80), readWord(hc, 0x30));
 }
 
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
