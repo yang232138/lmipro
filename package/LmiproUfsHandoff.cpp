@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-2-Clause-Patent
+﻿// SPDX-License-Identifier: BSD-2-Clause-Patent
 // SM8250 UFS handoff: a read-only register observation (mode 1) plus a bounded
 // one-command adoption of the running controller (mode 2/3). The CDB set is
 // read-class only; no WRITE command exists in this file.
@@ -42,6 +42,7 @@ extern "C" void lmipro_ufs_window_probe(void);
 extern "C" void lmipro_ufs_state_probe(void);
 extern "C" void lmipro_ufs_uic_probe(void);
 extern "C" void lmipro_ufs_wake_probe(void);
+extern "C" void lmipro_ufs_clock_probe(void);
 
 // 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
 static unsigned gReadLevel = 0;
@@ -64,6 +65,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 15) { lmipro_ufs_state_probe(); return; }
     if (mode == 17) { lmipro_ufs_uic_probe(); return; }
     if (mode == 18) { lmipro_ufs_wake_probe(); return; }
+    if (mode == 21) { lmipro_ufs_clock_probe(); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
@@ -326,6 +328,24 @@ extern "C" void lmipro_ufs_wake_probe(void)
         "is=%08x hcs=%08x hce=%08x",
         laneBefore, hibernate, laneAfter, startup, laneFinal, isFinal,
         readWord(hc, 0x20), readWord(hc, 0x30), readWord(hc, 0x34));
+}
+
+// mode 21: read-only snapshot of the GCC branches that feed the UFS PHY. A
+// CLK_OFF/haltime bit here means the firmware gated the PHY clocks, which the
+// XNU side could in principle re-enable; a dead GDSC would not be recoverable.
+extern "C" void lmipro_ufs_clock_probe(void)
+{
+  OSSharedPtr<IOMemoryMap> gccMap;
+  uintptr_t gcc = mapWindow(0x00177000ULL, 0x1000, gccMap);
+  if (!gcc) panic("LMIPRO UFS CLK: map failed");
+  panic("LMIPRO UFS CLK\ngdsc=%08x\n"
+        "axi=%08x ahb=%08x uni=%08x\n"
+        "tx=%08x rx0=%08x rx1=%08x aux=%08x\n"
+        "ice=%08x",
+        readWord(gcc, 0x04),
+        readWord(gcc, 0x10), readWord(gcc, 0x18), readWord(gcc, 0x5c),
+        readWord(gcc, 0x1c), readWord(gcc, 0x20), readWord(gcc, 0xb8), readWord(gcc, 0x9c),
+        readWord(gcc, 0x64));
 }
 
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
