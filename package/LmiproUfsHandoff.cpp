@@ -41,6 +41,7 @@ extern "C" void lmipro_ufs_alloc_probe(void);
 extern "C" void lmipro_ufs_window_probe(void);
 extern "C" void lmipro_ufs_state_probe(void);
 extern "C" void lmipro_ufs_uic_probe(void);
+extern "C" void lmipro_ufs_wake_probe(void);
 
 // 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
 static unsigned gReadLevel = 0;
@@ -62,6 +63,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 8) { lmipro_ufs_window_probe(); return; }
     if (mode == 15) { lmipro_ufs_state_probe(); return; }
     if (mode == 17) { lmipro_ufs_uic_probe(); return; }
+    if (mode == 18) { lmipro_ufs_wake_probe(); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
@@ -285,6 +287,34 @@ extern "C" void lmipro_ufs_uic_probe(void)
   }
   panic("LMIPRO UFS UIC\ndone=%u is=%08x arg2=%08x arg3=%08x hcs=%08x",
         done ? 1U : 0U, readWord(hc, 0x20), readWord(hc, 0x98), readWord(hc, 0x9c), readWord(hc, 0x30));
+}
+
+// mode 18: wake the UniPro link through UIC only. Reads the active lane count,
+// issues DME_HIBERNATE_EXIT and reads the lane count again, so a reset here is
+// attributable to the link wake-up itself rather than to any UTP command.
+extern "C" void lmipro_ufs_wake_probe(void)
+{
+  OSSharedPtr<IOMemoryMap> hcMap;
+  uintptr_t hc = mapWindow(0x01d84000ULL, 0x3000, hcMap);
+  if (!hc) panic("LMIPRO UFS WAKE: map failed");
+  writeWord(hc, 0x24, 0);
+  auto uic = [&](uint32_t arg1, uint32_t opcode) -> uint32_t {
+    writeWord(hc, 0x20, 0xffffffffU);
+    writeWord(hc, 0x94, arg1);
+    writeWord(hc, 0x98, 0);
+    writeWord(hc, 0x9c, 0);
+    writeWord(hc, 0x90, opcode);
+    for (unsigned index = 0; index < 200000; index++) {
+      if (readWord(hc, 0x20) & 0x400U) break;
+      IODelay(1);
+    }
+    return readWord(hc, 0x9c);
+  };
+  uint32_t laneBefore = uic(0x00001560U, 0x01);   // DME_GET PA_ActiveTxDataLanes
+  uint32_t hibernate = uic(0x00000000U, 0x18);    // DME_HIBERNATE_EXIT
+  uint32_t laneAfter = uic(0x00001560U, 0x01);
+  panic("LMIPRO UFS WAKE\nlaneBefore=%08x hibernate=%08x laneAfter=%08x\nis=%08x hcs=%08x hce=%08x",
+        laneBefore, hibernate, laneAfter, readWord(hc, 0x20), readWord(hc, 0x30), readWord(hc, 0x34));
 }
 
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
