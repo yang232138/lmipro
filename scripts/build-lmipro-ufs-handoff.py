@@ -21,15 +21,15 @@ command+=['-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-c99-designat
 subprocess.run(command,cwd=record['directory'],check=True,timeout=90)
 symbols=subprocess.check_output(['llvm-nm','--defined-only',str(obj)],text=True)
 assert '_lmipro_ufs_handoff_probe' in symbols and '_lmipro_ufs_handoff_observation' in symbols
-assert '_lmipro_ufs_read_probe' in symbols
 text=source.read_text()
-# mode 1 keeps a read-only register surface; mode 2 adds one adopted READ(10) path
-# whose CDB set must stay read-class (TUR, SSU, READ CAPACITY, READ(10)).
-assert 'const volatile uint32_t*' in text
-for cdb in ('0x28', '0x25', '0x1b'):
-    assert cdb in text, cdb
-for forbidden in ('0x0a', '0x2a', '0x8a'):
-    assert forbidden not in text, forbidden
+# This diagnostic submits one local UIC DME_GET; it is not MMIO-read-only.
+assert '(attribute & 0xffffU) << 16' in text
+assert 'lmiproLocalDmeGet(io, 0x1560U, 500000U)' in text
+assert 'if (mode != 17)' in text
+import re
+writes={int(v,16) for v in re.findall(r'io\.write32\((0x[0-9a-f]+)',text)}
+assert writes=={0x20,0x24,0x90,0x94,0x98,0x9c},writes
+assert 'io.write32(0x24, r.savedIe)' in text
 archive=root/'build/sheng-platform-power/libShengPlatformPower.a'
 proofpath=archive.parent/'build-report.json';pmgr=json.loads(proofpath.read_text())
 assert pmgr['virtual_entries']==340 and not pmgr['original_executable_modified']
@@ -40,6 +40,6 @@ combined=hashlib.sha256(archive.read_bytes()).hexdigest()
 pmgr['archive_sha256']=combined
 pmgr['auxiliary_readonly_ufs_observer']=dict(source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),pmgr_archive_before_observer=original_sha)
 proofpath.write_text(json.dumps(pmgr,indent=2)+'\n')
-proof=dict(source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),combined_archive_sha256=combined,pmgr_archive_before_observer=original_sha,hardware_register_writes=False,storage_commands_submitted=False,clock_power_or_smmu_state_changed=False,runtime_default=0,test_mode=1,source_reference='Linux v6.12 gcc-sm8250.c and sm8250.dtsi; measured lmipro FDT windows',compiler_record=record)
+proof=dict(source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),combined_archive_sha256=combined,pmgr_archive_before_observer=original_sha,hardware_register_writes=True,uic_commands_submitted=True,storage_commands_submitted=False,clock_power_or_smmu_state_changed=False,runtime_default=0,test_mode=17,mmio_write_offsets=[0x20,0x24,0x90,0x94,0x98,0x9c],uic_opcode=1,uic_arg1=0x15600000,queue_doorbell_writes=False,controller_reset=False,source_reference='Linux v6.12 ufshci.h UIC_ARG_MIB and ufshcd.c UIC completion/result protocol',compiler_record=record)
 (out/'build-proof.json').write_text(json.dumps(proof,indent=2)+'\n')
 print(json.dumps({k:v for k,v in proof.items() if k!='compiler_record'},indent=2))
