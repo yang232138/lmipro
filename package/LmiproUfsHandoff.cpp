@@ -36,6 +36,25 @@ static bool branchAvailable(uint32_t value)
   return (value & 1U) && (!(value & 0x80000000U) || (value & 2U));
 }
 
+// mode 23: read back the block the firmware staged at the tail of its payload
+// ramdisk window. Proves whether the vendor UFS driver could read the device
+// before handoff, independently of the kernel's own controller state.
+extern "C" void lmipro_ufs_blob_probe(void)
+{
+  OSSharedPtr<IOMemoryMap> blobMap;
+  uintptr_t blob = mapWindow(0x097200000ULL, 0x2000, blobMap);
+  if (!blob) panic("LMIPRO UFS BLOB: map failed");
+  const volatile uint32_t *words = reinterpret_cast<const volatile uint32_t *>(blob);
+  uint32_t magic   = words[0];
+  uint32_t version = words[1];
+  uint32_t gpt0    = readWord(blob, 8 + 0x200);
+  uint32_t gpt1    = readWord(blob, 8 + 0x204);
+  panic("LMIPRO UFS BLOB\nmagic=%08x version=%08x\ngpt=%08x %08x\n"
+        "mbr=%08x %08x %08x %08x",
+        magic, version, gpt0, gpt1,
+        words[2], words[3], words[4], words[5]);
+}
+
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow);
 extern "C" void lmipro_ufs_alloc_probe(void);
 extern "C" void lmipro_ufs_window_probe(void);
@@ -44,6 +63,7 @@ extern "C" void lmipro_ufs_uic_probe(void);
 extern "C" void lmipro_ufs_wake_probe(void);
 extern "C" void lmipro_ufs_clock_probe(void);
 extern "C" void lmipro_ufs_reset_probe(void);
+extern "C" void lmipro_ufs_blob_probe(void);
 
 // 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
 static unsigned gReadLevel = 0;
@@ -68,6 +88,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 18) { lmipro_ufs_wake_probe(); return; }
     if (mode == 21) { lmipro_ufs_clock_probe(); return; }
     if (mode == 22) { lmipro_ufs_reset_probe(); return; }
+    if (mode == 23) { lmipro_ufs_blob_probe(); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
@@ -389,6 +410,25 @@ extern "C" void lmipro_ufs_reset_probe(void)
   uint32_t lane = uic(0x00001560U, 0x01);
   panic("LMIPRO UFS RESET\nhceOff=%08x hceUp=%u startup=%08x lane=%08x\nis=%08x hcs=%08x",
         hceOff, hceUp ? 1U : 0U, startup, lane, readWord(hc, 0x20), readWord(hc, 0x30));
+}
+
+// mode 23: read back the block the firmware staged at the tail of its payload
+// ramdisk window. Proves whether the vendor UFS driver could read the device
+// before handoff, independently of the kernel's own controller state.
+extern "C" void lmipro_ufs_blob_probe(void)
+{
+  OSSharedPtr<IOMemoryMap> blobMap;
+  uintptr_t blob = mapWindow(0x097200000ULL, 0x2000, blobMap);
+  if (!blob) panic("LMIPRO UFS BLOB: map failed");
+  const volatile uint32_t *words = reinterpret_cast<const volatile uint32_t *>(blob);
+  uint32_t magic   = words[0];
+  uint32_t version = words[1];
+  uint32_t gpt0    = readWord(blob, 8 + 0x200);
+  uint32_t gpt1    = readWord(blob, 8 + 0x204);
+  panic("LMIPRO UFS BLOB\nmagic=%08x version=%08x\ngpt=%08x %08x\n"
+        "mbr=%08x %08x %08x %08x",
+        magic, version, gpt0, gpt1,
+        words[2], words[3], words[4], words[5]);
 }
 
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
