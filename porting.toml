@@ -143,7 +143,12 @@ configuration = [
 procedure = [
   "sgdisk -p /dev/block/sda on the handset, record the userdata and boot entries, then select a storage component once its board inputs exist.",
 ]
-findings = ["2026-11-01 source audit: old UIC ARG1=0x1560 addressed the wrong MIB; corrected to 0x15600000. Prior lane-zero and successful-wake conclusions are unproven.", "The replacement diagnostic only supports opt-in mode 17: one local DME_GET with bounded completion polling and separate ARG2 result. It restores IE and does not write UTP queues, HCE, PHY or SMMU.", "Host fake-MMIO tests pass encoding, allowed writes, readiness, existing errors, completion, command failure and timeout. Cloud build and corrected hardware test remain pending.", "PMGR continued boot reached Failed to mount root device on 2026-10-31. Native UFS is disabled and no RAM root is selected.", "The supplied userdata image was opened read-only: manifest and both complete window SHA256 values match; the OS System-role volume UUID was resolved through the current APFS object map.", "A default-off SM8250 observer is added with documented GCC offsets and real board DT windows; runtime results and storage I/O remain pending.", "ShengUfs is the catalog storage component, but its board inputs in the catalog are sheng's (SM8550) and nothing about them has been verified on lmipro.", "Zero LBAs are deliberate: copying another phone's geometry would write the OS windows into the wrong range.", "The new recipe prepares the PMGR service boundary before AMFI. It adds no storage controls, LUN selection or userdata geometry; storage/root qualification remains pending."]
+findings = [
+  "FIX1 run 41307345874 temporary boot: photo 1793538425349.jpg shows stage=3 done=1 result=00 data=2 for local PA_ACTIVETXDATALANES. Two active TX lanes; this does not qualify DMA or block reads.",
+  "RO1 mode 24 reads apps-SMMU global state and matches SM8250 UFS SIDs 0xe0 and 0x4e0. It derives page geometry from ID1 and reads only uniquely matched TRANS context banks within the documented MMIO window.",
+  "Host tests cover masked and extended stream matching, duplicate matches, invalid banks, bad geometry, and read bounds. No MMIO write API, UIC command, UTP request, reset or disk command is present in RO1.",
+  "Root mount remains unqualified; do not infer bypass from zero S2CR or interpret zero ARG3 after a timed-out command as success.",
+]
 completion = [
   "SCSI capacity and GPT match the handset, the OS and SystemOS windows stay inside userdata, and the root volume mounts with launchd starting.",
 ]
@@ -151,10 +156,13 @@ limits = [
   "No partition geometry, no storage component, no root path.",
 ]
 next_action = [
-  "Compile the corrected local UIC query with the fixed qualified FD720481eb, then record the full FIX1 status screen before deciding any reset or storage read.",
-  "Read the GPT and record userdata and boot sizes before selecting a storage implementation.",
+  "Build and temporarily boot RO1; record the full SMMU result screen, preserving the existing known-good FD.",
+  "Resolve DMA address translation and exclusive request queue ownership before any bounded UTP or known-block read test.",
 ]
-evidence = []
+evidence = [
+  { kind = "device", reference = "docs/observations/uic-fix1-20261101.md", revision = "2d07bd050db75ea1e8ee73eb93aa70cb580ee930", command = "fastboot -s 9ed74861 boot boot.img", result = "Local DME_GET completed: stage=3 done=1 result=00 data=2; real disk reads unqualified" },
+]
+
 
 [[area]]
 id = "display"
@@ -390,3 +398,4 @@ root_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
 userdata_image_sha256 = "fd43ee7035ce185ce4215ac93fdc006fd784a54b3b7442e21457c226cbe03093"
 hardware_test = "pending new image"
 root_mount_qualified = false
+
