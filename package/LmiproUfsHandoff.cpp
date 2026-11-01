@@ -43,6 +43,7 @@ extern "C" void lmipro_ufs_state_probe(void);
 extern "C" void lmipro_ufs_uic_probe(void);
 extern "C" void lmipro_ufs_wake_probe(void);
 extern "C" void lmipro_ufs_clock_probe(void);
+extern "C" void lmipro_ufs_reset_probe(void);
 
 // 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
 static unsigned gReadLevel = 0;
@@ -66,6 +67,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 17) { lmipro_ufs_uic_probe(); return; }
     if (mode == 18) { lmipro_ufs_wake_probe(); return; }
     if (mode == 21) { lmipro_ufs_clock_probe(); return; }
+    if (mode == 22) { lmipro_ufs_reset_probe(); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
@@ -346,6 +348,47 @@ extern "C" void lmipro_ufs_clock_probe(void)
         readWord(gcc, 0x10), readWord(gcc, 0x18), readWord(gcc, 0x5c),
         readWord(gcc, 0x1c), readWord(gcc, 0x20), readWord(gcc, 0xb8), readWord(gcc, 0x9c),
         readWord(gcc, 0x64));
+}
+
+// mode 22: last in-kernel attempt. Disable auto-hibernate, cycle the controller
+// enable bit (HCE 0 -> 1) and run one link startup, then read the lane count.
+// This is the ufshcd_hba_enable path reduced to its essentials.
+extern "C" void lmipro_ufs_reset_probe(void)
+{
+  OSSharedPtr<IOMemoryMap> hcMap;
+  uintptr_t hc = mapWindow(0x01d84000ULL, 0x3000, hcMap);
+  if (!hc) panic("LMIPRO UFS RESET: map failed");
+  writeWord(hc, 0x24, 0);
+  writeWord(hc, 0x18, 0);            // auto-hibernate timer: off
+  writeWord(hc, 0x34, 0);            // HCE off
+  for (unsigned index = 0; index < 20000; index++) {
+    if (!(readWord(hc, 0x34) & 1U)) break;
+    IODelay(1);
+  }
+  uint32_t hceOff = readWord(hc, 0x34);
+  writeWord(hc, 0x34, 1);            // HCE on
+  bool hceUp = false;
+  for (unsigned index = 0; index < 200000; index++) {
+    if (readWord(hc, 0x34) & 1U) { hceUp = true; break; }
+    IODelay(1);
+  }
+  auto uic = [&](uint32_t arg1, uint32_t opcode) -> uint32_t {
+    writeWord(hc, 0x20, 0xffffffffU);
+    writeWord(hc, 0x94, arg1);
+    writeWord(hc, 0x98, 0);
+    writeWord(hc, 0x9c, 0);
+    writeWord(hc, 0x90, opcode);
+    for (unsigned index = 0; index < 200000; index++) {
+      if (readWord(hc, 0x20) & 0x400U) break;
+      IODelay(1);
+    }
+    return readWord(hc, 0x9c);
+  };
+  uint32_t startup = uic(0x00000000U, 0x16);   // DME_LINK_STARTUP
+  for (unsigned settle = 0; settle < 20; settle++) IODelay(1000);
+  uint32_t lane = uic(0x00001560U, 0x01);
+  panic("LMIPRO UFS RESET\nhceOff=%08x hceUp=%u startup=%08x lane=%08x\nis=%08x hcs=%08x",
+        hceOff, hceUp ? 1U : 0U, startup, lane, readWord(hc, 0x20), readWord(hc, 0x30));
 }
 
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
