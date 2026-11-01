@@ -128,7 +128,7 @@ evidence = []
 
 [[area]]
 id = "storage"
-status = "in_progress"
+status = "planned"
 components = []
 paths = ["board.toml", "dts/**", "configs/**", "drivers/**", "scripts/**", "package/LmiproUfsHandoff.cpp", "docs/ufs-readonly-handoff.md"]
 inputs = [
