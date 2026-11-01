@@ -64,6 +64,14 @@
             label = "cont_splash_region";
             no-map;
         };
+
+        // UEFI-staged UFS GPT block. The firmware reads the vendor BlockIo head
+        // before handoff and parks it here; the reservation keeps it out of the
+        // kernel allocator until the read-back probe has seen it.
+        ufs_blob: ufs-blob@97200000 {
+            reg = <0x0 0x97200000 0x0 0x200000>;
+            label = "ufs-blob";
+        };
     };
 };
 
