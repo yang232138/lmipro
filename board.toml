@@ -93,8 +93,7 @@ volume = "LMIPROESP"
 size_mib = 64
 loader = "firmware"
 title = "Redmi K30 Pro"
-panic_screen = true
-kernel_args = ["-v", "serial=3", "boot-progress=2", "sheng-pmgr=2", "lmipro-ufs-handoff=23"]
+kernel_args = ["-v", "serial=3"]
 
 [payload.adt]
 # The platform seed is never stored in a repository: payload builds take it from
