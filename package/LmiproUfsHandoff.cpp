@@ -64,9 +64,11 @@ extern "C" void lmipro_ufs_wake_probe(void);
 extern "C" void lmipro_ufs_clock_probe(void);
 extern "C" void lmipro_ufs_reset_probe(void);
 extern "C" void lmipro_ufs_blob_probe(void);
+extern "C" void lmipro_ufs_uic2_probe(void);
 
 // 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
 static unsigned gReadLevel = 0;
+static uint32_t gDescDw0 = 0x10000000U;
 
 extern "C" void lmipro_ufs_handoff_probe(void)
 {
@@ -89,6 +91,8 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 21) { lmipro_ufs_clock_probe(); return; }
     if (mode == 22) { lmipro_ufs_reset_probe(); return; }
     if (mode == 23) { lmipro_ufs_blob_probe(); return; }
+    if (mode == 24) { lmipro_ufs_uic2_probe(); return; }
+    if (mode == 25) { gDescDw0 = 0x01000000U; gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
@@ -301,7 +305,10 @@ extern "C" void lmipro_ufs_uic_probe(void)
   if (!hc) panic("LMIPRO UFS UIC: map failed");
   writeWord(hc, 0x24, 0);
   writeWord(hc, 0x20, 0xffffffffU);   // clear pending UIC completion
-  writeWord(hc, 0x94, 0x00001560U);   // UIC_ARG_1: PA_ActiveTxDataLanes
+  // UIC_ARG_1 carries (attribute << 16) | selector. The plain attribute value
+  // selects an invalid MIB and reads back zero, which is what made the link
+  // look dead in the earlier rounds.
+  writeWord(hc, 0x94, 0x00001560U << 16);   // PA_ActiveTxDataLanes
   writeWord(hc, 0x98, 0);
   writeWord(hc, 0x9c, 0);
   writeWord(hc, 0x90, 0x00000001U);   // UIC_CMD_DME_GET
@@ -312,6 +319,34 @@ extern "C" void lmipro_ufs_uic_probe(void)
   }
   panic("LMIPRO UFS UIC\ndone=%u is=%08x arg2=%08x arg3=%08x hcs=%08x",
         done ? 1U : 0U, readWord(hc, 0x20), readWord(hc, 0x98), readWord(hc, 0x9c), readWord(hc, 0x30));
+}
+
+// mode 24: same UIC read as mode 17 but with the corrected argument encoding
+// (attribute << 16). Reproduces the lane count the Codex probe reported, and
+// samples the receive lane count and power mode for context.
+extern "C" void lmipro_ufs_uic2_probe(void)
+{
+  OSSharedPtr<IOMemoryMap> hcMap;
+  uintptr_t hc = mapWindow(0x01d84000ULL, 0x3000, hcMap);
+  if (!hc) panic("LMIPRO UIC2: map failed");
+  writeWord(hc, 0x24, 0);
+  auto uic = [&](uint32_t attr, uint32_t opcode) -> uint32_t {
+    writeWord(hc, 0x20, 0xffffffffU);
+    writeWord(hc, 0x94, attr << 16);
+    writeWord(hc, 0x98, 0);
+    writeWord(hc, 0x9c, 0);
+    writeWord(hc, 0x90, opcode);
+    for (unsigned index = 0; index < 200000; index++) {
+      if (readWord(hc, 0x20) & 0x400U) break;
+      IODelay(1);
+    }
+    return readWord(hc, 0x9c);
+  };
+  uint32_t lane = uic(0x00001560U, 0x01);   // PA_ActiveTxDataLanes
+  uint32_t rx   = uic(0x00001580U, 0x01);   // PA_ActiveRxDataLanes
+  uint32_t pwr  = uic(0x00001571U, 0x01);   // PA_PWRMODE
+  panic("LMIPRO UIC2\nlane=%08x rx=%08x pwr=%08x\nis=%08x hcs=%08x arg2=%08x",
+        lane, rx, pwr, readWord(hc, 0x20), readWord(hc, 0x30), readWord(hc, 0x98));
 }
 
 // mode 18: wake the UniPro link through UIC only. Reads the active lane count,
@@ -548,7 +583,7 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
     ucd[3] = 1;                     // task tag
     uint64_t ucdPhys = phys + ucdOffset;
     volatile uint32_t* words = reinterpret_cast<volatile uint32_t*>(utrd);
-    words[0] = 0x10000000U;
+    words[0] = gDescDw0;
     words[1] = 0U;
     words[2] = 0x0fU;
     words[4] = uint32_t(ucdPhys);
