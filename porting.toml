@@ -147,6 +147,9 @@ findings = [
   "FIX1 run 41307345874 temporary boot: photo 1793538425349.jpg shows stage=3 done=1 result=00 data=2 for local PA_ACTIVETXDATALANES. Two active TX lanes; this does not qualify DMA or block reads.",
   "RO1 mode 24 reads apps-SMMU global state and matches SM8250 UFS SIDs 0xe0 and 0x4e0. It derives page geometry from ID1 and reads only uniquely matched TRANS context banks within the documented MMIO window.",
   "Host tests cover masked and extended stream matching, duplicate matches, invalid banks, bad geometry, and read bounds. No MMIO write API, UIC command, UTP request, reset or disk command is present in RO1.",
+  "RO1 run 41311297798 photo 1793570865069.jpg: cr0=00260406, id0=4c017e57, id1=6000004a, 87 groups, both candidate SIDs have zero valid matches. Unread context fields are placeholders, not raw zero register evidence.",
+  "Stock/live board FDT UFS has no iommus property, unlike Linux v6.12 sm8250.dtsi candidate e0/4e0. Routing ownership is not yet confirmed. CR0 CLIENTPD=0 does not mean SMMU disabled; USFCFG=1 faults unmatched streams if this path applies.",
+  "RO2 mode 25 records nonzero/valid/type counts and four raw samples, compares two complete snapshots plus global state, and caps scans at 128 per Linux v6.12 qcom_smmu_cfg_probe. No context bank or page table reads, register writes, DMA or disk I/O.",
   "Root mount remains unqualified; do not infer bypass from zero S2CR or interpret zero ARG3 after a timed-out command as success.",
 ]
 completion = [
@@ -156,7 +159,7 @@ limits = [
   "No partition geometry, no storage component, no root path.",
 ]
 next_action = [
-  "Build and temporarily boot RO1; record the full SMMU result screen, preserving the existing known-good FD.",
+  "Temporarily boot RO2 mode 25; capture visible table counts, raw samples and stability before deciding any DMA ownership change.",
   "Resolve DMA address translation and exclusive request queue ownership before any bounded UTP or known-block read test.",
 ]
 evidence = [
@@ -396,6 +399,7 @@ revision = "856eac9bad80ebea9ae5a1ba7968b011983e0697"
 mode = "read-only controller and SMMUv2 global observation; no commands or register writes"
 root_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
 userdata_image_sha256 = "fd43ee7035ce185ce4215ac93fdc006fd784a54b3b7442e21457c226cbe03093"
-hardware_test = "pending new image"
+hardware_test = "RO1 photographed; RO2 build and hardware observation pending"
 root_mount_qualified = false
+
 

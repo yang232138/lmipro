@@ -9,6 +9,8 @@ struct LmiproStream {
 struct LmiproSmmuResult {
   uint32_t stage, scr0, id0, id1, id2, gfsr, syn0, syn1, syn2;
   uint32_t pgshift, cbBase, banks, groups, extended;
+  uint32_t scanned, valid, nonzero, allones, types[4], hash, hash2, changed, globalChanged;
+  uint32_t sampleCount, sampleIndex[4], sampleSmr[4], sampleS2cr[4];
   LmiproStream stream[2];
 };
 
@@ -36,9 +38,26 @@ static LmiproSmmuResult lmiproSmmuAudit(Ops& io)
                        ((r.id1>>16)&0xffU)<=r.banks &&
                        r.banks<=(0x100000U-r.cbBase)>>r.pgshift);
   r.stage=geometry ? 3 : 4; // Bad geometry still permits bounded global table reads.
-  for (uint32_t i=0;i<r.groups;++i) {
+  // Qualcomm limits stream matching registers to the architected first 128.
+  // Keep the advertised count separate from the bounded count actually read.
+  r.scanned=r.groups>128 ? 128 : r.groups;
+  uint32_t savedSmr[128]={}, savedS2cr[128]={};
+  r.hash=2166136261U;
+  for (uint32_t i=0;i<r.scanned;++i) {
     uint32_t smr=io.read32(0x800+4*i), s2cr=io.read32(0xc00+4*i);
-    if (r.extended ? !(s2cr & (1U<<10)) : !(smr & (1U<<31))) continue;
+    savedSmr[i]=smr; savedS2cr[i]=s2cr;
+    r.hash=(r.hash^smr)*16777619U; r.hash=(r.hash^s2cr)*16777619U;
+    const bool valid=r.extended ? (s2cr & (1U<<10)) : (smr & (1U<<31));
+    if (smr || s2cr) {
+      ++r.nonzero;
+      if (r.sampleCount<4) {
+        unsigned n=r.sampleCount++;
+        r.sampleIndex[n]=i; r.sampleSmr[n]=smr; r.sampleS2cr[n]=s2cr;
+      }
+    }
+    if (smr==0xffffffffU && s2cr==0xffffffffU) ++r.allones;
+    if (!valid) continue;
+    ++r.valid; ++r.types[(s2cr>>16)&3U];
     uint32_t width=r.extended ? 0xffffU : 0x7fffU;
     uint32_t mask=(smr>>16)&width, id=smr&width;
     for (unsigned j=0;j<2;++j) {
@@ -47,17 +66,20 @@ static LmiproSmmuResult lmiproSmmuAudit(Ops& io)
       if (++s.matches==1) { s.index=i; s.smr=smr; s.s2cr=s2cr; }
     }
   }
-  for (unsigned j=0;j<2;++j) {
-    LmiproStream& s=r.stream[j];
-    uint32_t bank=s.s2cr&0xffU;
-    if (!geometry || s.matches!=1 || ((s.s2cr>>16)&3U)!=0 || bank>=r.banks) continue;
-    uint32_t cb=r.cbBase+(bank<<r.pgshift);
-    // Read only the matched translation bank, using ID1-derived page geometry.
-    s.cbar=io.read32((1U<<r.pgshift)+4*bank);
-    s.sctlr=io.read32(cb); s.fsr=io.read32(cb+0x58);
-    s.farLo=io.read32(cb+0x60); s.farHi=io.read32(cb+0x64);
-    s.contextRead=1;
+  // A second exact comparison detects changing entries; fingerprints are only
+  // compact screen summaries, never a security hash or a substitute for compare.
+  r.hash2=2166136261U;
+  for (uint32_t i=0;i<r.scanned;++i) {
+    uint32_t smr=io.read32(0x800+4*i), s2cr=io.read32(0xc00+4*i);
+    r.hash2=(r.hash2^smr)*16777619U; r.hash2=(r.hash2^s2cr)*16777619U;
+    if (smr!=savedSmr[i] || s2cr!=savedS2cr[i]) ++r.changed;
   }
+  r.globalChanged=(io.read32(0)!=r.scr0 ? 1U:0U) |
+                  (io.read32(0x20)!=r.id0 ? 2U:0U) |
+                  (io.read32(0x24)!=r.id1 ? 4U:0U) |
+                  (io.read32(0x28)!=r.id2 ? 8U:0U) |
+                  (io.read32(0x48)!=r.gfsr ? 16U:0U);
+  // No context banks, page tables, UFS controller or data buffers are accessed.
   return r;
 }
 
@@ -75,7 +97,7 @@ volatile uint32_t lmipro_ufs_read_result[16];
 struct LmiproReadOnlyMmio {
   uintptr_t base;
   uint32_t read32(unsigned off) {
-    if (off>0xffffcU || (off&3U)) panic("LMIPRO SMMU RO1: invalid offset %x",off);
+    if ((off&3U) || (off>0x58 && !(off>=0x800 && off<=0x9fc) && !(off>=0xc00 && off<=0xdfc))) panic("LMIPRO SMMU RO2: invalid offset %x",off);
     uint32_t v=*reinterpret_cast<const volatile uint32_t*>(base+off);
     __asm__ volatile("dsb sy" ::: "memory");
     return v;
@@ -85,12 +107,12 @@ extern "C" void lmipro_ufs_handoff_probe(void)
 {
   unsigned mode=0;
   if (!PE_parse_boot_argn("lmipro-ufs-handoff",&mode,sizeof(mode))) return;
-  if (mode!=24) panic("LMIPRO SMMU RO1: only mode 24 enabled; mode=%u",mode);
+  if (mode!=25) panic("LMIPRO SMMU RO2: only mode 25 enabled; mode=%u",mode);
   IODeviceMemory* mem=IODeviceMemory::withRange(0x15000000ULL,0x100000);
-  if (!mem) panic("LMIPRO SMMU RO1: descriptor failed");
+  if (!mem) panic("LMIPRO SMMU RO2: descriptor failed");
   OSSharedPtr<IOMemoryMap> keep(mem->map(kIOMapAnywhere|kIOMapInhibitCache),OSNoRetain);
   mem->release();
-  if (!keep) panic("LMIPRO SMMU RO1: mapping failed");
+  if (!keep) panic("LMIPRO SMMU RO2: mapping failed");
   LmiproReadOnlyMmio io={static_cast<uintptr_t>(keep->getVirtualAddress())};
   LmiproSmmuResult r=lmiproSmmuAudit(io);
   const LmiproStream& a=r.stream[0]; const LmiproStream& b=r.stream[1];
@@ -99,16 +121,24 @@ extern "C" void lmipro_ufs_handoff_probe(void)
   lmipro_ufs_handoff_observation[2]=r.id0;
   lmipro_ufs_handoff_observation[3]=r.id1;
   lmipro_ufs_handoff_observation[4]=r.gfsr;
-  panic("LMIPRO SMMU RO1 (no register writes)\n"
+  panic("LMIPRO SMMU RO2 (reads only)\n"
         "stage=%u cr0=%08x id0=%08x\nid1=%08x id2=%08x ext=%u\n"
-        "pg=%u cb=%08x banks=%u groups=%u\ngfsr=%08x syn=%08x/%08x/%08x\n"
-        "e0 n=%u i=%u smr=%08x s2cr=%08x\n"
-        "e0 ctx=%u cbar=%08x sctlr=%08x\ne0 fsr=%08x far=%08x:%08x\n"
-        "4e0 n=%u i=%u smr=%08x s2cr=%08x\n"
-        "4e0 ctx=%u cbar=%08x sctlr=%08x\n4e0 fsr=%08x far=%08x:%08x",
-        r.stage,r.scr0,r.id0,r.id1,r.id2,r.extended,r.pgshift,r.cbBase,r.banks,r.groups,
-        r.gfsr,r.syn0,r.syn1,r.syn2,
-        a.matches,a.index,a.smr,a.s2cr,a.contextRead,a.cbar,a.sctlr,a.fsr,a.farHi,a.farLo,
-        b.matches,b.index,b.smr,b.s2cr,b.contextRead,b.cbar,b.sctlr,b.fsr,b.farHi,b.farLo);
+        "groups=%u scan=%u valid=%u nz=%u\n"
+        "T/B/F/R=%u/%u/%u/%u allff=%u\n"
+        "hash=%08x/%08x changed=%u gchg=%x\n"
+        "e0=%u 4e0=%u (candidate SIDs)\n"
+        "sample count=%u (unused rows zero)\n"
+        "%u: %08x %08x\n%u: %08x %08x\n"
+        "%u: %08x %08x\n%u: %08x %08x\n"
+        "gfsr=%08x syn=%08x/%08x/%08x\n"
+        "No DMA or disk-read qualification",
+        r.stage,r.scr0,r.id0,r.id1,r.id2,r.extended,r.groups,r.scanned,r.valid,r.nonzero,
+        r.types[0],r.types[1],r.types[2],r.types[3],r.allones,
+        r.hash,r.hash2,r.changed,r.globalChanged,a.matches,b.matches,r.sampleCount,
+        r.sampleIndex[0],r.sampleSmr[0],r.sampleS2cr[0],
+        r.sampleIndex[1],r.sampleSmr[1],r.sampleS2cr[1],
+        r.sampleIndex[2],r.sampleSmr[2],r.sampleS2cr[2],
+        r.sampleIndex[3],r.sampleSmr[3],r.sampleS2cr[3],
+        r.gfsr,r.syn0,r.syn1,r.syn2);
 }
 #endif

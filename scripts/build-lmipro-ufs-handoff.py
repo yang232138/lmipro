@@ -23,7 +23,7 @@ symbols=subprocess.check_output(['llvm-nm','--defined-only',str(obj)],text=True)
 assert '_lmipro_ufs_handoff_probe' in symbols and '_lmipro_ufs_handoff_observation' in symbols
 text=source.read_text()
 # This image only reads source-backed SMMUv2 state; there is no MMIO store API.
-assert 'if (mode!=24)' in text and 'lmiproSmmuAudit(io)' in text
+assert 'if (mode!=25)' in text and 'lmiproSmmuAudit(io)' in text
 assert 'withRange(0x15000000ULL,0x100000)' in text
 assert 'write32' not in text and '*reinterpret_cast<volatile' not in text
 assert 'r.gfsr=io.read32(0x48)' in text and 'r.cbBase=1U <<' in text
@@ -37,6 +37,6 @@ combined=hashlib.sha256(archive.read_bytes()).hexdigest()
 pmgr['archive_sha256']=combined
 pmgr['auxiliary_readonly_ufs_observer']=dict(source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),pmgr_archive_before_observer=original_sha)
 proofpath.write_text(json.dumps(pmgr,indent=2)+'\n')
-proof=dict(source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),combined_archive_sha256=combined,pmgr_archive_before_observer=original_sha,hardware_register_writes=False,uic_commands_submitted=False,storage_commands_submitted=False,clock_power_or_smmu_state_changed=False,runtime_default=0,test_mode=24,mmio_write_offsets=[],smmu_audit=True,smmu_base=0x15000000,smmu_bytes=0x100000,stream_ids=[0xe0,0x4e0],global_fault_offset=0x48,context_geometry_from_id1=True,queue_doorbell_writes=False,controller_reset=False,source_reference='Linux v6.12 sm8250.dtsi and arm-smmu.h/arm-smmu.c; no controller or SMMU writes',compiler_record=record)
+proof=dict(source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),combined_archive_sha256=combined,pmgr_archive_before_observer=original_sha,hardware_register_writes=False,uic_commands_submitted=False,storage_commands_submitted=False,clock_power_or_smmu_state_changed=False,runtime_default=0,test_mode=25,mmio_write_offsets=[],smmu_audit=True,smmu_base=0x15000000,smmu_bytes=0x100000,stream_ids=[0xe0,0x4e0],global_fault_offset=0x48,context_geometry_from_id1=True,queue_doorbell_writes=False,controller_reset=False,source_reference='Linux v6.12 sm8250.dtsi and arm-smmu.h/arm-smmu.c; no controller or SMMU writes',table_census=True,table_scan_cap=128,table_snapshot_compare=True,context_banks_read=False,board_stream_routing_confirmed=False,compiler_record=record)
 (out/'build-proof.json').write_text(json.dumps(proof,indent=2)+'\n')
 print(json.dumps({k:v for k,v in proof.items() if k!='compiler_record'},indent=2))
