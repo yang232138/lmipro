@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: BSD-2-Clause-Patent
+// SPDX-License-Identifier: BSD-2-Clause-Patent
 // SM8250 UFS handoff: a read-only register observation (mode 1) plus a bounded
 // one-command adoption of the running controller (mode 2/3). The CDB set is
 // read-class only; no WRITE command exists in this file.
@@ -313,8 +313,19 @@ extern "C" void lmipro_ufs_wake_probe(void)
   uint32_t laneBefore = uic(0x00001560U, 0x01);   // DME_GET PA_ActiveTxDataLanes
   uint32_t hibernate = uic(0x00000000U, 0x18);    // DME_HIBERNATE_EXIT
   uint32_t laneAfter = uic(0x00001560U, 0x01);
-  panic("LMIPRO UFS WAKE\nlaneBefore=%08x hibernate=%08x laneAfter=%08x\nis=%08x hcs=%08x hce=%08x",
-        laneBefore, hibernate, laneAfter, readWord(hc, 0x20), readWord(hc, 0x30), readWord(hc, 0x34));
+  uint32_t startup = 0, laneFinal = 0, isFinal = 0;
+  if (laneAfter == 0) {
+    startup = uic(0x00000000U, 0x16);             // DME_LINK_STARTUP
+    for (unsigned settle = 0; settle < 20; settle++) IODelay(1000);
+    laneFinal = uic(0x00001560U, 0x01);
+    isFinal = readWord(hc, 0x20);
+  }
+  panic("LMIPRO UFS WAKE\n"
+        "laneBefore=%08x hibernate=%08x laneAfter=%08x\n"
+        "startup=%08x laneFinal=%08x isFinal=%08x\n"
+        "is=%08x hcs=%08x hce=%08x",
+        laneBefore, hibernate, laneAfter, startup, laneFinal, isFinal,
+        readWord(hc, 0x20), readWord(hc, 0x30), readWord(hc, 0x34));
 }
 
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
