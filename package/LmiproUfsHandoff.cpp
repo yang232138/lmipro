@@ -274,17 +274,17 @@ extern "C" void lmipro_ufs_uic_probe(void)
   if (!hc) panic("LMIPRO UFS UIC: map failed");
   writeWord(hc, 0x24, 0);
   writeWord(hc, 0x20, 0xffffffffU);   // clear pending UIC completion
-  writeWord(hc, 0x78, 0x00001560U);   // PA_ActiveTxDataLanes
-  writeWord(hc, 0x7c, 0);
-  writeWord(hc, 0x80, 0);
-  writeWord(hc, 0x74, 0x00000001U);   // UIC_CMD_DME_GET
+  writeWord(hc, 0x94, 0x00001560U);   // UIC_ARG_1: PA_ActiveTxDataLanes
+  writeWord(hc, 0x98, 0);
+  writeWord(hc, 0x9c, 0);
+  writeWord(hc, 0x90, 0x00000001U);   // UIC_CMD_DME_GET
   bool done = false;
   for (unsigned index = 0; index < 200000; index++) {
     if (readWord(hc, 0x20) & 0x400U) { done = true; break; }
     IODelay(1);
   }
   panic("LMIPRO UFS UIC\ndone=%u is=%08x arg2=%08x arg3=%08x hcs=%08x",
-        done ? 1U : 0U, readWord(hc, 0x20), readWord(hc, 0x7c), readWord(hc, 0x80), readWord(hc, 0x30));
+        done ? 1U : 0U, readWord(hc, 0x20), readWord(hc, 0x98), readWord(hc, 0x9c), readWord(hc, 0x30));
 }
 
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
@@ -344,7 +344,7 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
   writeWord(hc, 0x50, uint32_t(phys));
   writeWord(hc, 0x54, uint32_t(phys >> 32));
   writeWord(hc, 0x20, 0xffffffffU);
-  writeWord(hc, 0x70, 1);            // task management list run
+  writeWord(hc, 0x80, 1);            // UTMRLRSR: task management list run
   writeWord(hc, 0x60, 1);
   bool listReady = false;
   for (unsigned loops = 0; loops < 100000 && !listReady; loops++) {
