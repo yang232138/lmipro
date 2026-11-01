@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-2-Clause-Patent
+﻿// SPDX-License-Identifier: BSD-2-Clause-Patent
 // SM8250 UFS handoff: a read-only register observation (mode 1) plus a bounded
 // one-command adoption of the running controller (mode 2/3). The CDB set is
 // read-class only; no WRITE command exists in this file.
@@ -39,6 +39,7 @@ static bool branchAvailable(uint32_t value)
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow);
 extern "C" void lmipro_ufs_alloc_probe(void);
 extern "C" void lmipro_ufs_window_probe(void);
+extern "C" void lmipro_ufs_state_probe(void);
 
 // 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
 static unsigned gReadLevel = 0;
@@ -58,6 +59,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
   if (parsed) {
     if (mode == 4) { lmipro_ufs_alloc_probe(); return; }
     if (mode == 8) { lmipro_ufs_window_probe(); return; }
+    if (mode == 15) { lmipro_ufs_state_probe(); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
@@ -237,6 +239,27 @@ extern "C" void lmipro_ufs_window_probe(void)
         "%08x %08x %08x %08x\n%08x %08x %08x %08x",
         phys, readWord(hc, 0x60), readWord(hc, 0x30),
         words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7]);
+}
+
+// mode 15: read-only snapshot of the apps-SMMU globals and the UFS controller
+// state the firmware left behind. No write, no command, no doorbell.
+extern "C" void lmipro_ufs_state_probe(void)
+{
+  OSSharedPtr<IOMemoryMap> smmuMap, hcMap;
+  uintptr_t smmu = mapWindow(0x15000000ULL, 0x100000, smmuMap);
+  uintptr_t hc = mapWindow(0x01d84000ULL, 0x3000, hcMap);
+  if (!smmu || !hc) panic("LMIPRO UFS STATE: map failed smmu=%lx hc=%lx", smmu, hc);
+  panic("LMIPRO UFS STATE\n"
+        "smmu scr0=%08x scr2=%08x gfsr=%08x\n"
+        "idr0=%08x cbar0=%08x s2cr0=%08x cb0sctlr=%08x\n"
+        "ufs hcs=%08x is=%08x hce=%08x\n"
+        "utrlba=%08x rsr=%08x uecpa=%08x uecda=%08x\n"
+        "uiccmd=%08x arg1=%08x arg2=%08x",
+        readWord(smmu, 0x00), readWord(smmu, 0x08), readWord(smmu, 0x60),
+        readWord(smmu, 0x20), readWord(smmu, 0x1000), readWord(smmu, 0xc00), readWord(smmu, 0x2000),
+        readWord(hc, 0x30), readWord(hc, 0x20), readWord(hc, 0x34),
+        readWord(hc, 0x50), readWord(hc, 0x60), readWord(hc, 0x38), readWord(hc, 0x3c),
+        readWord(hc, 0x74), readWord(hc, 0x78), readWord(hc, 0x7c));
 }
 
 extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
