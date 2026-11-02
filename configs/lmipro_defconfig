@@ -12,6 +12,7 @@
 # No board driver is settled yet. Each entry below turns on only when its component
 # is selected in board.toml and its hardware input exists (see porting.toml).
 # CONFIG_XNU_NATIVE_UFS is not set
+# CONFIG_XNU_SOURCE_MOCKFS is not set
 # CONFIG_XNU_NATIVE_ADRENO is not set
 
 # Use the upstream validated device-tree panic region on this SM8250 board.
