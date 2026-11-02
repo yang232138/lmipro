@@ -70,6 +70,7 @@ extern "C" void lmipro_ufs_wake2_probe(void);
 // 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
 static unsigned gReadLevel = 0;
 static uint32_t gDescDw0 = 0x10000000U;
+static bool gHceReset = false;
 
 extern "C" void lmipro_ufs_handoff_probe(void)
 {
@@ -96,6 +97,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 25) { gDescDw0 = 0x01000000U; gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 26) { gDescDw0 = 0x01000000U; gReadLevel = 7; lmipro_ufs_read_probe(false); return; }
     if (mode == 27) { lmipro_ufs_wake2_probe(); return; }
+    if (mode == 28) { gDescDw0 = 0x10000000U; gHceReset = true; gReadLevel = 7; lmipro_ufs_read_probe(false); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
@@ -493,6 +495,22 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
   OSSharedPtr<IOMemoryMap> hcMap, regionMap;
   uintptr_t hc = mapWindow(0x01d84000ULL, 0x3000, hcMap);
   if (!hc) panic("LMIPRO UFS READ: controller map failed");
+  if (gHceReset) {
+    // Linux programs the request list while the controller is disabled, then
+    // enables it. Reproduce that order instead of editing a live queue.
+    writeWord(hc, 0x34, 0);
+    for (unsigned index = 0; index < 20000; index++) {
+      if (!(readWord(hc, 0x34) & 1U)) break;
+      IODelay(1);
+    }
+    writeWord(hc, 0x34, 1);
+    bool hceUp = false;
+    for (unsigned index = 0; index < 200000; index++) {
+      if (readWord(hc, 0x34) & 1U) { hceUp = true; break; }
+      IODelay(1);
+    }
+    if (!hceUp) panic("LMIPRO UFS READ: HCE did not come back");
+  }
   uint64_t phys = 0;
   uint8_t* virt = nullptr;
   if (firmwareWindow) {
