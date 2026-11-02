@@ -67,6 +67,7 @@ extern "C" void lmipro_ufs_blob_probe(void);
 extern "C" void lmipro_ufs_uic2_probe(void);
 extern "C" void lmipro_ufs_wake2_probe(void);
 extern "C" void lmipro_ufs_pwr_probe(void);
+extern "C" void lmipro_ufs_phy_probe(void);
 
 // 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
 static unsigned gReadLevel = 0;
@@ -100,6 +101,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 27) { lmipro_ufs_wake2_probe(); return; }
     if (mode == 28) { gDescDw0 = 0x10000000U; gHceReset = true; gReadLevel = 7; lmipro_ufs_read_probe(false); return; }
     if (mode == 29) { lmipro_ufs_pwr_probe(); return; }
+    if (mode == 30) { lmipro_ufs_phy_probe(); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
@@ -426,6 +428,49 @@ extern "C" void lmipro_ufs_pwr_probe(void)
         "is=%08x hcs=%08x hce=%08x",
         pwrBefore, laneBefore, hibernate, pwrAfter, laneAfter,
         readWord(hc, 0x20), readWord(hc, 0x30), readWord(hc, 0x34));
+}
+
+// mode 30: PHY power-up attempt. Linux keeps the QMP UFS PCS at PHY+0xc00 with
+// POWER_DOWN_CONTROL at +0x004, PHY_START at +0x008 and READY_STATUS at +0x00c.
+// Bring the PHY out of power-down, start it, wait for ready, then re-read the
+// link state to see whether the device responds.
+extern "C" void lmipro_ufs_phy_probe(void)
+{
+  OSSharedPtr<IOMemoryMap> phyMap, hcMap;
+  uintptr_t phy = mapWindow(0x01d87000ULL, 0x2000, phyMap);
+  uintptr_t hc = mapWindow(0x01d84000ULL, 0x3000, hcMap);
+  if (!phy || !hc) panic("LMIPRO PHY: map failed");
+  writeWord(phy, 0xc04, 0x00);
+  IODelay(1000);
+  writeWord(phy, 0xc08, 0x01);
+  uint32_t ready = 0;
+  for (unsigned index = 0; index < 20000; index++) {
+    ready = readWord(phy, 0xc0c);
+    if (ready & 0x01U) break;
+    IODelay(100);
+  }
+  writeWord(hc, 0x24, 0);
+  auto uic = [&](uint32_t arg1, uint32_t opcode) -> uint32_t {
+    writeWord(hc, 0x20, 0xffffffffU);
+    writeWord(hc, 0x94, arg1);
+    writeWord(hc, 0x98, 0);
+    writeWord(hc, 0x9c, 0);
+    writeWord(hc, 0x90, opcode);
+    for (unsigned index = 0; index < 200000; index++) {
+      if (readWord(hc, 0x20) & 0x400U) break;
+      IODelay(1);
+    }
+    return readWord(hc, 0x9c);
+  };
+  uint32_t startup = uic(0x00000000U, 0x16);
+  for (unsigned settle = 0; settle < 20; settle++) IODelay(1000);
+  uint32_t pwr = uic(0x00001571U << 16, 0x01);
+  uint32_t lane = uic(0x00001560U << 16, 0x01);
+  panic("LMIPRO PHY\nready=%08x startup=%08x\npwr=%08x lane=%08x\n"
+        "pcs004=%08x pcs008=%08x pcs00c=%08x is=%08x hcs=%08x",
+        ready, startup, pwr, lane,
+        readWord(phy, 0xc04), readWord(phy, 0xc08), readWord(phy, 0xc0c),
+        readWord(hc, 0x20), readWord(hc, 0x30));
 }
 
 // mode 18: wake the UniPro link through UIC only. Reads the active lane count,
