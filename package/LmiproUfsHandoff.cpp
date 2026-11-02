@@ -93,6 +93,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 23) { lmipro_ufs_blob_probe(); return; }
     if (mode == 24) { lmipro_ufs_uic2_probe(); return; }
     if (mode == 25) { gDescDw0 = 0x01000000U; gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
+    if (mode == 26) { gDescDw0 = 0x01000000U; gReadLevel = 7; lmipro_ufs_read_probe(false); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
