@@ -66,6 +66,7 @@ extern "C" void lmipro_ufs_reset_probe(void);
 extern "C" void lmipro_ufs_blob_probe(void);
 extern "C" void lmipro_ufs_uic2_probe(void);
 extern "C" void lmipro_ufs_wake2_probe(void);
+extern "C" void lmipro_ufs_pwr_probe(void);
 
 // 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
 static unsigned gReadLevel = 0;
@@ -98,6 +99,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 26) { gDescDw0 = 0x01000000U; gReadLevel = 7; lmipro_ufs_read_probe(false); return; }
     if (mode == 27) { lmipro_ufs_wake2_probe(); return; }
     if (mode == 28) { gDescDw0 = 0x10000000U; gHceReset = true; gReadLevel = 7; lmipro_ufs_read_probe(false); return; }
+    if (mode == 29) { lmipro_ufs_pwr_probe(); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
@@ -388,6 +390,41 @@ extern "C" void lmipro_ufs_wake2_probe(void)
         "startup=%08x laneFinal=%08x\n"
         "is=%08x hcs=%08x hce=%08x",
         laneBefore, hibernate, laneAfter, startup, laneFinal,
+        readWord(hc, 0x20), readWord(hc, 0x30), readWord(hc, 0x34));
+}
+
+// mode 29: read PA_PWRMODE before and after the wake commands. A value stuck at
+// the PWM/hibernate encoding means the link never entered high-speed active
+// state, which would explain why a UTP command tears the controller down.
+extern "C" void lmipro_ufs_pwr_probe(void)
+{
+  OSSharedPtr<IOMemoryMap> hcMap;
+  uintptr_t hc = mapWindow(0x01d84000ULL, 0x3000, hcMap);
+  if (!hc) panic("LMIPRO PWR: map failed");
+  writeWord(hc, 0x24, 0);
+  auto uic = [&](uint32_t arg1, uint32_t opcode) -> uint32_t {
+    writeWord(hc, 0x20, 0xffffffffU);
+    writeWord(hc, 0x94, arg1);
+    writeWord(hc, 0x98, 0);
+    writeWord(hc, 0x9c, 0);
+    writeWord(hc, 0x90, opcode);
+    for (unsigned index = 0; index < 200000; index++) {
+      if (readWord(hc, 0x20) & 0x400U) break;
+      IODelay(1);
+    }
+    return readWord(hc, 0x9c);
+  };
+  uint32_t pwrBefore = uic(0x00001571U << 16, 0x01);   // DME_GET PA_PWRMODE
+  uint32_t laneBefore = uic(0x00001560U << 16, 0x01);
+  uint32_t hibernate  = uic(0x00000000U, 0x18);         // DME_HIBERNATE_EXIT
+  for (unsigned settle = 0; settle < 20; settle++) IODelay(1000);
+  uint32_t pwrAfter   = uic(0x00001571U << 16, 0x01);
+  uint32_t laneAfter  = uic(0x00001560U << 16, 0x01);
+  panic("LMIPRO PWR\n"
+        "pwrBefore=%08x laneBefore=%08x hibernate=%08x\n"
+        "pwrAfter=%08x laneAfter=%08x\n"
+        "is=%08x hcs=%08x hce=%08x",
+        pwrBefore, laneBefore, hibernate, pwrAfter, laneAfter,
         readWord(hc, 0x20), readWord(hc, 0x30), readWord(hc, 0x34));
 }
 
