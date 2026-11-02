@@ -510,7 +510,7 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
   writeWord(hc, 0x60, 1);
   bool listReady = false;
   for (unsigned loops = 0; loops < 100000 && !listReady; loops++) {
-    listReady = (readWord(hc, 0x30) & 0x2) != 0;
+    listReady = (readWord(hc, 0x30) & 0x1) != 0;
     if (!listReady) IODelay(1);
   }
   uint32_t hcsAfter = readWord(hc, 0x30);
