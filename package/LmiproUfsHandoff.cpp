@@ -68,6 +68,7 @@ extern "C" void lmipro_ufs_uic2_probe(void);
 extern "C" void lmipro_ufs_wake2_probe(void);
 extern "C" void lmipro_ufs_pwr_probe(void);
 extern "C" void lmipro_ufs_phy_probe(void);
+extern "C" void lmipro_ufs_phyinit_probe(void);
 
 // 0: commands, 1: stop/restart only, 2: stop/restart + wake + TUR.
 static unsigned gReadLevel = 0;
@@ -102,6 +103,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 28) { gDescDw0 = 0x10000000U; gHceReset = true; gReadLevel = 7; lmipro_ufs_read_probe(false); return; }
     if (mode == 29) { lmipro_ufs_pwr_probe(); return; }
     if (mode == 30) { lmipro_ufs_phy_probe(); return; }
+    if (mode == 31) { lmipro_ufs_phyinit_probe(); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
@@ -467,6 +469,128 @@ extern "C" void lmipro_ufs_phy_probe(void)
   uint32_t pwr = uic(0x00001571U << 16, 0x01);
   uint32_t lane = uic(0x00001560U << 16, 0x01);
   panic("LMIPRO PHY\nready=%08x startup=%08x\npwr=%08x lane=%08x\n"
+        "pcs004=%08x pcs008=%08x pcs00c=%08x is=%08x hcs=%08x",
+        ready, startup, pwr, lane,
+        readWord(phy, 0xc04), readWord(phy, 0xc08), readWord(phy, 0xc0c),
+        readWord(hc, 0x20), readWord(hc, 0x30));
+}
+
+
+// mode 31: full QMP UFS PHY bring-up using the Linux sm8150_ufsphy tables
+// (SM8250 reuses them). The PHY is programmed while still powered down, then
+// started, and only then is the link asked to start.
+extern "C" void lmipro_ufs_phyinit_probe(void)
+{
+  static const uint32_t kPhyTable[][2] = {
+  {0x0294, 0xd9},   // serdes
+  {0x0358, 0x11},   // serdes
+  {0x035c, 0x00},   // serdes
+  {0x02a4, 0x01},   // serdes
+  {0x030c, 0x02},   // serdes
+  {0x0258, 0x0f},   // serdes
+  {0x0324, 0x00},   // serdes
+  {0x03bc, 0x11},   // serdes
+  {0x02bc, 0x82},   // serdes
+  {0x0274, 0x06},   // serdes
+  {0x027c, 0x16},   // serdes
+  {0x0284, 0x36},   // serdes
+  {0x02ac, 0xff},   // serdes
+  {0x02b0, 0x0c},   // serdes
+  {0x03ac, 0xac},   // serdes
+  {0x03b0, 0x1e},   // serdes
+  {0x02c4, 0x98},   // serdes
+  {0x0278, 0x06},   // serdes
+  {0x0280, 0x16},   // serdes
+  {0x0288, 0x36},   // serdes
+  {0x02b4, 0x32},   // serdes
+  {0x02b8, 0x0f},   // serdes
+  {0x03b4, 0xdd},   // serdes
+  {0x03b8, 0x23},   // serdes
+  {0x00d8, 0x06},   // tx
+  {0x00dc, 0x03},   // tx
+  {0x00e0, 0x01},   // tx
+  {0x00e4, 0x00},   // tx
+  {0x0084, 0x05},   // tx
+  {0x00b8, 0x0c},   // tx
+  {0x0520, 0x24},   // rx
+  {0x051c, 0x0f},   // rx
+  {0x0524, 0x1e},   // rx
+  {0x0528, 0x18},   // rx
+  {0x0430, 0x0a},   // rx
+  {0x0434, 0x4b},   // rx
+  {0x0444, 0xf1},   // rx
+  {0x043c, 0x80},   // rx
+  {0x0448, 0x80},   // rx
+  {0x0408, 0x0c},   // rx
+  {0x0414, 0x04},   // rx
+  {0x0480, 0x1b},   // rx
+  {0x04ec, 0x06},   // rx
+  {0x04f0, 0x04},   // rx
+  {0x04f4, 0x1d},   // rx
+  {0x0514, 0x00},   // rx
+  {0x0500, 0x10},   // rx
+  {0x04f8, 0xc0},   // rx
+  {0x04fc, 0x00},   // rx
+  {0x0570, 0x36},   // rx
+  {0x0574, 0x36},   // rx
+  {0x0578, 0xf6},   // rx
+  {0x057c, 0x3b},   // rx
+  {0x0580, 0x3d},   // rx
+  {0x0584, 0xe0},   // rx
+  {0x0588, 0xc8},   // rx
+  {0x058c, 0xc8},   // rx
+  {0x0590, 0x3b},   // rx
+  {0x0594, 0xb1},   // rx
+  {0x0598, 0xe0},   // rx
+  {0x059c, 0xc8},   // rx
+  {0x05a0, 0xc8},   // rx
+  {0x05a4, 0x3b},   // rx
+  {0x05a8, 0xb1},   // rx
+  {0x0d58, 0x6d},   // pcs
+  {0x0c30, 0x0a},   // pcs
+  {0x0c38, 0x02},   // pcs
+  {0x0dd8, 0x43},   // pcs
+  {0x0d24, 0x1f},   // pcs
+  {0x0d50, 0xff},   // pcs
+  {0x0de0, 0x02},   // pcs
+  };
+  OSSharedPtr<IOMemoryMap> phyMap, hcMap;
+  uintptr_t phy = mapWindow(0x01d87000ULL, 0x2000, phyMap);
+  uintptr_t hc = mapWindow(0x01d84000ULL, 0x3000, hcMap);
+  if (!phy || !hc) panic("LMIPRO PHYINIT: map failed");
+  // Hold the PHY in power-down while its tables are programmed.
+  writeWord(phy, 0xc04, 0x01);
+  IODelay(1000);
+  for (unsigned index = 0; index < sizeof(kPhyTable) / sizeof(kPhyTable[0]); index++) {
+    writeWord(phy, kPhyTable[index][0], kPhyTable[index][1]);
+  }
+  writeWord(phy, 0xc04, 0x00);            // power on
+  IODelay(100);
+  writeWord(phy, 0xc08, 0x01);            // PHY_START
+  uint32_t ready = 0;
+  for (unsigned index = 0; index < 20000; index++) {
+    ready = readWord(phy, 0xc0c);
+    if ((ready & 0x0cU) == 0x0cU) break;  // PLL + ready latched
+    IODelay(100);
+  }
+  writeWord(hc, 0x24, 0);
+  auto uic = [&](uint32_t arg1, uint32_t opcode) -> uint32_t {
+    writeWord(hc, 0x20, 0xffffffffU);
+    writeWord(hc, 0x94, arg1);
+    writeWord(hc, 0x98, 0);
+    writeWord(hc, 0x9c, 0);
+    writeWord(hc, 0x90, opcode);
+    for (unsigned index = 0; index < 200000; index++) {
+      if (readWord(hc, 0x20) & 0x400U) break;
+      IODelay(1);
+    }
+    return readWord(hc, 0x9c);
+  };
+  uint32_t startup = uic(0x00000000U, 0x16);
+  for (unsigned settle = 0; settle < 30; settle++) IODelay(1000);
+  uint32_t pwr = uic(0x00001571U << 16, 0x01);
+  uint32_t lane = uic(0x00001560U << 16, 0x01);
+  panic("LMIPRO PHYINIT\nready=%08x startup=%08x\npwr=%08x lane=%08x\n"
         "pcs004=%08x pcs008=%08x pcs00c=%08x is=%08x hcs=%08x",
         ready, startup, pwr, lane,
         readWord(phy, 0xc04), readWord(phy, 0xc08), readWord(phy, 0xc0c),
