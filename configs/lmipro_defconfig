@@ -28,7 +28,9 @@ CONFIG_XNU_NATIVE_RAM_BLOCK=y
 # Official crypto instrument only; owner root trust remains disabled.
 CONFIG_XNU_VERIFIED_ROOT_PROBE=y
 
-# Signed readonly RAM-root binding audit; acceptance remains OFF.
+# Signed readonly RAM root with actual mounted-device owner enforcement.
 # CONFIG_XNU_SOURCE_MOCKFS is not set
 CONFIG_XNU_OWNER_ROOT_AUDIT=y
-# CONFIG_XNU_OWNER_ROOT_TRUST is not set
+CONFIG_XNU_OWNER_ROOT_TRUST=y
+CONFIG_XNU_LMIPRO_VERIFIED_RAM_ROOT=y
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y

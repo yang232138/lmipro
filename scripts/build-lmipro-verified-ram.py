@@ -1,6 +1,6 @@
 """Compile the explicit reviewed RAM transport adaptation without changing its checkout."""
 from pathlib import Path
-import hashlib,json,shutil,struct,subprocess
+import hashlib,json,os,shutil,struct,subprocess
 ROOT=Path(__file__).resolve().parents[1]
 canonical=ROOT/'drivers/RamBlock';kit=ROOT/'kits/lmipro';out=ROOT/'build/ram-block';source=out/'verified-source'
 revision=subprocess.check_output(['git','-C',str(canonical),'rev-parse','HEAD'],text=True).strip()
@@ -62,7 +62,7 @@ report=dict(canonical_revision=revision,canonical_source_sha256=sha(canonical/'N
  read_primitive_sha256=sha(implementation),read_primitive_object_sha256=sha(destination),
  compiled_transport_object_sha256=sha(out/'NativeRamBlock.o'),strict_werror=True,
  absent_optional_libsa_include_dirs=sorted(set(pruned)),per_read_verified_before_copy=True,
- read_only_transport=True,exact_media_binding_implemented=True,owner_trust_enabled=False,
+ read_only_transport=True,exact_media_binding_implemented=True,owner_trust_enabled=os.environ.get("XNU_OWNER_ROOT_TRUST")=="1",
  original_checkout_modified=False,hardware_tested=False)
 (out/'verified-transport-build.json').write_text(json.dumps(report,indent=2)+'\n')
 print('PASS: reviewed signed read-only RAM transport and shared real-C read verifier compiled; device qualification pending')

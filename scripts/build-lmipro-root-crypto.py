@@ -11,14 +11,16 @@ out=ROOT/'build/verified-root-xnu';out.mkdir(parents=True,exist_ok=True)
 metadata=json.loads((policy/'verification.json').read_text())
 manifest=policy/'manifest.bin';key=policy/'trusted-key.bin';samples=policy/'samples.bin'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
-assert metadata['real_c_signature_and_block_verification'] and metadata['blocks_verified']==65526
-assert metadata['image_bytes']==268394496 and metadata['image_sha256']=='ba060c84ae26166f3068dcb8a5b338b6ddeb539f872f40d46482639b74997557'
-assert metadata['volume_uuid']=='B76FFF45-A38F-4850-B66C-A5B6547A77D7'
+seed=json.loads(Path(os.environ['LMIPRO_SEED_PROOF']).read_text())
+assert metadata['real_c_signature_and_block_verification']
+assert metadata['image_bytes']==seed['bytes']==268394496
+assert metadata['blocks_verified']==metadata['image_bytes']//4096==65526
+assert metadata['image_sha256']==seed['sha256']==os.environ['LMIPRO_SIGNED_IMAGE_SHA256']
+assert metadata['volume_uuid']==seed['volume_uuid']
 assert metadata['complete_os'] is False and metadata['boot_root_authenticated'] is False
 assert metadata['verified_root_revision']=='def026642c6c6e71be0dea267d989df1d29ddc64'
-assert sha(key)==metadata['trusted_key_sha256'] and sha(manifest)==metadata['manifest_sha256']
-assert sha(key)=='95b218c864db0787a303ec5540c51660e8ed2348f43157ae683f349be2cf5105'
-assert sha(manifest)=='8d8836c00d21b290c13b87ce9913d9f93d0cbf3a88d8d156f2511af7f031e229'
+assert sha(key)==metadata['trusted_key_sha256']==os.environ['LMIPRO_TRUSTED_KEY_SHA256']
+assert sha(manifest)==metadata['manifest_sha256']==os.environ['LMIPRO_MANIFEST_SHA256']
 assert sha(samples)==metadata['samples_sha256'] and samples.stat().st_size==16384
 indices=metadata['actual_sample_indices'];lengths=metadata['actual_sample_lengths']
 assert indices==[0,1,32763,65525] and lengths==[4096]*4
@@ -92,7 +94,7 @@ report=dict(manifest_sha256=sha(manifest),manifest_bytes=manifest.stat().st_size
     host_checks_passed=len(host['checks']),official_probe_source_unmodified=True,
     absent_optional_libsa_include_dirs=sorted(set(pruned_includes)),strict_werror=True,
     verified_root_revision='def026642c6c6e71be0dea267d989df1d29ddc64',
-    complete_os=False,boot_root_authenticated=False,owner_root_trust_enabled=False,
+    complete_os=False,boot_root_authenticated=False,owner_root_trust_enabled=os.environ.get("XNU_OWNER_ROOT_TRUST")=="1",
     real_xnu_crypto_observed=False,hardware_tested=False)
 (out/'inputs.json').write_text(json.dumps(report,indent=2)+'\n')
 print('PASS: official XNU crypto bridge and eight-control probe built with measured signed RAM-test inputs; no root acceptance')

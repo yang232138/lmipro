@@ -6,20 +6,20 @@
  			if (autherr && !owner_authorized) {
 +#if defined(XNU_OWNER_ROOT_AUDIT) && XNU_OWNER_ROOT_AUDIT
 +				extern volatile uint32_t native_verified_root_status;
-+				extern volatile int native_owner_root_decision, native_owner_root_readonly;
++				extern volatile int native_owner_root_decision, native_owner_root_readonly, native_owner_root_trust_enabled;
 +				extern volatile uint32_t native_ram_verified_tamper_refused, native_ram_verified_wrong_uuid_refused;
 +				extern volatile uint64_t native_ram_verified_blocks, native_ram_verified_integrity_failures;
 +				extern volatile uint64_t native_ram_block_failures;
 +				panic("LMIPRO VERIFIED fs=%s crypto=%u\n"
 +				    "owner=%d ro=%d blocks=%llu\n"
 +				    "tamper=%u uuid=%u io=%llu hash=%llu\n"
-+				    "apple=%d trust=0",
++				    "apple=%d trust=%d",
 +				    vfs_statfs(vnode_mount(rootvnode))->f_fstypename, native_verified_root_status,
 +				    native_owner_root_decision, native_owner_root_readonly,
 +				    (unsigned long long)native_ram_verified_blocks,
 +				    native_ram_verified_tamper_refused, native_ram_verified_wrong_uuid_refused,
 +				    (unsigned long long)native_ram_block_failures,
-+				    (unsigned long long)native_ram_verified_integrity_failures, autherr);
++				    (unsigned long long)native_ram_verified_integrity_failures, autherr, native_owner_root_trust_enabled);
 +#else
  				panic("rootvp not authenticated after mounting");
 +#endif
