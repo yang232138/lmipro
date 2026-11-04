@@ -5,8 +5,8 @@
 #include <cassert>
 #include <cstdio>
 struct Fake {
-  uint64_t dma=0xc8000000; unsigned bytes=8192;
-  alignas(64) uint8_t data[8192]={};
+  uint64_t dma=0xc8000000; unsigned bytes=16384;
+  alignas(64) uint8_t data[16384]={};
   std::map<unsigned,uint32_t> host,smmu;
   std::vector<unsigned> hw,sw;
   unsigned submits=0,invalidations=0,cleans=0;

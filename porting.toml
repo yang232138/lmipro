@@ -144,6 +144,9 @@ procedure = [
   "sgdisk -p /dev/block/sda on the handset, record the userdata and boot entries, then select a storage component once its board inputs exist.",
 ]
 findings = [
+  "2026-11-05 photo 1793794960709.jpg: NOP IN validated stage 8, OCS 0, response 20000001, e0 slot86/bank73 and 4e0 slot85/bank72. Command-response DMA passed; disk read and root mount remain unqualified.",
+  "Mode27 extends the owned DMA allocation to 16KiB; after NOP, allowlisted READ CAPACITY(10) and READ(10) validate 512/4096-byte sectors, GPT header and full entry CRC, unique userdata bounds, and its first block. At most 35 SCSI commands plus NOP. No writes, retries, reset or root publication.",
+
   "2026-11-04 precheck run 41767832591, photo 1793764936745.jpg: host=2, CAP=1587031f, VER=00000300, HCS=0000010f, HCE=1, DB=0, RSR=1. AXI=221, AHB=1. Controller access qualified; DMA/disk/root not qualified.",
   "Mode 26 uses dedicated 8 KiB contiguous DMA, plans two distinct unclaimed banks/slots for source-backed e0/4e0, refuses existing mappings or active queues, stops the firmware queue, verifies mapping/list writes, submits exactly one NOP, checks OCS and NOP IN type/tag/result. No SCSI/read/write command or firmware-list memory access. Timeout retains all DMA until reboot.",
 

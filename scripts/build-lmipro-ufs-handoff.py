@@ -25,7 +25,7 @@ text=source.read_text()
 # Explicit mode 26 is the bounded NOP path; source hash and host harness are recorded.
 assert 'if (mode==26)' in text and 'lmiproNop(io)' in text
 assert 'LMIPRO UFS NOP v1' in text and 'planUfsSmmu(0xe0' in text
-assert 'planUfsSmmu(0x4e0' in text and 'No disk read/write' in text
+assert 'planUfsSmmu(0x4e0' in text and 'No disk writes' in text
 archive=root/'build/sheng-platform-power/libShengPlatformPower.a'
 proofpath=archive.parent/'build-report.json';pmgr=json.loads(proofpath.read_text())
 assert pmgr['virtual_entries']==340 and not pmgr['original_executable_modified']
@@ -37,12 +37,12 @@ pmgr['archive_sha256']=combined
 pmgr['auxiliary_ufs_nop_probe']=dict(source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),pmgr_archive_before_observer=original_sha)
 proofpath.write_text(json.dumps(pmgr,indent=2)+'\n')
 proof=dict(source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),combined_archive_sha256=combined,pmgr_archive_before_observer=original_sha,
-hardware_register_writes=True,uic_commands_submitted=False,storage_commands_submitted=False,nop_command_supported=True,
-clock_power_or_smmu_state_changed=True,clock_power_writes=False,smmu_mapping_writes=True,runtime_default=0,test_mode=26,
+hardware_register_writes=True,uic_commands_submitted=False,storage_commands_submitted=True,storage_write_commands=False,nop_command_supported=True,
+clock_power_or_smmu_state_changed=True,clock_power_writes=False,smmu_mapping_writes=True,runtime_default=0,test_mode=27,
 mmio_write_offsets=[0x20,0x24,0x50,0x54,0x58,0x60],smmu_audit=True,smmu_base=0x15000000,smmu_bytes=0xd0000,
 stream_ids=[0xe0,0x4e0],context_geometry_from_id1=True,queue_doorbell_writes=True,controller_reset=False,
 source_reference='Linux v6.12 sm8250.dtsi UFS streams; ShengUfs e2b32cc SmmuTakeover and NOP descriptor/response path',
-context_banks_read=True,board_stream_routing_confirmed=False,hardware_test='pending',dma_bytes=8192,dma_retained_until_reboot=True,
-submission_limit=1,poll_limit=100000,compiler_record=record)
+context_banks_read=True,board_stream_routing_confirmed=False,hardware_test='pending',dma_bytes=16384,dma_retained_until_reboot=True,
+submission_limit=36,poll_limit=100000,compiler_record=record)
 (out/'build-proof.json').write_text(json.dumps(proof,indent=2)+'\n')
 print(json.dumps({k:v for k,v in proof.items() if k!='compiler_record'},indent=2))
