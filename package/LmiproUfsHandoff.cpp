@@ -447,7 +447,7 @@ static LmiproReadResult lmiproReadDisk(Ops &io) {
   if(lmiLe64(b+32)!=1)return fail("backup GPT alternate");
   r.bEntries=lmiLe64(b+72);r.bCount=lmiLe(b+80);r.bEntryBytes=lmiLe(b+84);r.bArrayCrc=lmiLe(b+88);r.bHdrCrc=lmiLe(b+16);
   r.bAlt=uint32_t(lmiLe64(b+32));
-  if(r.bEntries!=entries || r.bCount!=count || r.bEntryBytes!=128 || r.bArrayCrc!=r.arrayCrc)
+  if(r.bCount!=count || r.bEntryBytes!=128 || r.bArrayCrc!=r.arrayCrc)
   return fail("backup GPT geometry/crc field");
   if(lmiLe64(b+40)!=usableFirst || lmiLe64(b+48)!=usableLast)return fail("backup GPT usable range");
   {unsigned bhlen=lmiLe(b+12);
@@ -457,7 +457,7 @@ static LmiproReadResult lmiproReadDisk(Ops &io) {
   r.stage=15;
   {uint32_t bcrc=0xffffffffU;
   for(unsigned bblk=0;bblk<blocks;++bblk) {
-  why=command(0x28,uint32_t(r.lastLba-blocks+bblk),r.blockBytes);if(why)return fail(why);
+  why=command(0x28,uint32_t(r.bEntries+bblk),r.blockBytes);if(why)return fail(why);
   unsigned bremaining=count*128-bblk*r.blockBytes,bn=bremaining<r.blockBytes?bremaining:r.blockBytes;
   bcrc=lmiCrc(bcrc,b,bn);}
   if((bcrc^0xffffffffU)!=r.arrayCrc)return fail("backup GPT array CRC");}
