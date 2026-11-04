@@ -104,6 +104,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
     if (mode == 29) { lmipro_ufs_pwr_probe(); return; }
     if (mode == 30) { lmipro_ufs_phy_probe(); return; }
     if (mode == 31) { lmipro_ufs_phyinit_probe(); return; }
+    if (mode == 32) { gDescDw0 = 0x10000000U; gReadLevel = 6; lmipro_ufs_read_probe(false); return; }
     if (mode == 12) { gReadLevel = 6; lmipro_ufs_read_probe(true); return; }
     if (mode == 13) { gReadLevel = 7; lmipro_ufs_read_probe(true); return; }
     if (mode == 9 || mode == 10 || mode == 11) {
@@ -817,7 +818,7 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
       prdWords[1] = uint32_t(dataPhys >> 32);
       prdWords[3] = length - 1;
     }
-    utrdWords[7] = (length ? 1U : 0U) | ((prdtOffset >> 2) << 16);
+    utrdWords[7] = length ? (1U | ((prdtOffset >> 2) << 16)) : 0U;
     cacheCleanRange(virt, 16384);
     writeWord(hc, 0x20, 0xffffffffU);
     writeWord(hc, 0x58, 1);
@@ -853,7 +854,7 @@ extern "C" void lmipro_ufs_read_probe(bool firmwareWindow)
     words[4] = uint32_t(ucdPhys);
     words[5] = uint32_t(ucdPhys >> 32);
     words[6] = (512U >> 2) | ((rspOffset >> 2) << 16);
-    words[7] = (prdtOffset >> 2) << 16;
+    words[7] = 0U;
     cacheCleanRange(virt, 16384);
     // Disable the UFS SPI at the GIC so an unserviced interrupt cannot reset the
     // SoC; both INTID candidates (265 and 297) are cleared, a no-op if unused.
