@@ -4,7 +4,7 @@ schema_version = 1
 name = "lmipro"
 soc = "SM8250"
 os_profile = "ipados-17.7.11-21H461"
-summary = "Xiaomi Redmi K30 Pro / K30 Pro Zoom Edition (lmi / lmipro, SM8250). Structure and shared support are in place; no hardware input has been read from the handset and no image has been built."
+summary = "Xiaomi Redmi K30 Pro / K30 Pro Zoom Edition (lmi / lmipro, SM8250). Structure and shared support are in place; kernel reaches BSD root-mount path; powered UFSHCI and idle firmware queue observed; native storage remains incomplete."
 
 [[area]]
 id = "configuration"
@@ -144,6 +144,9 @@ procedure = [
   "sgdisk -p /dev/block/sda on the handset, record the userdata and boot entries, then select a storage component once its board inputs exist.",
 ]
 findings = [
+  "2026-11-04 precheck run 41767832591, photo 1793764936745.jpg: host=2, CAP=1587031f, VER=00000300, HCS=0000010f, HCE=1, DB=0, RSR=1. AXI=221, AHB=1. Controller access qualified; DMA/disk/root not qualified.",
+  "Mode 26 uses dedicated 8 KiB contiguous DMA, plans two distinct unclaimed banks/slots for source-backed e0/4e0, refuses existing mappings or active queues, stops the firmware queue, verifies mapping/list writes, submits exactly one NOP, checks OCS and NOP IN type/tag/result. No SCSI/read/write command or firmware-list memory access. Timeout retains all DMA until reboot.",
+
   "FIX1 run 41307345874 temporary boot: photo 1793538425349.jpg shows stage=3 done=1 result=00 data=2 for local PA_ACTIVETXDATALANES. Two active TX lanes; this does not qualify DMA or block reads.",
   "RO1 mode 24 reads apps-SMMU global state and matches SM8250 UFS SIDs 0xe0 and 0x4e0. It derives page geometry from ID1 and reads only uniquely matched TRANS context banks within the documented MMIO window.",
   "Host tests cover masked and extended stream matching, duplicate matches, invalid banks, bad geometry, and read bounds. No MMIO write API, UIC command, UTP request, reset or disk command is present in RO1.",
@@ -159,7 +162,7 @@ limits = [
   "No partition geometry, no storage component, no root path.",
 ]
 next_action = [
-  "Temporarily boot RO2 mode 25; capture visible table counts, raw samples and stability before deciding any DMA ownership change.",
+  "Build and temporarily boot mode 26; record NOP completion or exact guarded failure before any SCSI capacity or block command.",
   "Resolve DMA address translation and exclusive request queue ownership before any bounded UTP or known-block read test.",
 ]
 evidence = [
