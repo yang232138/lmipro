@@ -260,12 +260,12 @@ static LmiproNopResult lmiproNop(Ops &io) {
   };
   r.stage=1;
   if (!idle()) return fail("controller not idle/ready");
-  if (!io.dma || (io.dma&4095) || io.bytes<8192 || io.dma>UINT64_MAX-8192 ||
-      (!(hr(0)&0x01000000) && io.dma+8192>0x100000000ULL)) return fail("DMA range");
+  if (!io.dma || (io.dma&4095) || io.bytes<16384 || io.dma>UINT64_MAX-16384 ||
+      (!(hr(0)&0x01000000) && io.dma+16384>0x100000000ULL)) return fail("DMA range");
   if ((sr(0)&9) || !(sr(0x20)&(1U<<27))) return fail("SMMU mode");
   r.stage=2;
   UfsSmmuPlan p[2];
-  p[0]=planUfsSmmu(0xe0,io.dma,8192,sr);
+  p[0]=planUfsSmmu(0xe0,io.dma,16384,sr);
   if (p[0].error) return fail(p[0].error);
   if (p[0].reuse) return fail("existing e0 mapping not owned");
   // Plan both exclusive banks before changing any register. The second plan
@@ -275,7 +275,7 @@ static LmiproNopResult lmiproNop(Ops &io) {
     if (off==0xc00+4*p[0].slot) return uint32_t(p[0].bank);
     return sr(off);
   };
-  p[1]=planUfsSmmu(0x4e0,io.dma,8192,reservedRead);
+  p[1]=planUfsSmmu(0x4e0,io.dma,16384,reservedRead);
   if (p[1].error) return fail(p[1].error);
   if (p[1].reuse || p[1].slot==p[0].slot || p[1].bank==p[0].bank) return fail("mapping ownership");
   for(unsigned i=0;i<2;++i) { r.slot[i]=p[i].slot; r.bank[i]=p[i].bank; }
@@ -290,7 +290,7 @@ static LmiproNopResult lmiproNop(Ops &io) {
   r.stage=4;
   for(unsigned i=0;i<2;++i) {
     const uint16_t sid=i ? 0x4e0 : 0xe0;
-    auto now=planUfsSmmu(sid,io.dma,8192,sr);
+    auto now=planUfsSmmu(sid,io.dma,16384,sr);
     if(now.error || now.reuse || now.slot!=p[i].slot || now.bank!=p[i].bank)
       return fail("mapping changed before claim");
     const char *why=configureUfsSmmu(now,sid,sr,
@@ -299,7 +299,7 @@ static LmiproNopResult lmiproNop(Ops &io) {
   }
   r.stage=5;
   // Dedicated allocation only: never dereference or overwrite firmware UTRLBA.
-  for(unsigned i=0;i<8192;++i) io.data[i]=0;
+  for(unsigned i=0;i<16384;++i) io.data[i]=0;
   auto *utrd=reinterpret_cast<uint32_t *>(io.data);
   const uint64_t ucd=io.dma+4096;
   utrd[0]=0x10000000; utrd[2]=15;
@@ -342,6 +342,129 @@ static LmiproNopResult lmiproNop(Ops &io) {
   return r;
 }
 
+
+struct LmiproReadResult {
+  const char *error=nullptr;
+  unsigned stage=0,commands=0,polls=0;
+  uint32_t ocs=15,scsi=0xffff,sense=0,blockBytes=0,lastLba=0,headerCrc=0,arrayCrc=0;
+  uint64_t first=0,last=0;
+  uint32_t magic0=0,magic1=0;
+};
+static inline uint32_t lmiBe(const uint8_t *p) {return uint32_t(p[0])<<24|uint32_t(p[1])<<16|uint32_t(p[2])<<8|p[3];}
+static inline uint32_t lmiLe(const uint8_t *p) {return uint32_t(p[3])<<24|uint32_t(p[2])<<16|uint32_t(p[1])<<8|p[0];}
+static inline uint64_t lmiLe64(const uint8_t *p) {return uint64_t(lmiLe(p))|(uint64_t(lmiLe(p+4))<<32);}
+static inline uint32_t lmiCrc(uint32_t crc,const uint8_t *p,unsigned n) {
+  for(unsigned i=0;i<n;++i) {crc^=p[i];for(unsigned j=0;j<8;++j)crc=(crc>>1)^(0xedb88320U&(0U-(crc&1)));}return crc;
+}
+// Called only after a validated NOP and stopped, exclusively owned queue.
+// Fixed allowlist: READ CAPACITY(10) and READ(10), LUN 0, device-to-host only.
+template<class Ops>
+static LmiproReadResult lmiproReadDisk(Ops &io) {
+  LmiproReadResult r;
+  auto fail=[&](const char *s){r.error=s;return r;};
+  auto command=[&](uint8_t opcode,uint32_t lba,unsigned bytes)->const char * {
+    if((opcode!=0x25 && opcode!=0x28) || !bytes || bytes>4096 || (bytes&3) || r.commands>=35)
+      return "read command bounds";
+    if(io.bytes<16384 || io.hostRead(0x58) || io.hostRead(0x78) || (io.hostRead(0x20)&kUfsFatalStatus))
+      return "read queue not idle";
+    for(unsigned i=0;i<16384;++i)io.data[i]=0;
+    auto *w=reinterpret_cast<uint32_t *>(io.data);
+    uint64_t ucd=io.dma+4096,data=io.dma+8192;
+    w[0]=0x14000000;w[2]=15;w[4]=uint32_t(ucd);w[5]=uint32_t(ucd>>32);
+    w[6]=128U|(128U<<16);w[7]=1U|(256U<<16);
+    auto *prd=reinterpret_cast<uint32_t *>(io.data+5120);
+    prd[0]=uint32_t(data);prd[1]=uint32_t(data>>32);prd[3]=bytes-1;
+    uint8_t *q=io.data+4096;q[0]=1;q[1]=0x40;q[3]=2;
+    q[12]=uint8_t(bytes>>24);q[13]=uint8_t(bytes>>16);q[14]=uint8_t(bytes>>8);q[15]=uint8_t(bytes);
+    q[16]=opcode;
+    if(opcode==0x28) {q[18]=uint8_t(lba>>24);q[19]=uint8_t(lba>>16);q[20]=uint8_t(lba>>8);q[21]=uint8_t(lba);q[24]=1;}
+    io.clean();io.hostWrite(0x20,1);io.hostWrite(0x60,1);
+    if(!(io.hostRead(0x60)&1) || (io.hostRead(0x30)&15)!=15) return "read queue start";
+    ++r.commands;io.hostWrite(0x58,1);
+    for(r.polls=0;r.polls<500000;++r.polls) {
+      if(io.hostRead(0x20)&kUfsFatalStatus)return "read fatal; DMA retained";
+      if(!io.hostRead(0x58)) {io.invalidate();r.ocs=w[2]&255;if(r.ocs!=15)break;}
+      io.delay();
+    }
+    if(r.polls==500000)return "read timeout; DMA retained";
+    if(r.ocs)return "read OCS error";
+    const uint8_t *rsp=io.data+4608;
+    if(rsp[0]!=0x21 || rsp[2] || rsp[3]!=2 || rsp[8])return "read response header";
+    unsigned len=unsigned(rsp[10])*256+rsp[11];
+    if(len>480)return "read response length";
+    r.scsi=unsigned(rsp[6])*256+rsp[7];r.sense=0;
+    if(len) {
+      unsigned n=unsigned(rsp[32])*256+rsp[33];if(len<2 || n>len-2)return "sense bounds";
+      const uint8_t *s=rsp+34;
+      if(n>=14 && ((s[0]&127)==0x70 || (s[0]&127)==0x71))r.sense=(uint32_t(s[2]&15)<<16)|(uint32_t(s[12])<<8)|s[13];
+      if(n>=4 && ((s[0]&127)==0x72 || (s[0]&127)==0x73))r.sense=(uint32_t(s[1]&15)<<16)|(uint32_t(s[2])<<8)|s[3];
+    }
+    if(r.scsi)return "SCSI status; no retry";
+    if((rsp[1]&0x60) || lmiBe(rsp+12))return "short/overrun read";
+    return nullptr;
+  };
+  r.stage=10;
+  const char *why=command(0x25,0,8);if(why)return fail(why);
+  uint8_t *b=io.data+8192;
+  r.lastLba=lmiBe(b);r.blockBytes=lmiBe(b+4);
+  if(r.lastLba==0xffffffffU || r.lastLba<100 || (r.blockBytes!=512 && r.blockBytes!=4096))return fail("capacity geometry unsupported");
+  r.stage=11;why=command(0x28,1,r.blockBytes);if(why)return fail(why);
+  if(lmiLe(b)!=0x20494645 || lmiLe(b+4)!=0x54524150 || lmiLe(b+8)!=0x10000 || lmiLe(b+20) || lmiLe64(b+24)!=1)
+    return fail("GPT header signature/revision");
+  unsigned hlen=lmiLe(b+12);r.headerCrc=lmiLe(b+16);
+  if(hlen<92 || hlen>r.blockBytes)return fail("GPT header size");
+  b[16]=b[17]=b[18]=b[19]=0;
+  if((lmiCrc(0xffffffffU,b,hlen)^0xffffffffU)!=r.headerCrc)return fail("GPT header CRC");
+  uint64_t backup=lmiLe64(b+32),usableFirst=lmiLe64(b+40),usableLast=lmiLe64(b+48),entries=lmiLe64(b+72);
+  unsigned count=lmiLe(b+80),entryBytes=lmiLe(b+84);r.arrayCrc=lmiLe(b+88);
+  if(!count || count>128 || entryBytes!=128)return fail("GPT entry bounds");
+  unsigned blocks=(count*128+r.blockBytes-1)/r.blockBytes;
+  if(entries<2 || entries>64 || entries+blocks>usableFirst || usableFirst>usableLast || usableLast>=backup || backup!=r.lastLba || backup-usableLast<=blocks)
+    return fail("GPT disk bounds");
+  r.stage=12;unsigned matches=0;uint32_t crc=0xffffffffU;
+  for(unsigned block=0;block<blocks;++block) {
+    why=command(0x28,uint32_t(entries+block),r.blockBytes);if(why)return fail(why);
+    unsigned remaining=count*128-block*r.blockBytes,n=remaining<r.blockBytes?remaining:r.blockBytes;
+    crc=lmiCrc(crc,b,n);
+    for(unsigned off=0;off<n;off+=128) {
+      const uint8_t *e=b+off;unsigned used=0;for(unsigned i=0;i<16;++i)used|=e[i];if(!used)continue;
+      const char name[]="userdata";bool match=true;
+      for(unsigned i=0;i<9;++i)if(e[56+2*i]!=uint8_t(name[i]) || e[57+2*i])match=false;
+      if(match) {++matches;r.first=lmiLe64(e+32);r.last=lmiLe64(e+40);}
+    }
+  }
+  if((crc^0xffffffffU)!=r.arrayCrc)return fail("GPT array CRC");
+  if(matches!=1 || r.first<usableFirst || r.last<r.first || r.last>usableLast)return fail("userdata missing/ambiguous/bounds");
+  r.stage=13;why=command(0x28,uint32_t(r.first),r.blockBytes);if(why)return fail(why);
+  // stage 14: the backup GPT header and its entry array must describe the same
+  // disk as the primary header, verified with their own CRCs.
+  r.stage=14;
+  why=command(0x28,uint32_t(r.lastLba),r.blockBytes);if(why)return fail(why);
+  if(lmiLe(b)!=0x20494645 || lmiLe(b+4)!=0x54524150 || lmiLe(b+8)!=0x10000)
+  return fail("backup GPT signature/revision");
+  if(lmiLe64(b+24)!=r.lastLba)return fail("backup GPT myLba");
+  if(lmiLe64(b+32)!=1)return fail("backup GPT alternate");
+  if(lmiLe64(b+72)!=entries || lmiLe(b+80)!=count || lmiLe(b+84)!=128 || lmiLe(b+88)!=r.arrayCrc)
+  return fail("backup GPT geometry/crc field");
+  if(lmiLe64(b+40)!=r.usableFirst || lmiLe64(b+48)!=r.usableLast)return fail("backup GPT usable range");
+  {unsigned bhlen=lmiLe(b+12);
+  if(bhlen<92 || bhlen>r.blockBytes)return fail("backup GPT header size");
+  b[16]=b[17]=b[18]=b[19]=0;
+  if((lmiCrc(0xffffffffU,b,bhlen)^0xffffffffU)!=lmiLe(b+16))return fail("backup GPT header CRC");}
+  r.stage=15;
+  {uint32_t bcrc=0xffffffffU;
+  for(unsigned bblk=0;bblk<blocks;++bblk) {
+  why=command(0x28,uint32_t(r.lastLba-blocks+bblk),r.blockBytes);if(why)return fail(why);
+  unsigned bremaining=count*128-bblk*r.blockBytes,bn=bremaining<r.blockBytes?bremaining:r.blockBytes;
+  bcrc=lmiCrc(bcrc,b,bn);}
+  if((bcrc^0xffffffffU)!=r.arrayCrc)return fail("backup GPT array CRC");}
+  r.stage=16;
+  r.magic0=lmiLe(b);r.magic1=lmiLe(b+4);
+  io.hostWrite(0x60,0);unsigned loops=10000;
+  while((io.hostRead(0x60)&1) && loops--)io.delay();
+  if(io.hostRead(0x60)&1)return fail("read complete; queue stop failed");
+  r.stage=17;return r;
+}
 
 #ifndef LMIPRO_UIC_HOST_TEST
 #include <IOKit/IOService.h>
@@ -424,18 +547,18 @@ struct LmiproNopPort {
   void smmuWrite(unsigned off,uint32_t value) { write(smmu,off,value); }
   void delay() { IODelay(2); }
   void clean() {
-    for(uintptr_t p=reinterpret_cast<uintptr_t>(data);p<reinterpret_cast<uintptr_t>(data)+8192;p+=64)
+    for(uintptr_t p=reinterpret_cast<uintptr_t>(data);p<reinterpret_cast<uintptr_t>(data)+16384;p+=64)
       __asm__ volatile("dc civac, %0" :: "r"(p) : "memory");
     __asm__ volatile("dsb sy" ::: "memory");
   }
   void invalidate() {
     __asm__ volatile("dsb sy" ::: "memory");
-    for(uintptr_t p=reinterpret_cast<uintptr_t>(data);p<reinterpret_cast<uintptr_t>(data)+8192;p+=64)
+    for(uintptr_t p=reinterpret_cast<uintptr_t>(data);p<reinterpret_cast<uintptr_t>(data)+16384;p+=64)
       __asm__ volatile("dc ivac, %0" :: "r"(p) : "memory");
     __asm__ volatile("dsb sy" ::: "memory");
   }
 };
-static void lmiproNopProbe() {
+static void lmiproNopProbe(bool disk=false) {
   LmiproHostState h=lmiproHostState();
   if(h.mapped!=2) panic("LMIPRO UFS NOP v1: power/clock gate host=%u",h.mapped);
   IODeviceMemory *mem=IODeviceMemory::withRange(0x01d84000ULL,0x1000);
@@ -449,7 +572,7 @@ static void lmiproNopProbe() {
   // still own it; there is no cancellation, retry, free or firmware-list reuse.
   auto *buffer=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
     static_cast<IOOptionBits>(kIODirectionInOut)|static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous)|
-    static_cast<IOOptionBits>(kIOMemoryMapperNone),8192,4096);
+    static_cast<IOOptionBits>(kIOMemoryMapperNone),16384,4096);
   if(!buffer) panic("LMIPRO UFS NOP v1: DMA allocation");
   IOByteCount count=0;
   uint64_t pa=buffer->getPhysicalSegment(0,&count,kIOMemoryMapperNone);
@@ -457,6 +580,16 @@ static void lmiproNopProbe() {
   if(!va || (reinterpret_cast<uintptr_t>(va)&63)) panic("LMIPRO UFS NOP v1: DMA CPU alignment");
   LmiproNopPort io={hc->getVirtualAddress(),smmu->getVirtualAddress(),pa,count,va};
   auto r=lmiproNop(io);
+  if(disk && !r.error) {
+    auto d=lmiproReadDisk(io);
+    panic("LMIPRO UFS READ v1\n%s stage=%u cmds=%u\n"
+          "ocs=%x scsi=%x sense=%06x\nblock=%u lastLba=%x\n"
+          "GPT crc=%08x/%08x\nuserdata=%llx..%llx\nmagic=%08x %08x\n"
+          "hcs=%08x db=%08x is=%08x gfsr=%08x\nNo disk writes; no root publication",
+          d.error?d.error:"Capacity/GPT/userdata block read",d.stage,d.commands,d.ocs,d.scsi,d.sense,
+          d.blockBytes,d.lastLba,d.headerCrc,d.arrayCrc,(unsigned long long)d.first,(unsigned long long)d.last,
+          d.magic0,d.magic1,io.hostRead(0x30),io.hostRead(0x58),io.hostRead(0x20),io.smmuRead(0x48));
+  }
   panic("LMIPRO UFS NOP v1\n%s stage=%u\n"
         "dma=%llx bytes=%llu\ne0 slot=%u bank=%u; 4e0 slot=%u bank=%u\n"
         "polls=%u ocs=%x response=%08x\nhcs=%08x hce=%08x db=%08x is=%08x\n"
@@ -472,6 +605,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
 {
   unsigned mode=0;
   if (!PE_parse_boot_argn("lmipro-ufs-handoff",&mode,sizeof(mode))) return;
+  if (mode==27) { lmiproNopProbe(true); return; }
   if (mode==26) { lmiproNopProbe(); return; }
   if (mode!=25) panic("LMIPRO SMMU RO2: only mode 25 enabled; mode=%u",mode);
   IODeviceMemory* mem=IODeviceMemory::withRange(0x15000000ULL,0x100000);
