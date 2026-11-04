@@ -403,3 +403,8 @@ hardware_test = "RO1 photographed; RO2 build and hardware observation pending"
 root_mount_qualified = false
 
 
+
+# 2026-11-04: current boot reaches IOKitBSDInit root mount failure after removing RO2 stop.
+# User reports OS/SystemOS flashed; on-device root contents are not read back yet.
+# STORAGE PRECHECK reads SM8250 GCC enable/power and gated UFSHCI request-list state.
+# It resolves firmware takeover prerequisites; it is not a functional UFS driver.

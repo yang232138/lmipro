@@ -103,6 +103,38 @@ struct LmiproReadOnlyMmio {
     return v;
   }
 };
+// Only source-backed read-only windows. No queue, clock, SMMU or disk writes.
+struct LmiproHostState {
+  uint32_t mapped, pwr, axi, ahb, uni, cap, ver, hcs, hce, db, rs, lo, hi;
+};
+static LmiproHostState lmiproHostState(void) {
+  LmiproHostState s = {};
+  IODeviceMemory *m = IODeviceMemory::withRange(0x00177000ULL, 0x1000);
+  if (!m) return s;
+  OSSharedPtr<IOMemoryMap> gcc(m->map(kIOMapAnywhere|kIOMapInhibitCache),OSNoRetain);
+  m->release();
+  if (!gcc) return s;
+  auto read = [](uintptr_t base, unsigned off) {
+    uint32_t v=*reinterpret_cast<const volatile uint32_t*>(base+off);
+    __asm__ volatile("dsb sy" ::: "memory");
+    return v;
+  };
+  uintptr_t g=static_cast<uintptr_t>(gcc->getVirtualAddress());
+  s.mapped=1; s.pwr=read(g,4); s.axi=read(g,0x10);
+  s.ahb=read(g,0x18); s.uni=read(g,0x5c);
+  // Enable bits are authoritative under HW clock gating; never probe a powered-off host.
+  if (!(s.pwr & 0x80000000U) || !(s.axi & 1) || !(s.ahb & 1)) return s;
+  m=IODeviceMemory::withRange(0x01d84000ULL,0x1000);
+  if (!m) return s;
+  OSSharedPtr<IOMemoryMap> host(m->map(kIOMapAnywhere|kIOMapInhibitCache),OSNoRetain);
+  m->release();
+  if (!host) return s;
+  uintptr_t h=static_cast<uintptr_t>(host->getVirtualAddress());
+  s.mapped=2; s.cap=read(h,0); s.ver=read(h,8); s.hcs=read(h,0x30);
+  s.hce=read(h,0x34); s.db=read(h,0x58); s.rs=read(h,0x60);
+  s.lo=read(h,0x50); s.hi=read(h,0x54);
+  return s;
+}
 extern "C" void lmipro_ufs_handoff_probe(void)
 {
   unsigned mode=0;
@@ -115,13 +147,17 @@ extern "C" void lmipro_ufs_handoff_probe(void)
   if (!keep) panic("LMIPRO SMMU RO2: mapping failed");
   LmiproReadOnlyMmio io={static_cast<uintptr_t>(keep->getVirtualAddress())};
   LmiproSmmuResult r=lmiproSmmuAudit(io);
+  LmiproHostState h=lmiproHostState();
   const LmiproStream& a=r.stream[0]; const LmiproStream& b=r.stream[1];
   lmipro_ufs_handoff_observation[0]=r.stage;
   lmipro_ufs_handoff_observation[1]=r.scr0;
   lmipro_ufs_handoff_observation[2]=r.id0;
   lmipro_ufs_handoff_observation[3]=r.id1;
   lmipro_ufs_handoff_observation[4]=r.gfsr;
-  panic("LMIPRO SMMU RO2 (reads only)\n"
+  panic("LMIPRO STORAGE PRECHECK v1 (reads only)\n"
+        "host=%u pwr=%08x axi=%08x ahb=%08x uni=%08x\n"
+        "cap=%08x ver=%08x hcs=%08x hce=%08x\n"
+        "doorbell=%08x run=%08x list=%08x:%08x\n"
         "stage=%u cr0=%08x id0=%08x\nid1=%08x id2=%08x ext=%u\n"
         "groups=%u scan=%u valid=%u nz=%u\n"
         "T/B/F/R=%u/%u/%u/%u allff=%u\n"
@@ -132,6 +168,7 @@ extern "C" void lmipro_ufs_handoff_probe(void)
         "%u: %08x %08x\n%u: %08x %08x\n"
         "gfsr=%08x syn=%08x/%08x/%08x\n"
         "No DMA or disk-read qualification",
+        h.mapped,h.pwr,h.axi,h.ahb,h.uni,h.cap,h.ver,h.hcs,h.hce,h.db,h.rs,h.hi,h.lo,
         r.stage,r.scr0,r.id0,r.id1,r.id2,r.extended,r.groups,r.scanned,r.valid,r.nonzero,
         r.types[0],r.types[1],r.types[2],r.types[3],r.allones,
         r.hash,r.hash2,r.changed,r.globalChanged,a.matches,b.matches,r.sampleCount,
