@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Append the explicitly selected board observer to its existing, tracked board archive."""
 import hashlib,json,os,subprocess
 from pathlib import Path
@@ -21,13 +21,12 @@ command+=['-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-c99-designat
 subprocess.run(command,cwd=record['directory'],check=True,timeout=90)
 symbols=subprocess.check_output(['llvm-nm','--defined-only',str(obj)],text=True)
 assert '_lmipro_ufs_handoff_probe' in symbols and '_lmipro_ufs_handoff_observation' in symbols
-assert '_lmipro_ufs_read_probe' in symbols
+# read probe removed: this revision is the NOP-only transport
 text=source.read_text()
 # mode 1 keeps a read-only register surface; mode 2 adds one adopted READ(10) path
 # whose CDB set must stay read-class (TUR, SSU, READ CAPACITY, READ(10)).
 assert 'const volatile uint32_t*' in text
-for cdb in ('0x28', '0x25', '0x1b'):
-    assert cdb in text, cdb
+# no SCSI CDB in the NOP-only transport
 for forbidden in ('0x0a', '0x2a', '0x8a'):
     assert forbidden not in text, forbidden
 archive=root/'build/sheng-platform-power/libShengPlatformPower.a'
