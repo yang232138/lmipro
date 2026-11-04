@@ -446,7 +446,7 @@ static LmiproReadResult lmiproReadDisk(Ops &io) {
   if(lmiLe64(b+32)!=1)return fail("backup GPT alternate");
   if(lmiLe64(b+72)!=entries || lmiLe(b+80)!=count || lmiLe(b+84)!=128 || lmiLe(b+88)!=r.arrayCrc)
   return fail("backup GPT geometry/crc field");
-  if(lmiLe64(b+40)!=r.usableFirst || lmiLe64(b+48)!=r.usableLast)return fail("backup GPT usable range");
+  if(lmiLe64(b+40)!=usableFirst || lmiLe64(b+48)!=usableLast)return fail("backup GPT usable range");
   {unsigned bhlen=lmiLe(b+12);
   if(bhlen<92 || bhlen>r.blockBytes)return fail("backup GPT header size");
   b[16]=b[17]=b[18]=b[19]=0;
