@@ -347,6 +347,7 @@ struct LmiproReadResult {
   const char *error=nullptr;
   unsigned stage=0,commands=0,polls=0;
   uint32_t ocs=15,scsi=0xffff,sense=0,blockBytes=0,lastLba=0,headerCrc=0,arrayCrc=0;
+  uint32_t bEntries=0,bCount=0,bEntryBytes=0,bArrayCrc=0,bHdrCrc=0,bAlt=0;
   uint64_t first=0,last=0;
   uint32_t magic0=0,magic1=0;
 };
@@ -444,7 +445,9 @@ static LmiproReadResult lmiproReadDisk(Ops &io) {
   return fail("backup GPT signature/revision");
   if(lmiLe64(b+24)!=r.lastLba)return fail("backup GPT myLba");
   if(lmiLe64(b+32)!=1)return fail("backup GPT alternate");
-  if(lmiLe64(b+72)!=entries || lmiLe(b+80)!=count || lmiLe(b+84)!=128 || lmiLe(b+88)!=r.arrayCrc)
+  r.bEntries=lmiLe64(b+72);r.bCount=lmiLe(b+80);r.bEntryBytes=lmiLe(b+84);r.bArrayCrc=lmiLe(b+88);r.bHdrCrc=lmiLe(b+16);
+  r.bAlt=uint32_t(lmiLe64(b+32));
+  if(r.bEntries!=entries || r.bCount!=count || r.bEntryBytes!=128 || r.bArrayCrc!=r.arrayCrc)
   return fail("backup GPT geometry/crc field");
   if(lmiLe64(b+40)!=usableFirst || lmiLe64(b+48)!=usableLast)return fail("backup GPT usable range");
   {unsigned bhlen=lmiLe(b+12);
@@ -585,10 +588,13 @@ static void lmiproNopProbe(bool disk=false) {
     panic("LMIPRO UFS READ v1\n%s stage=%u cmds=%u\n"
           "ocs=%x scsi=%x sense=%06x\nblock=%u lastLba=%x\n"
           "GPT crc=%08x/%08x\nuserdata=%llx..%llx\nmagic=%08x %08x\n"
+          "backup entries=%llx count=%u bytes=%u crc=%08x alt=%x\n"
           "hcs=%08x db=%08x is=%08x gfsr=%08x\nNo disk writes; no root publication",
           d.error?d.error:"Capacity/GPT/userdata block read",d.stage,d.commands,d.ocs,d.scsi,d.sense,
           d.blockBytes,d.lastLba,d.headerCrc,d.arrayCrc,(unsigned long long)d.first,(unsigned long long)d.last,
-          d.magic0,d.magic1,io.hostRead(0x30),io.hostRead(0x58),io.hostRead(0x20),io.smmuRead(0x48));
+          d.magic0,d.magic1,
+          (unsigned long long)d.bEntries,d.bCount,d.bEntryBytes,d.bArrayCrc,d.bAlt,
+          io.hostRead(0x30),io.hostRead(0x58),io.hostRead(0x20),io.smmuRead(0x48));
   }
   panic("LMIPRO UFS NOP v1\n%s stage=%u\n"
         "dma=%llx bytes=%llu\ne0 slot=%u bank=%u; 4e0 slot=%u bank=%u\n"
