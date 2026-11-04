@@ -96,7 +96,7 @@ struct UfsSmmuPlan {
 // ARM IHI 0062D.c sections 1.6 and 3.7: VA64=0 still rejects inputs above
 // 32 bits with SCTLR.M=0. With VA64=1 the bypass range is bounded by all
 // three hardware widths, not TCR2.PASize (which only limits translation).
-static unsigned ufsSmmuAddressBits(unsigned code)
+static inline unsigned ufsSmmuAddressBits(unsigned code)
 {
   switch (code) {
     case 0: return 32; case 1: return 36; case 2: return 40;
