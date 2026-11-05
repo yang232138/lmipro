@@ -12,6 +12,11 @@
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
+#include <IOKit/IOBSD.h>
+#include <libkern/c++/OSDictionary.h>
+#include <libkern/c++/OSIterator.h>
+#include <libkern/c++/OSNumber.h>
+#include <libkern/c++/OSString.h>
 #include <pexpert/pexpert.h>
 #include <kern/task.h>
 #include <kern/thread.h>
@@ -561,4 +566,50 @@ extern "C" int native_verified_block_root_authorized(dev_t device)
 {
   (void)device;
   return 1;
+}
+
+// The owner SystemOS mount resolves a volume UUID to the block device that
+// carries it. Only the media created on top of this driver's windows qualify.
+extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *device, char *path, size_t size)
+{
+  if (!uuid || !device || !path || size < 8) return 0;
+  *device = NODEV;
+  path[0] = 0;
+  OSDictionary *match = IOService::serviceMatching("IOMedia");
+  if (!match) return 0;
+  OSDictionary *props = OSDictionary::withCapacity(1);
+  OSString *want = OSString::withCString(uuid);
+  if (props && want) props->setObject(kIOMediaUUIDKey, want);
+  if (props) match->setObject("IOPropertyMatch", props);
+  OSIterator *it = IOService::getMatchingServices(match);
+  int found = 0;
+  if (it) {
+    while (IOService *media = OSDynamicCast(IOService, it->getNextObject())) {
+      bool ours = false;
+      IOService *provider = media->getProvider();
+      for (int depth = 0; provider && depth < 4; ++depth) {
+        if (OSDynamicCast(LmiproUfsBlock, provider)) { ours = true; break; }
+        provider = provider->getProvider();
+      }
+      if (!ours) continue;
+      OSNumber *maj = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMajorKey));
+      OSNumber *min = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMinorKey));
+      OSString *name = OSDynamicCast(OSString, media->getProperty(kIOBSDNameKey));
+      if (!maj || !min || !name) continue;
+      *device = makedev(maj->unsigned32BitValue(), min->unsigned32BitValue());
+      static const char prefix[] = "/dev/";
+      size_t n = 0;
+      while (prefix[n] && n + 1 < size) { path[n] = prefix[n]; ++n; }
+      const char *nm = name->getCStringNoCopy();
+      for (size_t k = 0; nm && nm[k] && n + 1 < size; ++k) path[n++] = nm[k];
+      path[n] = 0;
+      found = 1;
+      break;
+    }
+    it->release();
+  }
+  match->release();
+  if (props) props->release();
+  if (want) want->release();
+  return found;
 }

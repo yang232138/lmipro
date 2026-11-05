@@ -24,3 +24,9 @@ CONFIG_XNU_DT_PANIC_REGION=y
 CONFIG_XNU_SHENG_PMGR=y
 
 # Owner root binding: authorize the read-only block-device root.
+
+# Owner root trust + SystemOS cache mount (verified-root probe mode).
+CONFIG_XNU_VERIFIED_ROOT_PROBE=y
+CONFIG_XNU_OWNER_ROOT_AUDIT=y
+CONFIG_XNU_OWNER_ROOT_TRUST=y
+CONFIG_XNU_OWNER_CACHE_MOUNT=y
