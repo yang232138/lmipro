@@ -357,6 +357,17 @@ static unsigned lmiPartCount;
 static uint8_t lmiUserBlock[4096];
 static unsigned lmiGptPage = 0xffffffffU;
 
+// One APFS volume as found through the container object map.
+struct LmiproVol {
+  uint64_t oid, paddr;
+  uint32_t role, unenc;
+  uint64_t numFiles;
+  uint8_t uuid[16];
+  char name[40];
+};
+static LmiproVol lmiVol[4];
+static unsigned lmiVolCount;
+
 struct LmiproReadResult {
   const char *error=nullptr;
   unsigned stage=0,commands=0,polls=0;
@@ -410,6 +421,38 @@ static void lmiTakePart(const uint8_t *e) {
 }
 // Fletcher-64 as APFS stores it: the checksum field itself is zero while the
 // rest of the object block is summed in 32-bit little-endian words.
+// A b-tree node as laid out by the APFS reference: 56-byte header, the index
+// area at btn_table_space, keys growing forward and values backward.
+struct LmiproNodeView {
+  unsigned flags,level,nkeys,keyBase,isLeaf,isRoot,fixed,bytes;
+};
+static inline unsigned lmiLeN16(const uint8_t *p) {return unsigned(p[0])|(unsigned(p[1])<<8);}
+static bool lmiNodeInit(const uint8_t *n,unsigned bytes,LmiproNodeView &v) {
+  v.flags=lmiLeN16(n+32);v.level=lmiLeN16(n+34);v.nkeys=lmiLe(n+36);
+  v.keyBase=56U+lmiLeN16(n+40)+lmiLeN16(n+42);
+  v.isLeaf=(v.flags&2U)!=0;v.isRoot=(v.flags&1U)!=0;v.fixed=(v.flags&4U)!=0;v.bytes=bytes;
+  if(!v.nkeys || v.nkeys>10000U || v.keyBase>bytes)return false;
+  unsigned entrySize=v.fixed?4U:8U;
+  return v.nkeys*entrySize<=v.keyBase-56U;
+}
+static bool lmiNodeKey(const uint8_t *n,const LmiproNodeView &v,unsigned i,unsigned &off,unsigned &len) {
+  if(i>=v.nkeys)return false;
+  unsigned k;
+  if(v.fixed){k=lmiLeN16(n+56+4*i);len=16;}
+  else{k=lmiLeN16(n+56+8*i);len=lmiLeN16(n+58+8*i);}
+  off=v.keyBase+k;
+  return len>=16 && off+len<=v.bytes;
+}
+static bool lmiNodeVal(const uint8_t *n,const LmiproNodeView &v,unsigned i,unsigned &off,unsigned &len) {
+  if(i>=v.nkeys)return false;
+  unsigned o;
+  if(v.fixed){o=lmiLeN16(n+56+4*i+2);len=v.isLeaf?16U:8U;}
+  else{o=lmiLeN16(n+60+8*i);len=lmiLeN16(n+62+8*i);}
+  if(v.isRoot){if(o>v.bytes-40U)return false;off=v.bytes-40U-o;}
+  else{if(o>v.bytes)return false;off=v.bytes-o;}
+  return off<v.bytes && off+len<=v.bytes;
+}
+
 // APFS stores the two's-complement Fletcher-64 of the object with the
 // checksum field itself excluded; that is the form linux-apfs and blkid verify.
 static uint64_t lmiFletcher64(const uint8_t *p,unsigned n) {
@@ -421,6 +464,9 @@ static uint64_t lmiFletcher64(const uint8_t *p,unsigned n) {
   uint64_t c1=0xffffffffULL-((s1+s2)%0xffffffffULL);
   uint64_t c2=0xffffffffULL-((s1+c1)%0xffffffffULL);
   return (c2<<32)|c1;
+}
+static inline bool lmiObjCsum(const uint8_t *b,unsigned bytes) {
+  return bytes>=8 && lmiFletcher64(b+8,bytes-8)==lmiLe64(b);
 }
 static bool lmiNxsb(const uint8_t *b,unsigned bytes,LmiproReadResult &r) {
   if(bytes<0x3d8 || b[0x20]!='N' || b[0x21]!='X' || b[0x22]!='S' || b[0x23]!='B') return false;
@@ -557,12 +603,61 @@ static LmiproReadResult lmiproReadDisk(Ops &io) {
     bcrc=lmiCrc(bcrc,b,bn);}
   if((bcrc^0xffffffffU)!=r.bArrayCrc)return fail("backup GPT array CRC");}
   r.stage=16;
-  // stage 17: APFS discovery. A GPT APFS-type partition is read directly; a
-  // userdata partition that carries the SHNGROOT manifest is read through its
-  // declared windows, which is where the IPSW OS/SystemOS containers live.
+  // stage 17: APFS. The container object map is physical (nx_omap_oid and
+  // om_tree_oid are block numbers), so each volume OID is resolved by a
+  // b-tree lookup and the volume superblock is read and checksummed.
+  auto apfsVolumes=[&](uint32_t base)->const char * {
+    why=command(0x28,base,r.blockBytes);if(why)return why;
+    if(!lmiNxsb(b,r.blockBytes,r))return nullptr;
+    if(r.nxBlockSize!=r.blockBytes || !r.nxCksumOk)return nullptr;
+    uint64_t xid=lmiLe64(b+0x10),omapOid=lmiLe64(b+0xa0);
+    uint64_t fsOid[2]={0,0};unsigned fsCount=0;
+    for(unsigned i=0;i<100 && fsCount<2;++i){uint64_t o=lmiLe64(b+0xb8+8*i);if(o)fsOid[fsCount++]=o;}
+    if(!fsCount || omapOid>0xffffffffULL-base)return nullptr;
+    why=command(0x28,uint32_t(base+omapOid),r.blockBytes);if(why)return why;
+    if((lmiLe(b+0x18)&0xffffU)!=0x0bU || !lmiObjCsum(b,r.blockBytes))return nullptr;
+    uint64_t treeOid=lmiLe64(b+0x30);
+    for(unsigned v=0;v<fsCount && lmiVolCount<4;++v){
+      uint64_t bno=treeOid;bool got=false;
+      for(unsigned depth=0;depth<8 && !got;++depth){
+        if(bno>0xffffffffULL-base)break;
+        why=command(0x28,uint32_t(base+bno),r.blockBytes);if(why)return why;
+        LmiproNodeView nv;
+        if(!lmiNodeInit(b,r.blockBytes,nv))break;
+        unsigned chosen=0xffffffffU;
+        for(unsigned i=0;i<nv.nkeys;++i){
+          unsigned ko,kl;if(!lmiNodeKey(b,nv,i,ko,kl))break;
+          uint64_t koid=lmiLe64(b+ko),kxid=lmiLe64(b+ko+8);
+          if(koid<fsOid[v]||(koid==fsOid[v]&&kxid<=xid))chosen=i;else break;
+        }
+        if(chosen==0xffffffffU)break;
+        unsigned ko,kl,vo,vl;
+        if(!lmiNodeKey(b,nv,chosen,ko,kl)||!lmiNodeVal(b,nv,chosen,vo,vl))break;
+        if(nv.isLeaf){
+          if(vl!=16)break;
+          uint64_t paddr=lmiLe64(b+vo+8);
+          if(paddr>0xffffffffULL-base)break;
+          why=command(0x28,uint32_t(base+paddr),r.blockBytes);if(why)return why;
+          if(lmiLe(b+0x20)!=0x42535041U || !lmiObjCsum(b,r.blockBytes))break;
+          LmiproVol &vol=lmiVol[lmiVolCount];
+          vol.oid=fsOid[v];vol.paddr=paddr;vol.role=lmiLeN16(b+0x3c0);
+          vol.unenc=(lmiLe64(b+0x108)&1U)?1U:0U;vol.numFiles=lmiLe64(b+0xb8);
+          for(unsigned k=0;k<16;++k)vol.uuid[k]=b[0xf0+k];
+          unsigned vn=0;
+          for(;vn<39;++vn){unsigned c=b[0x2c0+vn];if(!c)break;vol.name[vn]=(c>=0x20&&c<0x7f)?char(c):'_';}
+          vol.name[vn]=0;
+          ++lmiVolCount;got=true;
+        }else bno=lmiLe64(b+vo);
+      }
+    }
+    return nullptr;
+  };
+  // A GPT APFS-type partition is read directly; a userdata partition that
+  // carries the SHNGROOT manifest is read through its declared windows.
   if(r.apfsIndex!=0xffffffffU && r.apfsFirst<=0xffffffffULL) {
     why=command(0x28,uint32_t(r.apfsFirst),r.blockBytes);if(why)return fail(why);
     if(!lmiNxsb(b,r.blockBytes,r))return fail("APFS-type partition without NXSB");
+    why=apfsVolumes(uint32_t(r.apfsFirst));if(why)return fail(why);
   }
   if(lmiLe(lmiUserBlock)==0x474e4853U && lmiLe(lmiUserBlock+4)==0x544f4f52U) {
     r.shng=1;r.shngVersion=lmiLe(lmiUserBlock+8);r.shngCount=lmiLe(lmiUserBlock+12);
@@ -576,8 +671,11 @@ static LmiproReadResult lmiproReadDisk(Ops &io) {
       if(wlba>r.lastLba)continue;
       why=command(0x28,uint32_t(wlba),r.blockBytes);if(why)return fail(why);
       r.winMagic[i]=lmiLe(b);
-      if(!lmiNxsb(b,r.blockBytes,r) && lmiLe(b+0x200)==0x20494645U && lmiLe(b+0x204)==0x54524150U)
-        r.winMagic[i]=0x47505431U; // "GPT1" marker: the window starts with a GPT
+      if(lmiNxsb(b,r.blockBytes,r)) {
+        why=apfsVolumes(uint32_t(wlba));if(why)return fail(why);
+      } else if(lmiLe(b+0x200)==0x20494645U && lmiLe(b+0x204)==0x54524150U) {
+        r.winMagic[i]=0x47505431U; // the window starts with a GPT
+      }
     }
   }
   r.stage=17;
@@ -667,6 +765,14 @@ static void lmiReport(const LmiproReadResult &d) {
     lmiSay(" bc=");lmiHex(n,d.nxBlockCount,8);lmiSay(n);
     lmiSay(" fs=");lmiDec(n,d.nxFsCount);lmiSay(n);lmiSay("\n");
     lmiSay("nuuid=");for(unsigned i=0;i<4;++i){lmiHex(n,lmiLe(d.nxUuid+4*i),8);lmiSay(n);}lmiSay("\n");
+  }
+  for(unsigned i=0;i<lmiVolCount;++i){
+    lmiSay("vol");lmiDec(n,i);lmiSay(n);
+    lmiSay(" role=");lmiHex(n,lmiVol[i].role,4);lmiSay(n);
+    lmiSay(" fl=");lmiHex(n,lmiVol[i].unenc,1);lmiSay(n);
+    lmiSay(" files=");lmiDec(n,lmiVol[i].numFiles);lmiSay(n);
+    lmiSay(" uuid=");lmiGuid(g,lmiVol[i].uuid);lmiSay(g);lmiSay("\n");
+    lmiSay("  ");lmiSay(lmiVol[i].name);lmiSay("\n");
   }
   // A compact listing of the non-empty entries; the paged dump carries the
   // complete GUID and attribute fields for all 64 entries.
