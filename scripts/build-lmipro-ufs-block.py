@@ -82,14 +82,14 @@ missing = [name for name in undefined if name not in possible]
 if missing:
     raise SystemExit(f'unqualified storage import: {missing}')
 
-assembly = out / 'original-bindings.S'
+assembly = out / 'lmipro-ufs-block-bindings.S'
 assembly.write_text(''.join(f'.globl {name}\n.set {name}, {possible[name]:#x}\n' for name in sorted(set(undefined))))
 subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Werror',
-                '-Wno-incompatible-sysroot', '-c', str(assembly), '-o', str(out / 'original-bindings.o')],
+                '-Wno-incompatible-sysroot', '-c', str(assembly), '-o', str(out / 'lmipro-ufs-block-bindings.o')],
                check=True, timeout=120)
 
 archive = root / 'build/sheng-platform-power/libShengPlatformPower.a'
-subprocess.run(['xcrun', 'ar', 'rcs', str(archive), str(obj), str(out / 'original-bindings.o')],
+subprocess.run(['xcrun', 'ar', 'rcs', str(archive), str(obj), str(out / 'lmipro-ufs-block-bindings.o')],
                check=True, timeout=120)
 
 proof = dict(source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
