@@ -343,13 +343,37 @@ static LmiproNopResult lmiproNop(Ops &io) {
 }
 
 
+// ---- GPT / APFS read-only parse state --------------------------------------
+// The entry array is kept in BSS so the observer never allocates after the DMA
+// buffer exists and so a later block-device driver can reuse the parse.
+struct LmiproGptPart {
+  uint8_t type[16], uid[16];
+  uint64_t first, last, attrs;
+  uint8_t name[72];
+  char text[37];
+};
+static LmiproGptPart lmiPart[128];
+static unsigned lmiPartCount;
+static uint8_t lmiUserBlock[4096];
+static unsigned lmiGptPage = 0xffffffffU;
+
 struct LmiproReadResult {
   const char *error=nullptr;
   unsigned stage=0,commands=0,polls=0;
   uint32_t ocs=15,scsi=0xffff,sense=0,blockBytes=0,lastLba=0,headerCrc=0,arrayCrc=0;
   uint32_t bEntries=0,bCount=0,bEntryBytes=0,bArrayCrc=0,bHdrCrc=0,bAlt=0;
-  uint64_t first=0,last=0;
-  uint32_t magic0=0,magic1=0;
+  uint64_t first=0,last=0,usableFirst=0,usableLast=0;
+  uint32_t magic0=0,magic1=0,magic2=0,magic3=0;
+  uint8_t diskGuid[16]={};
+  uint32_t used=0, apfsCount=0, apfsIndex=0xffffffffU;
+  uint64_t apfsFirst=0, apfsLast=0;
+  uint32_t shng=0, shngVersion=0, shngCount=0;
+  uint64_t shngBytes=0;
+  uint32_t winMagic[2]={};
+  uint64_t winOff[2]={}, winSize[2]={};
+  uint32_t nxFound=0, nxMagic=0, nxCksumOk=0, nxBlockSize=0, nxFsCount=0;
+  uint64_t nxBlockCount=0;
+  uint8_t nxUuid[16]={};
 };
 static inline uint32_t lmiBe(const uint8_t *p) {return uint32_t(p[0])<<24|uint32_t(p[1])<<16|uint32_t(p[2])<<8|p[3];}
 static inline uint32_t lmiLe(const uint8_t *p) {return uint32_t(p[3])<<24|uint32_t(p[2])<<16|uint32_t(p[1])<<8|p[0];}
@@ -357,14 +381,68 @@ static inline uint64_t lmiLe64(const uint8_t *p) {return uint64_t(lmiLe(p))|(uin
 static inline uint32_t lmiCrc(uint32_t crc,const uint8_t *p,unsigned n) {
   for(unsigned i=0;i<n;++i) {crc^=p[i];for(unsigned j=0;j<8;++j)crc=(crc>>1)^(0xedb88320U&(0U-(crc&1)));}return crc;
 }
-// Called only after a validated NOP and stopped, exclusively owned queue.
+static inline bool lmiZero(const uint8_t *p,unsigned n) {
+  for(unsigned i=0;i<n;++i) if(p[i]) return false;
+  return true;
+}
+static bool lmiIsApfsType(const uint8_t *t) {
+  static const uint8_t guid[16]={0xef,0x57,0x34,0x7c,0x00,0x00,0xaa,0x11,
+                                 0xaa,0x11,0x00,0x30,0x65,0x43,0xec,0xac};
+  for(unsigned i=0;i<16;++i) if(t[i]!=guid[i]) return false;
+  return true;
+}
+static void lmiPartName(const uint8_t *e,char *out) {
+  unsigned n=0;
+  for(;n<36;++n) {
+    unsigned c=unsigned(e[56+2*n])|(unsigned(e[57+2*n])<<8);
+    if(!c) break;
+    out[n]=(c>=0x20 && c<0x7f)?char(c):'_';
+  }
+  out[n]=0;
+}
+static void lmiTakePart(const uint8_t *e) {
+  if(lmiPartCount>=128) return;
+  LmiproGptPart &p=lmiPart[lmiPartCount++];
+  for(unsigned i=0;i<16;++i){p.type[i]=e[i];p.uid[i]=e[16+i];}
+  p.first=lmiLe64(e+32);p.last=lmiLe64(e+40);p.attrs=lmiLe64(e+48);
+  for(unsigned i=0;i<72;++i)p.name[i]=e[56+i];
+  lmiPartName(e,p.text);
+}
+// Fletcher-64 as APFS stores it: the checksum field itself is zero while the
+// rest of the object block is summed in 32-bit little-endian words.
+// APFS stores the two's-complement Fletcher-64 of the object with the
+// checksum field itself excluded; that is the form linux-apfs and blkid verify.
+static uint64_t lmiFletcher64(const uint8_t *p,unsigned n) {
+  uint64_t s1=0,s2=0;
+  for(unsigned i=0;i+3<n;i+=4) {
+    uint32_t w=uint32_t(p[i])|(uint32_t(p[i+1])<<8)|(uint32_t(p[i+2])<<16)|(uint32_t(p[i+3])<<24);
+    s1+=w;s2+=s1;
+  }
+  uint64_t c1=0xffffffffULL-((s1+s2)%0xffffffffULL);
+  uint64_t c2=0xffffffffULL-((s1+c1)%0xffffffffULL);
+  return (c2<<32)|c1;
+}
+static bool lmiNxsb(const uint8_t *b,unsigned bytes,LmiproReadResult &r) {
+  if(bytes<0x3d8 || b[0x20]!='N' || b[0x21]!='X' || b[0x22]!='S' || b[0x23]!='B') return false;
+  r.nxFound=1;
+  r.nxMagic=lmiLe(b+0x20);
+  r.nxBlockSize=lmiLe(b+0x24);
+  r.nxBlockCount=lmiLe64(b+0x28);
+  r.nxFsCount=0;
+  for(unsigned i=0;i<100;++i) if(lmiLe64(b+0xb8+8*i)) ++r.nxFsCount;
+  for(unsigned i=0;i<16;++i) r.nxUuid[i]=b[0x48+i];
+  unsigned span=bytes<r.nxBlockSize?bytes:r.nxBlockSize;
+  r.nxCksumOk=(span>=8 && lmiFletcher64(b+8,span-8)==lmiLe64(b))?1:0;
+  return true;
+}
+// Called only after a validated NOP and a stopped, exclusively owned queue.
 // Fixed allowlist: READ CAPACITY(10) and READ(10), LUN 0, device-to-host only.
 template<class Ops>
 static LmiproReadResult lmiproReadDisk(Ops &io) {
   LmiproReadResult r;
   auto fail=[&](const char *s){r.error=s;return r;};
   auto command=[&](uint8_t opcode,uint32_t lba,unsigned bytes)->const char * {
-    if((opcode!=0x25 && opcode!=0x28) || !bytes || bytes>4096 || (bytes&3) || r.commands>=35)
+    if((opcode!=0x25 && opcode!=0x28) || !bytes || bytes>4096 || (bytes&3) || r.commands>=64)
       return "read command bounds";
     if(io.bytes<16384 || io.hostRead(0x58) || io.hostRead(0x78) || (io.hostRead(0x20)&kUfsFatalStatus))
       return "read queue not idle";
@@ -422,51 +500,203 @@ static LmiproReadResult lmiproReadDisk(Ops &io) {
   unsigned blocks=(count*128+r.blockBytes-1)/r.blockBytes;
   if(entries<2 || entries>64 || entries+blocks>usableFirst || usableFirst>usableLast || usableLast>=backup || backup!=r.lastLba || backup-usableLast<=blocks)
     return fail("GPT disk bounds");
-  r.stage=12;unsigned matches=0;uint32_t crc=0xffffffffU;
+  r.usableFirst=usableFirst;r.usableLast=usableLast;
+  for(unsigned i=0;i<16;++i)r.diskGuid[i]=b[56+i];
+  r.stage=12;lmiPartCount=0;unsigned matches=0;uint32_t crc=0xffffffffU;
   for(unsigned block=0;block<blocks;++block) {
     why=command(0x28,uint32_t(entries+block),r.blockBytes);if(why)return fail(why);
     unsigned remaining=count*128-block*r.blockBytes,n=remaining<r.blockBytes?remaining:r.blockBytes;
     crc=lmiCrc(crc,b,n);
-    for(unsigned off=0;off<n;off+=128) {
-      const uint8_t *e=b+off;unsigned used=0;for(unsigned i=0;i<16;++i)used|=e[i];if(!used)continue;
-      const char name[]="userdata";bool match=true;
-      for(unsigned i=0;i<9;++i)if(e[56+2*i]!=uint8_t(name[i]) || e[57+2*i])match=false;
-      if(match) {++matches;r.first=lmiLe64(e+32);r.last=lmiLe64(e+40);}
-    }
+    for(unsigned off=0;off+128<=n;off+=128)lmiTakePart(b+off);
   }
   if((crc^0xffffffffU)!=r.arrayCrc)return fail("GPT array CRC");
+  for(unsigned i=0;i<lmiPartCount;++i) {
+    if(lmiZero(lmiPart[i].type,16))continue;
+    ++r.used;
+    if(lmiIsApfsType(lmiPart[i].type)) {
+      ++r.apfsCount;
+      if(r.apfsIndex==0xffffffffU){r.apfsIndex=i;r.apfsFirst=lmiPart[i].first;r.apfsLast=lmiPart[i].last;}
+    }
+    const char want[]="userdata";bool match=true;
+    for(unsigned k=0;k<9;++k)if(lmiPart[i].name[2*k]!=uint8_t(want[k])||lmiPart[i].name[2*k+1])match=false;
+    if(match){++matches;r.first=lmiPart[i].first;r.last=lmiPart[i].last;}
+  }
   if(matches!=1 || r.first<usableFirst || r.last<r.first || r.last>usableLast)return fail("userdata missing/ambiguous/bounds");
   r.stage=13;why=command(0x28,uint32_t(r.first),r.blockBytes);if(why)return fail(why);
+  r.magic0=lmiLe(b);r.magic1=lmiLe(b+4);r.magic2=lmiLe(b+8);r.magic3=lmiLe(b+12);
+  for(unsigned i=0;i<4096;++i)lmiUserBlock[i]=b[i];
   // stage 14: the backup GPT header and its entry array must describe the same
-  // disk as the primary header, verified with their own CRCs.
+  // disk as the primary header, each with its own CRC recomputed from the read.
   r.stage=14;
   why=command(0x28,uint32_t(r.lastLba),r.blockBytes);if(why)return fail(why);
   if(lmiLe(b)!=0x20494645 || lmiLe(b+4)!=0x54524150 || lmiLe(b+8)!=0x10000)
-  return fail("backup GPT signature/revision");
+    return fail("backup GPT signature/revision");
   if(lmiLe64(b+24)!=r.lastLba)return fail("backup GPT myLba");
   if(lmiLe64(b+32)!=1)return fail("backup GPT alternate");
-  r.bEntries=lmiLe64(b+72);r.bCount=lmiLe(b+80);r.bEntryBytes=lmiLe(b+84);r.bArrayCrc=lmiLe(b+88);r.bHdrCrc=lmiLe(b+16);
-  r.bAlt=uint32_t(lmiLe64(b+32));
+  {uint64_t bentries=lmiLe64(b+72);
+  if(bentries<2 || bentries>(uint64_t)r.lastLba || bentries+blocks>(uint64_t)r.lastLba)
+    return fail("backup GPT entry LBA range");
+  r.bEntries=uint32_t(bentries);}
+  r.bCount=lmiLe(b+80);r.bEntryBytes=lmiLe(b+84);
+  r.bArrayCrc=lmiLe(b+88);r.bHdrCrc=lmiLe(b+16);r.bAlt=uint32_t(lmiLe64(b+32));
   if(r.bCount!=count || r.bEntryBytes!=128 || r.bArrayCrc!=r.arrayCrc)
-  return fail("backup GPT geometry/crc field");
+    return fail("backup GPT geometry/crc field");
   if(lmiLe64(b+40)!=usableFirst || lmiLe64(b+48)!=usableLast)return fail("backup GPT usable range");
+  for(unsigned i=0;i<16;++i)if(b[56+i]!=r.diskGuid[i])return fail("backup GPT disk GUID");
   {unsigned bhlen=lmiLe(b+12);
   if(bhlen<92 || bhlen>r.blockBytes)return fail("backup GPT header size");
+  // Save the stored CRC before zeroing the field it covers.
+  uint32_t bhdr=r.bHdrCrc;
   b[16]=b[17]=b[18]=b[19]=0;
-  if((lmiCrc(0xffffffffU,b,bhlen)^0xffffffffU)!=lmiLe(b+16))return fail("backup GPT header CRC");}
+  if((lmiCrc(0xffffffffU,b,bhlen)^0xffffffffU)!=bhdr)return fail("backup GPT header CRC");}
   r.stage=15;
   {uint32_t bcrc=0xffffffffU;
   for(unsigned bblk=0;bblk<blocks;++bblk) {
-  why=command(0x28,uint32_t(r.bEntries+bblk),r.blockBytes);if(why)return fail(why);
-  unsigned bremaining=count*128-bblk*r.blockBytes,bn=bremaining<r.blockBytes?bremaining:r.blockBytes;
-  bcrc=lmiCrc(bcrc,b,bn);}
-  if((bcrc^0xffffffffU)!=r.arrayCrc)return fail("backup GPT array CRC");}
+    why=command(0x28,uint32_t(r.bEntries+bblk),r.blockBytes);if(why)return fail(why);
+    unsigned bremaining=count*128-bblk*r.blockBytes,bn=bremaining<r.blockBytes?bremaining:r.blockBytes;
+    bcrc=lmiCrc(bcrc,b,bn);}
+  if((bcrc^0xffffffffU)!=r.bArrayCrc)return fail("backup GPT array CRC");}
   r.stage=16;
-  r.magic0=lmiLe(b);r.magic1=lmiLe(b+4);
+  // stage 17: APFS discovery. A GPT APFS-type partition is read directly; a
+  // userdata partition that carries the SHNGROOT manifest is read through its
+  // declared windows, which is where the IPSW OS/SystemOS containers live.
+  if(r.apfsIndex!=0xffffffffU && r.apfsFirst<=0xffffffffULL) {
+    why=command(0x28,uint32_t(r.apfsFirst),r.blockBytes);if(why)return fail(why);
+    if(!lmiNxsb(b,r.blockBytes,r))return fail("APFS-type partition without NXSB");
+  }
+  if(lmiLe(lmiUserBlock)==0x474e4853U && lmiLe(lmiUserBlock+4)==0x544f4f52U) {
+    r.shng=1;r.shngVersion=lmiLe(lmiUserBlock+8);r.shngCount=lmiLe(lmiUserBlock+12);
+    r.shngBytes=lmiLe64(lmiUserBlock+16);
+    if(r.shngCount>2)r.shngCount=2;
+    for(unsigned i=0;i<r.shngCount;++i) {
+      r.winOff[i]=lmiLe64(lmiUserBlock+24+128*i+32);
+      r.winSize[i]=lmiLe64(lmiUserBlock+24+128*i+40);
+      if((r.winOff[i]&4095) || r.winOff[i]/4096>0xffffffffULL)continue;
+      uint64_t wlba=r.first+r.winOff[i]/4096;
+      if(wlba>r.lastLba)continue;
+      why=command(0x28,uint32_t(wlba),r.blockBytes);if(why)return fail(why);
+      r.winMagic[i]=lmiLe(b);
+      if(!lmiNxsb(b,r.blockBytes,r) && lmiLe(b+0x200)==0x20494645U && lmiLe(b+0x204)==0x54524150U)
+        r.winMagic[i]=0x47505431U; // "GPT1" marker: the window starts with a GPT
+    }
+  }
+  r.stage=17;
   io.hostWrite(0x60,0);unsigned loops=10000;
   while((io.hostRead(0x60)&1) && loops--)io.delay();
   if(io.hostRead(0x60)&1)return fail("read complete; queue stop failed");
-  r.stage=17;return r;
+  r.stage=18;return r;
+}
+
+// ---- panic report ----------------------------------------------------------
+static char lmiNote[3584];
+static unsigned lmiNoteLen;
+static void lmiSay(const char *s) {
+  while(*s && lmiNoteLen+1<unsigned(sizeof(lmiNote)))lmiNote[lmiNoteLen++]=*s++;
+  lmiNote[lmiNoteLen]=0;
+}
+static void lmiHex(char *out,uint64_t v,unsigned digits) {
+  static const char h[]="0123456789abcdef";
+  for(unsigned i=0;i<digits;++i)out[digits-1-i]=h[(v>>(4*i))&15];
+  out[digits]=0;
+}
+static void lmiDec(char *out,uint64_t v) {
+  char tmp[24];unsigned n=0;
+  if(!v)tmp[n++]='0';
+  while(v){tmp[n++]=char('0'+int(v%10));v/=10;}
+  unsigned i=0;while(n)out[i++]=tmp[--n];
+  out[i]=0;
+}
+static void lmiGuid(char *out,const uint8_t *g) {
+  static const char h[]="0123456789abcdef";
+  uint32_t d1=uint32_t(g[0])|(uint32_t(g[1])<<8)|(uint32_t(g[2])<<16)|(uint32_t(g[3])<<24);
+  uint32_t d2=uint32_t(g[4])|(uint32_t(g[5])<<8);
+  uint32_t d3=uint32_t(g[6])|(uint32_t(g[7])<<8);
+  unsigned p=0;
+  for(int i=7;i>=0;--i)out[p++]=h[(d1>>(4*i))&15];
+  out[p++]='-';
+  for(int i=3;i>=0;--i)out[p++]=h[(d2>>(4*i))&15];
+  out[p++]='-';
+  for(int i=3;i>=0;--i)out[p++]=h[(d3>>(4*i))&15];
+  out[p++]='-';
+  for(int i=8;i<10;++i){out[p++]=h[g[i]>>4];out[p++]=h[g[i]&15];}
+  out[p++]='-';
+  for(int i=10;i<16;++i){out[p++]=h[g[i]>>4];out[p++]=h[g[i]&15];}
+  out[p]=0;
+}
+static void lmiReport(const LmiproReadResult &d) {
+  char n[24],g[40];
+  lmiNoteLen=0;lmiNote[0]=0;
+  lmiSay("LMIPRO GPT/APFS v2\n");
+  if(d.error){lmiSay(d.error);lmiSay("\n");}
+  lmiSay("st=");lmiDec(n,d.stage);lmiSay(n);
+  lmiSay(" cmd=");lmiDec(n,d.commands);lmiSay(n);
+  lmiSay(" ocs=");lmiHex(n,d.ocs,2);lmiSay(n);
+  lmiSay(" scsi=");lmiHex(n,d.scsi,4);lmiSay(n);lmiSay("\n");
+  lmiSay("blk=");lmiDec(n,d.blockBytes);lmiSay(n);
+  lmiSay(" last=");lmiHex(n,d.lastLba,8);lmiSay(n);
+  lmiSay(" usable=");lmiHex(n,d.usableFirst,8);lmiSay(n);
+  lmiSay("-");lmiHex(n,d.usableLast,8);lmiSay(n);lmiSay("\n");
+  lmiSay("P hdr=");lmiHex(n,d.headerCrc,8);lmiSay(n);
+  lmiSay(" arr=");lmiHex(n,d.arrayCrc,8);lmiSay(n);
+  lmiSay(" n=");lmiDec(n,lmiPartCount);lmiSay(n);lmiSay("\n");
+  lmiSay("B hdr=");lmiHex(n,d.bHdrCrc,8);lmiSay(n);
+  lmiSay(" arr=");lmiHex(n,d.bArrayCrc,8);lmiSay(n);
+  lmiSay(" ent=");lmiHex(n,d.bEntries,8);lmiSay(n);
+  lmiSay(" n=");lmiDec(n,d.bCount);lmiSay(n);lmiSay("\n");
+  lmiSay("dg=");lmiGuid(g,d.diskGuid);lmiSay(g);lmiSay("\n");
+  lmiSay("used=");lmiDec(n,d.used);lmiSay(n);
+  lmiSay(" apfs=");lmiDec(n,d.apfsCount);lmiSay(n);
+  if(d.apfsIndex!=0xffffffffU){lmiSay(" apfsL=");lmiHex(n,d.apfsFirst,8);lmiSay(n);lmiSay("-");lmiHex(n,d.apfsLast,8);lmiSay(n);}
+  lmiSay("\n");
+  lmiSay("ud=");for(unsigned i=0;i<4;++i){lmiHex(n,i==0?d.magic0:i==1?d.magic1:i==2?d.magic2:d.magic3,8);lmiSay(n);if(i!=3)lmiSay(" ");}lmiSay("\n");
+  if(d.shng){
+    lmiSay("shng v=");lmiDec(n,d.shngVersion);lmiSay(n);
+    lmiSay(" n=");lmiDec(n,d.shngCount);lmiSay(n);
+    lmiSay(" sz=");lmiHex(n,d.shngBytes,12);lmiSay(n);lmiSay("\n");
+    for(unsigned i=0;i<d.shngCount;++i){
+      lmiSay("w");lmiDec(n,i);lmiSay(n);
+      lmiSay(" off=");lmiHex(n,d.winOff[i],8);lmiSay(n);
+      lmiSay(" sz=");lmiHex(n,d.winSize[i],8);lmiSay(n);
+      lmiSay(" sig=");lmiHex(n,d.winMagic[i],8);lmiSay(n);lmiSay("\n");
+    }
+  }
+  if(d.nxFound){
+    lmiSay("NXSB ");lmiHex(n,d.nxMagic,8);lmiSay(n);
+    lmiSay(" ck=");lmiDec(n,d.nxCksumOk);lmiSay(n);
+    lmiSay(" bs=");lmiDec(n,d.nxBlockSize);lmiSay(n);
+    lmiSay(" bc=");lmiHex(n,d.nxBlockCount,8);lmiSay(n);
+    lmiSay(" fs=");lmiDec(n,d.nxFsCount);lmiSay(n);lmiSay("\n");
+    lmiSay("nuuid=");for(unsigned i=0;i<4;++i){lmiHex(n,lmiLe(d.nxUuid+4*i),8);lmiSay(n);}lmiSay("\n");
+  }
+  // A compact listing of the non-empty entries; the paged dump carries the
+  // complete GUID and attribute fields for all 64 entries.
+  unsigned shown=0;
+  for(unsigned i=0;i<lmiPartCount && shown<8;++i) {
+    if(lmiZero(lmiPart[i].type,16))continue;
+    lmiSay("#");lmiDec(n,i);lmiSay(n);
+    lmiSay(" ");lmiSay(lmiPart[i].text);
+    lmiSay(" ");lmiHex(n,lmiPart[i].first,8);lmiSay(n);
+    lmiSay("-");lmiHex(n,lmiPart[i].last,8);lmiSay(n);
+    lmiSay("\n");++shown;
+  }
+  if(shown<d.used){lmiSay("...");lmiDec(n,d.used-shown);lmiSay(n);lmiSay(" more\n");}
+}
+static void lmiReportPage(unsigned page) {
+  char n[24],g[40];
+  const unsigned perPage=6;
+  lmiNoteLen=0;lmiNote[0]=0;
+  lmiSay("LMIPRO GPT P");lmiDec(n,page);lmiSay(n);
+  lmiSay("/");lmiDec(n,(lmiPartCount+perPage-1)/perPage);lmiSay(n);
+  lmiSay(" of ");lmiDec(n,lmiPartCount);lmiSay(n);lmiSay("\n");
+  for(unsigned i=page*perPage;i<lmiPartCount && i<(page+1)*perPage;++i) {
+    lmiSay("#");lmiDec(n,i);lmiSay(n);
+    lmiSay(" T=");lmiGuid(g,lmiPart[i].type);lmiSay(g);lmiSay("\n");
+    lmiSay("  U=");lmiGuid(g,lmiPart[i].uid);lmiSay(g);lmiSay("\n");
+    lmiSay("  F=");lmiHex(n,lmiPart[i].first,8);lmiSay(n);
+    lmiSay(" L=");lmiHex(n,lmiPart[i].last,8);lmiSay(n);
+    lmiSay(" A=");lmiHex(n,lmiPart[i].attrs,8);lmiSay(n);lmiSay("\n");
+    lmiSay(" N=");lmiSay(lmiPart[i].text);lmiSay("\n");
+  }
 }
 
 #ifndef LMIPRO_UIC_HOST_TEST
@@ -585,16 +815,9 @@ static void lmiproNopProbe(bool disk=false) {
   auto r=lmiproNop(io);
   if(disk && !r.error) {
     auto d=lmiproReadDisk(io);
-    panic("LMIPRO UFS READ v1\n%s stage=%u cmds=%u\n"
-          "ocs=%x scsi=%x sense=%06x\nblock=%u lastLba=%x\n"
-          "GPT crc=%08x/%08x\nuserdata=%llx..%llx\nmagic=%08x %08x\n"
-          "backup entries=%llx count=%u bytes=%u crc=%08x alt=%x\n"
-          "hcs=%08x db=%08x is=%08x gfsr=%08x\nNo disk writes; no root publication",
-          d.error?d.error:"Capacity/GPT/userdata block read",d.stage,d.commands,d.ocs,d.scsi,d.sense,
-          d.blockBytes,d.lastLba,d.headerCrc,d.arrayCrc,(unsigned long long)d.first,(unsigned long long)d.last,
-          d.magic0,d.magic1,
-          (unsigned long long)d.bEntries,d.bCount,d.bEntryBytes,d.bArrayCrc,d.bAlt,
-          io.hostRead(0x30),io.hostRead(0x58),io.hostRead(0x20),io.smmuRead(0x48));
+    if(lmiGptPage!=0xffffffffU)lmiReportPage(lmiGptPage);
+    else lmiReport(d);
+    panic("%s", lmiNote);
   }
   panic("LMIPRO UFS NOP v1\n%s stage=%u\n"
         "dma=%llx bytes=%llu\ne0 slot=%u bank=%u; 4e0 slot=%u bank=%u\n"
@@ -611,6 +834,8 @@ extern "C" void lmipro_ufs_handoff_probe(void)
 {
   unsigned mode=0;
   if (!PE_parse_boot_argn("lmipro-ufs-handoff",&mode,sizeof(mode))) return;
+  unsigned page=0xffffffffU;
+  if (PE_parse_boot_argn("lmipro-gpt-page",&page,sizeof(page))) lmiGptPage=page;
   if (mode==27) { lmiproNopProbe(true); return; }
   if (mode==26) { lmiproNopProbe(); return; }
   if (mode!=25) panic("LMIPRO SMMU RO2: only mode 25 enabled; mode=%u",mode);
