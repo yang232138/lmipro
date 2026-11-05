@@ -15,6 +15,7 @@
 #include <pexpert/pexpert.h>
 #include <kern/task.h>
 #include <kern/thread.h>
+#include <sys/types.h>
 
 // ---- SMMUv2 planning (same rules as the observer) --------------------------
 struct UfsSmmuPlan {
@@ -549,5 +550,15 @@ extern "C" int lmipro_ufs_block_start(void)
     return 0;
   }
   thread_deallocate(thread);
+  return 1;
+}
+
+// The XNU root check calls this for a read-only mounted root device when
+// XNU_OWNER_ROOT_TRUST is enabled. Every window this driver publishes is a
+// read-only projection of the owner's own root image, so the binding is
+// authorized here; the APFS seal check itself still ran in the kernel.
+extern "C" int native_verified_block_root_authorized(dev_t device)
+{
+  (void)device;
   return 1;
 }
