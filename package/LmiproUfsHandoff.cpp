@@ -385,6 +385,10 @@ struct LmiproReadResult {
   uint32_t nxFound=0, nxMagic=0, nxCksumOk=0, nxBlockSize=0, nxFsCount=0;
   uint64_t nxBlockCount=0;
   uint8_t nxUuid[16]={};
+  // Read-only residue scan over the userdata partition: eight fixed offsets,
+  // looking for a SHNGROOT manifest or an NXSB container that survived a
+  // restore of the Android image.
+  uint32_t scanA[8]={}, scanB[8]={}, scanFlags[8]={};
 };
 static inline uint32_t lmiBe(const uint8_t *p) {return uint32_t(p[0])<<24|uint32_t(p[1])<<16|uint32_t(p[2])<<8|p[3];}
 static inline uint32_t lmiLe(const uint8_t *p) {return uint32_t(p[3])<<24|uint32_t(p[2])<<16|uint32_t(p[1])<<8|p[0];}
@@ -678,6 +682,23 @@ static LmiproReadResult lmiproReadDisk(Ops &io) {
       }
     }
   }
+  // stage 17b: residue scan. Only READ(10) is issued; every offset is inside
+  // the userdata partition and the controller keeps the same single queue.
+  {
+    static const uint64_t kScanOffsets[8] = {
+      0x00100000ULL, 0x00200000ULL, 0x10000000ULL, 0x40000000ULL,
+      0x100000000ULL, 0x180000000ULL, 0x220000000ULL, 0x22F400000ULL,
+    };
+    uint64_t span=(uint64_t)r.last-(uint64_t)r.first;
+    for(unsigned i=0;i<8;++i) {
+      uint64_t block=kScanOffsets[i]/4096;
+      if(block>span) continue;
+      why=command(0x28,uint32_t(r.first+block),r.blockBytes);if(why)return fail(why);
+      r.scanA[i]=lmiLe(b);r.scanB[i]=lmiLe(b+4);
+      if(r.scanA[i]==0x474e4853U && r.scanB[i]==0x544f4f52U) r.scanFlags[i]|=1U;
+      if(lmiLe(b+0x20)==0x4253584eU) r.scanFlags[i]|=2U;
+    }
+  }
   r.stage=17;
   io.hostWrite(0x60,0);unsigned loops=10000;
   while((io.hostRead(0x60)&1) && loops--)io.delay();
@@ -773,6 +794,18 @@ static void lmiReport(const LmiproReadResult &d) {
     lmiSay(" files=");lmiDec(n,lmiVol[i].numFiles);lmiSay(n);
     lmiSay(" uuid=");lmiGuid(g,lmiVol[i].uuid);lmiSay(g);lmiSay("\n");
     lmiSay("  ");lmiSay(lmiVol[i].name);lmiSay("\n");
+  }
+  lmiSay("scan");
+  {
+    static const char *const kLabels[8] = {"1M","2M","256M","1G","4G","6G","8.5G","9.3G"};
+    for(unsigned i=0;i<8;++i){
+      lmiSay(" ");lmiSay(kLabels[i]);lmiSay(":");
+      lmiHex(n,d.scanA[i],8);lmiSay(n);
+      if(d.scanA[i]==0x474e4853U && d.scanB[i]==0x544f4f52U)lmiSay("S");
+      if(d.scanFlags[i]&2U)lmiSay("N");
+      if(i==3)lmiSay("\n    ");
+    }
+    lmiSay("\n");
   }
   // A compact listing of the non-empty entries; the paged dump carries the
   // complete GUID and attribute fields for all 64 entries.
