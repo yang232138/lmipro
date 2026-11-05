@@ -355,6 +355,7 @@ struct LmiproGptPart {
 static LmiproGptPart lmiPart[128];
 static unsigned lmiPartCount;
 static uint8_t lmiUserBlock[4096];
+static uint8_t lmiScratch[4096];
 static unsigned lmiGptPage = 0xffffffffU;
 
 // One APFS volume as found through the container object map.
@@ -379,6 +380,8 @@ struct LmiproReadResult {
   uint32_t used=0, apfsCount=0, apfsIndex=0xffffffffU;
   uint64_t apfsFirst=0, apfsLast=0;
   uint32_t shng=0, shngVersion=0, shngCount=0;
+  uint32_t osApfsCount=0, osApfsIndex=0xffffffffU;
+  uint64_t osApfsFirst=0;
   uint64_t shngBytes=0;
   uint32_t winMagic[2]={};
   uint64_t winOff[2]={}, winSize[2]={};
@@ -607,62 +610,104 @@ static LmiproReadResult lmiproReadDisk(Ops &io) {
     bcrc=lmiCrc(bcrc,b,bn);}
   if((bcrc^0xffffffffU)!=r.bArrayCrc)return fail("backup GPT array CRC");}
   r.stage=16;
-  // stage 17: APFS. The container object map is physical (nx_omap_oid and
-  // om_tree_oid are block numbers), so each volume OID is resolved by a
-  // b-tree lookup and the volume superblock is read and checksummed.
-  auto apfsVolumes=[&](uint32_t base)->const char * {
-    why=command(0x28,base,r.blockBytes);if(why)return why;
-    if(!lmiNxsb(b,r.blockBytes,r))return nullptr;
+  // stage 17: APFS. Every read is expressed as an absolute byte offset on the
+  // disk (LBA 0 = byte 0), so a container that starts at a 512-byte GPT LBA
+  // inside a window is read correctly by joining two UFS blocks when the
+  // offset is not a multiple of the logical block size.
+  auto readBytes=[&](uint64_t absByte,uint8_t *dst)->const char * {
+    uint64_t lba=absByte/(uint64_t)r.blockBytes;
+    unsigned shift=unsigned(absByte%(uint64_t)r.blockBytes);
+    if(lba>(uint64_t)r.lastLba)return "apfs lba range";
+    why=command(0x28,uint32_t(lba),r.blockBytes);if(why)return why;
+    if(!shift){for(unsigned k=0;k<4096;++k)dst[k]=b[k];return nullptr;}
+    for(unsigned k=0;k<4096-shift;++k)dst[k]=b[shift+k];
+    if(lba+1ULL>(uint64_t)r.lastLba)return "apfs lba range";
+    why=command(0x28,uint32_t(lba+1ULL),r.blockBytes);if(why)return why;
+    for(unsigned k=0;k<shift;++k)dst[4096-shift+k]=b[k];
+    return nullptr;
+  };
+  auto apfsVolumes=[&](uint64_t absBase)->const char * {
+    uint8_t *n=lmiScratch;
+    why=readBytes(absBase,n);if(why)return why;
+    if(!lmiNxsb(n,r.blockBytes,r))return nullptr;
     if(r.nxBlockSize!=r.blockBytes || !r.nxCksumOk)return nullptr;
-    uint64_t xid=lmiLe64(b+0x10),omapOid=lmiLe64(b+0xa0);
+    uint64_t xid=lmiLe64(n+0x10),omapOid=lmiLe64(n+0xa0);
     uint64_t fsOid[2]={0,0};unsigned fsCount=0;
-    for(unsigned i=0;i<100 && fsCount<2;++i){uint64_t o=lmiLe64(b+0xb8+8*i);if(o)fsOid[fsCount++]=o;}
-    if(!fsCount || omapOid>0xffffffffULL-base)return nullptr;
-    why=command(0x28,uint32_t(base+omapOid),r.blockBytes);if(why)return why;
-    if((lmiLe(b+0x18)&0xffffU)!=0x0bU || !lmiObjCsum(b,r.blockBytes))return nullptr;
-    uint64_t treeOid=lmiLe64(b+0x30);
+    for(unsigned k=0;k<100 && fsCount<2;++k){uint64_t o=lmiLe64(n+0xb8+8*k);if(o)fsOid[fsCount++]=o;}
+    if(!fsCount)return nullptr;
+    why=readBytes(absBase+omapOid*(uint64_t)r.blockBytes,n);if(why)return why;
+    if((lmiLe(n+0x18)&0xffffU)!=0x0bU || !lmiObjCsum(n,r.blockBytes))return nullptr;
+    uint64_t treeOid=lmiLe64(n+0x30);
     for(unsigned v=0;v<fsCount && lmiVolCount<4;++v){
       uint64_t bno=treeOid;bool got=false;
       for(unsigned depth=0;depth<8 && !got;++depth){
-        if(bno>0xffffffffULL-base)break;
-        why=command(0x28,uint32_t(base+bno),r.blockBytes);if(why)return why;
+        if(bno>0xffffffffULL)break;
+        why=readBytes(absBase+bno*(uint64_t)r.blockBytes,n);if(why)return why;
         LmiproNodeView nv;
-        if(!lmiNodeInit(b,r.blockBytes,nv))break;
+        if(!lmiNodeInit(n,r.blockBytes,nv))break;
         unsigned chosen=0xffffffffU;
-        for(unsigned i=0;i<nv.nkeys;++i){
-          unsigned ko,kl;if(!lmiNodeKey(b,nv,i,ko,kl))break;
-          uint64_t koid=lmiLe64(b+ko),kxid=lmiLe64(b+ko+8);
-          if(koid<fsOid[v]||(koid==fsOid[v]&&kxid<=xid))chosen=i;else break;
+        for(unsigned k=0;k<nv.nkeys;++k){
+          unsigned ko,kl;if(!lmiNodeKey(n,nv,k,ko,kl))break;
+          uint64_t koid=lmiLe64(n+ko),kxid=lmiLe64(n+ko+8);
+          if(koid<fsOid[v]||(koid==fsOid[v]&&kxid<=xid))chosen=k;else break;
         }
         if(chosen==0xffffffffU)break;
         unsigned ko,kl,vo,vl;
-        if(!lmiNodeKey(b,nv,chosen,ko,kl)||!lmiNodeVal(b,nv,chosen,vo,vl))break;
+        if(!lmiNodeKey(n,nv,chosen,ko,kl)||!lmiNodeVal(n,nv,chosen,vo,vl))break;
         if(nv.isLeaf){
           if(vl!=16)break;
-          uint64_t paddr=lmiLe64(b+vo+8);
-          if(paddr>0xffffffffULL-base)break;
-          why=command(0x28,uint32_t(base+paddr),r.blockBytes);if(why)return why;
-          if(lmiLe(b+0x20)!=0x42535041U || !lmiObjCsum(b,r.blockBytes))break;
+          uint64_t paddr=lmiLe64(n+vo+8);
+          if(paddr>0xffffffffULL)break;
+          why=readBytes(absBase+paddr*(uint64_t)r.blockBytes,n);if(why)return why;
+          if(lmiLe(n+0x20)!=0x42535041U || !lmiObjCsum(n,r.blockBytes))break;
           LmiproVol &vol=lmiVol[lmiVolCount];
-          vol.oid=fsOid[v];vol.paddr=paddr;vol.role=lmiLeN16(b+0x3c0);
-          vol.unenc=(lmiLe64(b+0x108)&1U)?1U:0U;vol.numFiles=lmiLe64(b+0xb8);
-          for(unsigned k=0;k<16;++k)vol.uuid[k]=b[0xf0+k];
+          vol.oid=fsOid[v];vol.paddr=paddr;vol.role=lmiLeN16(n+0x3c0);
+          vol.unenc=(lmiLe64(n+0x108)&1U)?1U:0U;vol.numFiles=lmiLe64(n+0xb8);
+          for(unsigned k=0;k<16;++k)vol.uuid[k]=n[0xf0+k];
           unsigned vn=0;
-          for(;vn<39;++vn){unsigned c=b[0x2c0+vn];if(!c)break;vol.name[vn]=(c>=0x20&&c<0x7f)?char(c):'_';}
+          for(;vn<39;++vn){unsigned c=n[0x2c0+vn];if(!c)break;vol.name[vn]=(c>=0x20&&c<0x7f)?char(c):'_';}
           vol.name[vn]=0;
           ++lmiVolCount;got=true;
-        }else bno=lmiLe64(b+vo);
+        } else bno=lmiLe64(n+vo);
       }
     }
     return nullptr;
   };
-  // A GPT APFS-type partition is read directly; a userdata partition that
-  // carries the SHNGROOT manifest is read through its declared windows.
+  // The OS window carries its own 512-byte GPT; its APFS partition starts at a
+  // 512-byte LBA, so the container base is computed in bytes and read through
+  // readBytes (which joins two UFS blocks for an unaligned start).
+  auto windowGpt=[&](uint64_t wAbsBase)->const char * {
+    uint8_t *n=lmiScratch;
+    why=readBytes(wAbsBase,n);if(why)return why;
+    if(lmiLe(n+0x200)!=0x20494645U || lmiLe(n+0x204)!=0x54524150U)return nullptr;
+    uint64_t entryLba=lmiLe64(n+0x200+72);
+    unsigned count=lmiLe(n+0x200+80),esize=lmiLe(n+0x200+84);
+    if(!count || count>128 || esize!=128U)return nullptr;
+    uint64_t entryAbs=wAbsBase+entryLba*512ULL;
+    unsigned blocks=(count*128U+4095U)/4096U;
+    for(unsigned blk=0;blk<blocks;++blk){
+      why=readBytes(entryAbs+(uint64_t)blk*4096ULL,n);if(why)return why;
+      for(unsigned k=0;k<32U;++k){
+        unsigned idx=blk*32U+k;
+        if(idx>=count)break;
+        const uint8_t *e=n+128U*k;
+        if(lmiZero(e,16))continue;
+        if(!lmiIsApfsType(e))continue;
+        uint64_t first=lmiLe64(e+32);
+        if(r.osApfsIndex==0xffffffffU){r.osApfsIndex=idx;r.osApfsFirst=first;}
+        ++r.osApfsCount;
+        why=apfsVolumes(wAbsBase+first*512ULL);if(why)return why;
+      }
+    }
+    return nullptr;
+  };
   if(r.apfsIndex!=0xffffffffU && r.apfsFirst<=0xffffffffULL) {
     why=command(0x28,uint32_t(r.apfsFirst),r.blockBytes);if(why)return fail(why);
     if(!lmiNxsb(b,r.blockBytes,r))return fail("APFS-type partition without NXSB");
-    why=apfsVolumes(uint32_t(r.apfsFirst));if(why)return fail(why);
+    why=apfsVolumes((uint64_t)r.apfsFirst*(uint64_t)r.blockBytes);if(why)return fail(why);
   }
+  // A GPT APFS-type partition is read directly; a userdata partition that
+  // carries the SHNGROOT manifest is read through its declared windows.
   if(lmiLe(lmiUserBlock)==0x474e4853U && lmiLe(lmiUserBlock+4)==0x544f4f52U) {
     r.shng=1;r.shngVersion=lmiLe(lmiUserBlock+8);r.shngCount=lmiLe(lmiUserBlock+12);
     r.shngBytes=lmiLe64(lmiUserBlock+16);
@@ -670,15 +715,17 @@ static LmiproReadResult lmiproReadDisk(Ops &io) {
     for(unsigned i=0;i<r.shngCount;++i) {
       r.winOff[i]=lmiLe64(lmiUserBlock+24+128*i+32);
       r.winSize[i]=lmiLe64(lmiUserBlock+24+128*i+40);
-      if((r.winOff[i]&4095) || r.winOff[i]/4096>0xffffffffULL)continue;
-      uint64_t wlba=r.first+r.winOff[i]/4096;
+      if((r.winOff[i]&4095ULL) || r.winOff[i]/4096ULL>0xffffffffULL)continue;
+      uint64_t wlba=r.first+r.winOff[i]/4096ULL;
       if(wlba>r.lastLba)continue;
       why=command(0x28,uint32_t(wlba),r.blockBytes);if(why)return fail(why);
       r.winMagic[i]=lmiLe(b);
+      uint64_t wAbs=(uint64_t)r.first*(uint64_t)r.blockBytes+r.winOff[i];
       if(lmiNxsb(b,r.blockBytes,r)) {
-        why=apfsVolumes(uint32_t(wlba));if(why)return fail(why);
+        why=apfsVolumes(wAbs);if(why)return fail(why);
       } else if(lmiLe(b+0x200)==0x20494645U && lmiLe(b+0x204)==0x54524150U) {
-        r.winMagic[i]=0x47505431U; // the window starts with a GPT
+        r.winMagic[i]=0x47505431U;
+        why=windowGpt(wAbs);if(why)return fail(why);
       }
     }
   }
@@ -725,6 +772,15 @@ static void lmiDec(char *out,uint64_t v) {
   unsigned i=0;while(n)out[i++]=tmp[--n];
   out[i]=0;
 }
+static void lmiUuidBytes(char *out,const uint8_t *g) {
+  static const char h[]="0123456789abcdef";
+  unsigned p=0;
+  for(unsigned i=0;i<16;++i){
+    if(i==4||i==6||i==8||i==10)out[p++]='-';
+    out[p++]=h[g[i]>>4];out[p++]=h[g[i]&15];
+  }
+  out[p]=0;
+}
 static void lmiGuid(char *out,const uint8_t *g) {
   static const char h[]="0123456789abcdef";
   uint32_t d1=uint32_t(g[0])|(uint32_t(g[1])<<8)|(uint32_t(g[2])<<16)|(uint32_t(g[3])<<24);
@@ -763,6 +819,10 @@ static void lmiReport(const LmiproReadResult &d) {
   lmiSay(" ent=");lmiHex(n,d.bEntries,8);lmiSay(n);
   lmiSay(" n=");lmiDec(n,d.bCount);lmiSay(n);lmiSay("\n");
   lmiSay("dg=");lmiGuid(g,d.diskGuid);lmiSay(g);lmiSay("\n");
+  if(d.osApfsIndex!=0xffffffffU){
+    lmiSay("osapfs=");lmiDec(n,d.osApfsCount);lmiSay(n);
+    lmiSay(" first=");lmiHex(n,d.osApfsFirst,8);lmiSay(n);lmiSay("\n");
+  }
   lmiSay("used=");lmiDec(n,d.used);lmiSay(n);
   lmiSay(" apfs=");lmiDec(n,d.apfsCount);lmiSay(n);
   if(d.apfsIndex!=0xffffffffU){lmiSay(" apfsL=");lmiHex(n,d.apfsFirst,8);lmiSay(n);lmiSay("-");lmiHex(n,d.apfsLast,8);lmiSay(n);}
@@ -774,8 +834,8 @@ static void lmiReport(const LmiproReadResult &d) {
     lmiSay(" sz=");lmiHex(n,d.shngBytes,12);lmiSay(n);lmiSay("\n");
     for(unsigned i=0;i<d.shngCount;++i){
       lmiSay("w");lmiDec(n,i);lmiSay(n);
-      lmiSay(" off=");lmiHex(n,d.winOff[i],8);lmiSay(n);
-      lmiSay(" sz=");lmiHex(n,d.winSize[i],8);lmiSay(n);
+      lmiSay(" off=");lmiHex(n,d.winOff[i],16);lmiSay(n);
+      lmiSay(" sz=");lmiHex(n,d.winSize[i],16);lmiSay(n);
       lmiSay(" sig=");lmiHex(n,d.winMagic[i],8);lmiSay(n);lmiSay("\n");
     }
   }
@@ -785,14 +845,14 @@ static void lmiReport(const LmiproReadResult &d) {
     lmiSay(" bs=");lmiDec(n,d.nxBlockSize);lmiSay(n);
     lmiSay(" bc=");lmiHex(n,d.nxBlockCount,8);lmiSay(n);
     lmiSay(" fs=");lmiDec(n,d.nxFsCount);lmiSay(n);lmiSay("\n");
-    lmiSay("nuuid=");for(unsigned i=0;i<4;++i){lmiHex(n,lmiLe(d.nxUuid+4*i),8);lmiSay(n);}lmiSay("\n");
+    lmiSay("nuuid=");lmiUuidBytes(g,d.nxUuid);lmiSay(g);lmiSay("\n");
   }
   for(unsigned i=0;i<lmiVolCount;++i){
     lmiSay("vol");lmiDec(n,i);lmiSay(n);
     lmiSay(" role=");lmiHex(n,lmiVol[i].role,4);lmiSay(n);
     lmiSay(" fl=");lmiHex(n,lmiVol[i].unenc,1);lmiSay(n);
     lmiSay(" files=");lmiDec(n,lmiVol[i].numFiles);lmiSay(n);
-    lmiSay(" uuid=");lmiGuid(g,lmiVol[i].uuid);lmiSay(g);lmiSay("\n");
+    lmiSay(" uuid=");lmiUuidBytes(g,lmiVol[i].uuid);lmiSay(g);lmiSay("\n");
     lmiSay("  ");lmiSay(lmiVol[i].name);lmiSay("\n");
   }
   lmiSay("scan");
