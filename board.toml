@@ -32,6 +32,8 @@ archives = [
   "build-libpthread-kernel.py",
   "build-lmipro-platform-power.py",
   "build-lmipro-ufs-handoff.py",
+  "component:ShengUfs",
+  "component:VirtioMmioBlock",
 ]
 
 [device_tree]
