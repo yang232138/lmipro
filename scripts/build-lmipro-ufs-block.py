@@ -52,7 +52,20 @@ if not undefined:
 
 audit_path = root / 'build/storage-abi/interface-audit.json'
 if not audit_path.exists():
-    subprocess.run([sys.executable, str(root / 'scripts/audit-storage-interface.py')], check=True, timeout=900)
+    # The full audit needs the sheng APFS-load-positive candidate. Probe the
+    # prelinked kernelcache directly instead: list every IOBlockStorageDevice
+    # symbol the prelinked kernel carries, with its link address, and stop
+    # before binding anything.
+    cache = root.parents[3] / 'ipsw/21H461/kernelcache.decompressed'
+    print('kernelcache:', cache, 'exists:', cache.exists())
+    if not cache.exists():
+        raise SystemExit('no interface-audit.json and no kernelcache to probe')
+    listing = subprocess.run(['llvm-nm', '-g', str(cache)], capture_output=True, text=True)
+    lines = [line for line in (listing.stdout or '').splitlines() if 'IOBlockStorageDevice' in line]
+    print('symbols:', len(lines))
+    for line in lines[:80]:
+        print('  ', line)
+    raise SystemExit('symbol probe complete; binding not enabled')
 audit = json.loads(audit_path.read_text())
 
 possible = {
