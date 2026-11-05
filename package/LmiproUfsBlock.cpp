@@ -479,10 +479,11 @@ extern "C" int lmipro_ufs_block_start(void)
     ++published;
   }
   if (diag) {
-    panic("LMIPRO UFS BLOCK\nuserdata=%x..%x windows=%u published=%u\n"
+    panic("LMIPRO UFS BLOCK\nuserdata=%llx..%llx windows=%u published=%u\n"
           "w0 %s off=%llx size=%llx\nw1 %s off=%llx size=%llx\n"
           "block=%x last=%x",
-          layout.userdataFirst, layout.userdataLast, layout.windows, published,
+          (unsigned long long)layout.userdataFirst, (unsigned long long)layout.userdataLast,
+          layout.windows, published,
           layout.window[0].name, (unsigned long long)layout.window[0].offset,
           (unsigned long long)layout.window[0].size,
           layout.windows > 1 ? layout.window[1].name : "-",
