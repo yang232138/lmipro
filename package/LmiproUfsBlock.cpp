@@ -573,7 +573,8 @@ extern "C" int native_verified_block_root_authorized(dev_t device)
 extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *device, char *path, size_t size)
 {
   if (!uuid || !device || !path || size < 8) return 0;
-  *device = NODEV;
+  // NODEV lives in <sys/conf.h>, which is outside the storage ABI header set.
+  *device = (dev_t)-1;
   path[0] = 0;
   OSDictionary *match = IOService::serviceMatching("IOMedia");
   if (!match) return 0;
