@@ -129,7 +129,7 @@ evidence = []
 [[area]]
 id = "storage"
 status = "planned"
-components = ["RamBlock"]
+components = ["RamBlock", "ShengUfs", "VerifiedRoot", "VirtioMmioBlock"]
 paths = ["board.toml", "dts/**", "configs/**", "drivers/**", "scripts/**", "package/LmiproUfsHandoff.cpp", "docs/ufs-readonly-handoff.md"]
 inputs = [
   "UFS host controller at 0x1d84000 and PHY at 0x1d87000 from the shared dtsi; QUPv3 wrapper 0 at 0x9c0000 for the serial engines.",
