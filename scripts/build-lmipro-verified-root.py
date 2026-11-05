@@ -94,7 +94,10 @@ def compile_source(source, destination):
         else:
             command.append(value)
         index += 1
-    command += ['-I' + str(root / 'kits/VerifiedRoot/include'), '-Wall', '-Werror']
+    # The bootstrap pass leaves EXPORT_HDRS/libsa absent while bsd_init.o's record
+    # still carries that path, so a missing include directory is expected here.
+    command += ['-I' + str(root / 'kits/VerifiedRoot/include'),
+                '-Wall', '-Werror', '-Wno-missing-include-dirs']
     result = subprocess.run(command, cwd=record['directory'], capture_output=True, text=True)
     (out / (source.stem + '.log')).write_text(result.stdout + result.stderr)
     if result.returncode:
