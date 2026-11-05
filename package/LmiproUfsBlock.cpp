@@ -435,26 +435,38 @@ IOReturn LmiproUfsBlock::doAsyncReadWrite(IOMemoryDescriptor *buffer, UInt64 blo
 // ---- publication -----------------------------------------------------------
 extern "C" int lmipro_ufs_block_start(void)
 {
-  unsigned enabled = 0;
-  if (!PE_parse_boot_argn("lmipro-ufs-root", &enabled, sizeof(enabled)) || !enabled) return 0;
+  unsigned enabled = 0, diag = 0;
+  PE_parse_boot_argn("lmipro-ufs-root", &enabled, sizeof(enabled));
+  PE_parse_boot_argn("lmipro-ufs-diag", &diag, sizeof(diag));
+  if (!enabled && !diag) return 0;
   if (!gUfsLock) gUfsLock = IOLockAlloc();
   if (!gUfsLock) return 0;
   const char *why = "";
   if (!lmUfsBringUp(gHost, &why)) {
+    if (diag) panic("LMIPRO UFS BLOCK\nbring-up: %s", why ? why : "?");
     IOLog("LmiproUfsBlock: bring-up failed: %s\n", why ? why : "?");
     return 0;
   }
   LmiproRootLayout layout;
   if (!lmReadGpt(gHost, layout, &why)) {
+    if (diag) panic("LMIPRO UFS BLOCK\nGPT: %s\nlast=%x block=%x", why ? why : "?",
+                    gHost.lastLba, gHost.blockBytes);
     IOLog("LmiproUfsBlock: %s\n", why ? why : "?");
     return 0;
   }
   if (!lmReadManifest(gHost, layout, &why)) {
+    if (diag) panic("LMIPRO UFS BLOCK\nmanifest: %s status=%u\nuserdata=%llx..%llx", why ? why : "?",
+                    layout.manifest, (unsigned long long)layout.userdataFirst,
+                    (unsigned long long)layout.userdataLast);
     IOLog("LmiproUfsBlock: manifest refused: %s\n", why ? why : "?");
     return 0;
   }
   IOService *root = IOService::getServiceRoot();
-  if (!root) { IOLog("LmiproUfsBlock: no service root\n"); return 0; }
+  if (!root) {
+    if (diag) panic("LMIPRO UFS BLOCK\nno service root");
+    IOLog("LmiproUfsBlock: no service root\n");
+    return 0;
+  }
   unsigned published = 0;
   for (unsigned i = 0; i < layout.windows; ++i) {
     uint64_t absolute = (layout.userdataFirst + layout.window[i].offset / gHost.blockBytes) * gHost.blockBytes;
@@ -465,6 +477,18 @@ extern "C" int lmipro_ufs_block_start(void)
     if (!dev->attach(root)) { dev->release(); break; }
     if (!dev->start(root)) { dev->detach(root); dev->release(); break; }
     ++published;
+  }
+  if (diag) {
+    panic("LMIPRO UFS BLOCK\nuserdata=%x..%x windows=%u published=%u\n"
+          "w0 %s off=%llx size=%llx\nw1 %s off=%llx size=%llx\n"
+          "block=%x last=%x",
+          layout.userdataFirst, layout.userdataLast, layout.windows, published,
+          layout.window[0].name, (unsigned long long)layout.window[0].offset,
+          (unsigned long long)layout.window[0].size,
+          layout.windows > 1 ? layout.window[1].name : "-",
+          layout.windows > 1 ? (unsigned long long)layout.window[1].offset : 0ULL,
+          layout.windows > 1 ? (unsigned long long)layout.window[1].size : 0ULL,
+          gHost.blockBytes, gHost.lastLba);
   }
   IOLog("LmiproUfsBlock: %u window(s) published\n", published);
   return int(published);
