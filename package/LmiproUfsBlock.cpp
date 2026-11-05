@@ -294,7 +294,7 @@ static bool lmReadGpt(LmiproUfsHost &host, LmiproRootLayout &out, const char **w
   uint32_t oc = 15;
   const char *rc = lmUfsCommand(host.io, 0x28, 1, host.blockBytes, &oc);
   if (rc) { *why = rc; return false; }
-  const uint8_t *b = host.io.data + 8192;
+  uint8_t *b = host.io.data + 8192;
   if (lmLe(b) != 0x20494645U || lmLe(b + 4) != 0x54524150U || lmLe64(b + 24) != 1) { *why = "GPT header"; return false; }
   unsigned hlen = lmLe(b + 12);
   if (hlen < 92 || hlen > host.blockBytes) { *why = "GPT header size"; return false; }
@@ -460,12 +460,12 @@ extern "C" int lmipro_ufs_block_start(void)
     uint64_t absolute = (layout.userdataFirst + layout.window[i].offset / gHost.blockBytes) * gHost.blockBytes;
     auto *dev = new LmiproUfsBlock;
     if (!dev) break;
-    if (!dev->init()) { dev->release(); break; }
+    if (!dev->init(nullptr)) { dev->release(); break; }
     if (!dev->configure(layout.window[i].name, absolute, layout.window[i].size)) { dev->release(); break; }
     if (!dev->attach(root)) { dev->release(); break; }
     if (!dev->start(root)) { dev->detach(root); dev->release(); break; }
     ++published;
   }
   IOLog("LmiproUfsBlock: %u window(s) published\n", published);
-  return published;
+  return int(published);
 }
