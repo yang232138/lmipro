@@ -91,8 +91,20 @@ subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Werror',
 archive = root / 'build/sheng-platform-power/libShengPlatformPower.a'
 subprocess.run(['xcrun', 'ar', 'rcs', str(archive), str(obj), str(out / 'lmipro-ufs-block-bindings.o')],
                check=True, timeout=120)
+# The PMGR verification compares the archive digest against its build report;
+# keep the report in step with the two objects just added.
+combined = hashlib.sha256(archive.read_bytes()).hexdigest()
+report_path = archive.parent / 'build-report.json'
+if report_path.exists():
+    pmgr = json.loads(report_path.read_text())
+    pmgr['archive_sha256'] = combined
+    pmgr['auxiliary_readonly_ufs_block'] = dict(
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),
+        bindings_origin=origin, reads_only=True)
+    report_path.write_text(json.dumps(pmgr, indent=2) + '\n')
 
-proof = dict(source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+proof = dict(combined_archive_sha256=combined, source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
              object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),
              bindings={name: hex(value) for name, value in sorted(possible.items())},
              undefined=[name for name in sorted(set(undefined))],
