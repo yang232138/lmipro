@@ -74,7 +74,11 @@ else:
     digest = hashlib.sha256(cache.read_bytes()).hexdigest()
     if digest != bindings['kernelcache_sha256']:
         raise SystemExit(f'kernelcache mismatch: {digest} != {bindings["kernelcache_sha256"]}')
-    possible = {name: int(value, 16) for name, value in bindings['addresses'].items()}
+    # The recorded addresses are pre-slide; the sheng checker applies the recorded
+    # slide before comparing against the prelinked segments, and so must we.
+    slide = int(bindings['slide'])
+    possible = {name: (int(value, 16) + slide) & 0xffffffffffffffff
+                for name, value in bindings['addresses'].items()}
     origin = 'scripts/data/storage-bindings.json'
 print(f'storage binding origin: {origin} ({len(possible)} symbols)')
 
