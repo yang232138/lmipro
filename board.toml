@@ -32,6 +32,7 @@ archives = [
   "build-libpthread-kernel.py",
   "build-lmipro-platform-power.py",
   "build-lmipro-ufs-handoff.py",
+  "build-lmipro-ufs-block.py",
 ]
 
 [device_tree]

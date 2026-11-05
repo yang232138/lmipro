@@ -130,7 +130,7 @@ evidence = []
 id = "storage"
 status = "planned"
 components = ["RamBlock"]
-paths = ["board.toml", "dts/**", "configs/**", "drivers/**", "scripts/**", "package/LmiproUfsHandoff.cpp", "docs/ufs-readonly-handoff.md"]
+paths = ["board.toml", "dts/**", "configs/**", "drivers/**", "scripts/**", "package/LmiproUfsHandoff.cpp", "package/LmiproUfsBlock.cpp", "scripts/build-lmipro-ufs-block.py", "docs/ufs-readonly-handoff.md"]
 inputs = [
   "UFS host controller at 0x1d84000 and PHY at 0x1d87000 from the shared dtsi; QUPv3 wrapper 0 at 0x9c0000 for the serial engines.",
   "The GPT of UFS LUN 0: the userdata entry (first and last LBA), the boot_a/boot_b size and the vendor partition that carries the firmware.",
