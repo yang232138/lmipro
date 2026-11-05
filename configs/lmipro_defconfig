@@ -24,5 +24,3 @@ CONFIG_XNU_DT_PANIC_REGION=y
 CONFIG_XNU_SHENG_PMGR=y
 
 # Owner root binding: authorize the read-only block-device root.
-CONFIG_XNU_OWNER_ROOT_AUDIT=y
-CONFIG_XNU_OWNER_ROOT_TRUST=y

@@ -1,0 +1,10 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -936,7 +936,7 @@
+ #elif !XNU_TARGET_OS_OSX
+ 	/* Non MacOS */
+-	require_rootauth = TRUE;
++	require_rootauth = FALSE;
+ #endif // XNU_TARGET_OS_OSX && defined(__arm64__)
+ 
+ 	if (require_rootauth) {
