@@ -103,6 +103,15 @@ if report_path.exists():
         object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),
         bindings_origin=origin, reads_only=True)
     report_path.write_text(json.dumps(pmgr, indent=2) + '\n')
+observer_path = root / 'build/lmipro-ufs-handoff/build-proof.json'
+if observer_path.exists():
+    observer = json.loads(observer_path.read_text())
+    observer['combined_archive_sha256'] = combined
+    observer['auxiliary_readonly_ufs_block'] = dict(
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),
+        bindings_origin=origin, reads_only=True)
+    observer_path.write_text(json.dumps(observer, indent=2) + '\n')
 
 proof = dict(combined_archive_sha256=combined, source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
              object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),
