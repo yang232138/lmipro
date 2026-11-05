@@ -14,7 +14,10 @@ kit = "lmipro"
 # repeated here and DarwinBoot, which the firmware volume carries, is added.
 # Storage, display, input, GPU and Wi-Fi components are selected only when their
 # board inputs and evidence exist; see porting.toml.
-include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot"]
+# VerifiedRoot is selected for its kernel archive: the owner-root probe the
+# defconfig enables needs build/verified-root-xnu/libVerifiedRootProbe.a, which
+# scripts/build-lmipro-verified-root.py builds from kits/VerifiedRoot.
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "VerifiedRoot"]
 
 [kernel]
 defconfig = "lmipro_defconfig"
@@ -33,6 +36,7 @@ archives = [
   "build-lmipro-platform-power.py",
   "build-lmipro-ufs-handoff.py",
   "build-lmipro-ufs-block.py",
+  "build-lmipro-verified-root.py",
 ]
 
 [device_tree]
