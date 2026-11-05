@@ -14,6 +14,7 @@
 #include <IOKit/IODeviceMemory.h>
 #include <pexpert/pexpert.h>
 #include <kern/task.h>
+#include <kern/thread.h>
 
 // ---- SMMUv2 planning (same rules as the observer) --------------------------
 struct UfsSmmuPlan {
@@ -446,39 +447,41 @@ IOReturn LmiproUfsBlock::doAsyncReadWrite(IOMemoryDescriptor *buffer, UInt64 blo
 }
 
 // ---- publication -----------------------------------------------------------
-extern "C" int lmipro_ufs_block_start(void)
+// The block devices attach to this controller (an ordinary IOService), not to
+// the platform expert root: that is the provider shape the sheng driver uses,
+// and the publication runs from a kernel thread rather than from bsd_init.
+class LmiproUfsController : public IOService {
+  OSDeclareDefaultStructors(LmiproUfsController)
+};
+OSDefineMetaClassAndStructors(LmiproUfsController, IOService)
+
+static unsigned gDiag = 0;
+
+static void lmiproPublishThread(void *arg, wait_result_t)
 {
-  unsigned enabled = 0, diag = 0;
-  PE_parse_boot_argn("lmipro-ufs-root", &enabled, sizeof(enabled));
-  PE_parse_boot_argn("lmipro-ufs-diag", &diag, sizeof(diag));
-  if (!enabled && !diag) return 0;
-  if (!gUfsLock) gUfsLock = IOLockAlloc();
-  if (!gUfsLock) return 0;
+  auto *ctl = static_cast<LmiproUfsController *>(arg);
   const char *why = "";
   if (!lmUfsBringUp(gHost, &why)) {
-    if (diag) panic("LMIPRO UFS BLOCK\nbring-up: %s", why ? why : "?");
+    if (gDiag) panic("LMIPRO UFS BLOCK\nbring-up: %s", why ? why : "?");
     IOLog("LmiproUfsBlock: bring-up failed: %s\n", why ? why : "?");
-    return 0;
+    ctl->release();
+    return;
   }
   LmiproRootLayout layout;
   if (!lmReadGpt(gHost, layout, &why)) {
-    if (diag) panic("LMIPRO UFS BLOCK\nGPT: %s\nlast=%x block=%x", why ? why : "?",
-                    gHost.lastLba, gHost.blockBytes);
+    if (gDiag) panic("LMIPRO UFS BLOCK\nGPT: %s\nlast=%x block=%x", why ? why : "?",
+                     gHost.lastLba, gHost.blockBytes);
     IOLog("LmiproUfsBlock: %s\n", why ? why : "?");
-    return 0;
+    ctl->release();
+    return;
   }
   if (!lmReadManifest(gHost, layout, &why)) {
-    if (diag) panic("LMIPRO UFS BLOCK\nmanifest: %s status=%u\nuserdata=%llx..%llx", why ? why : "?",
-                    layout.manifest, (unsigned long long)layout.userdataFirst,
-                    (unsigned long long)layout.userdataLast);
+    if (gDiag) panic("LMIPRO UFS BLOCK\nmanifest: %s status=%u\nuserdata=%llx..%llx", why ? why : "?",
+                     layout.manifest, (unsigned long long)layout.userdataFirst,
+                     (unsigned long long)layout.userdataLast);
     IOLog("LmiproUfsBlock: manifest refused: %s\n", why ? why : "?");
-    return 0;
-  }
-  IOService *root = IOService::getServiceRoot();
-  if (!root) {
-    if (diag) panic("LMIPRO UFS BLOCK\nno service root");
-    IOLog("LmiproUfsBlock: no service root\n");
-    return 0;
+    ctl->release();
+    return;
   }
   unsigned published = 0;
   for (unsigned i = 0; i < layout.windows; ++i) {
@@ -487,11 +490,11 @@ extern "C" int lmipro_ufs_block_start(void)
     if (!dev) break;
     if (!dev->init(nullptr)) { dev->release(); break; }
     if (!dev->configure(layout.window[i].name, absolute, layout.window[i].size)) { dev->release(); break; }
-    if (!dev->attach(root)) { dev->release(); break; }
-    if (!dev->start(root)) { dev->detach(root); dev->release(); break; }
+    if (!dev->attach(ctl)) { dev->release(); break; }
+    if (!dev->start(ctl)) { dev->detach(ctl); dev->release(); break; }
     ++published;
   }
-  if (diag) {
+  if (gDiag) {
     panic("LMIPRO UFS BLOCK\nuserdata=%llx..%llx windows=%u published=%u\n"
           "w0 %s off=%llx size=%llx\nw1 %s off=%llx size=%llx\n"
           "block=%x last=%x",
@@ -505,5 +508,46 @@ extern "C" int lmipro_ufs_block_start(void)
           gHost.blockBytes, gHost.lastLba);
   }
   IOLog("LmiproUfsBlock: %u window(s) published\n", published);
-  return int(published);
+  ctl->release();
+}
+
+extern "C" int lmipro_ufs_block_start(void)
+{
+  unsigned enabled = 0, diag = 0;
+  PE_parse_boot_argn("lmipro-ufs-root", &enabled, sizeof(enabled));
+  PE_parse_boot_argn("lmipro-ufs-diag", &diag, sizeof(diag));
+  gDiag = diag;
+  if (!enabled && !diag) return 0;
+  if (!gUfsLock) gUfsLock = IOLockAlloc();
+  if (!gUfsLock) return 0;
+  IOService *root = IOService::getServiceRoot();
+  if (!root) {
+    if (diag) panic("LMIPRO UFS BLOCK\nno service root");
+    return 0;
+  }
+  auto *ctl = new LmiproUfsController;
+  if (!ctl || !ctl->init(nullptr)) {
+    if (ctl) ctl->release();
+    if (diag) panic("LMIPRO UFS BLOCK\ncontroller allocation");
+    return 0;
+  }
+  if (!ctl->attach(root)) {
+    ctl->release();
+    if (diag) panic("LMIPRO UFS BLOCK\ncontroller attach");
+    return 0;
+  }
+  if (!ctl->start(root)) {
+    ctl->detach(root);
+    ctl->release();
+    if (diag) panic("LMIPRO UFS BLOCK\ncontroller start");
+    return 0;
+  }
+  thread_t thread = nullptr;
+  if (kernel_thread_start(lmiproPublishThread, ctl, &thread) != KERN_SUCCESS) {
+    ctl->release();
+    if (diag) panic("LMIPRO UFS BLOCK\npublisher thread");
+    return 0;
+  }
+  thread_deallocate(thread);
+  return 1;
 }
