@@ -236,13 +236,26 @@ static bool lmUfsBringUp(LmiproUfsHost &host, const char **why)
 
   host.io.smmu = mapPhys(0x15000000ULL, 0xd0000, host.smmuMap);
   if (!host.io.smmu) { *why = "SMMU map"; return false; }
-  UfsSmmuPlan plan = planUfsSmmu(0x60, host.io.dma, kDmaBytes,
-      [&](unsigned off) { return host.io.smmuRead(off); });
-  if (plan.error) { *why = plan.error; return false; }
-  const char *sb = configureUfsSmmu(plan, 0x60,
-      [&](unsigned off) { return host.io.smmuRead(off); },
-      [&](unsigned off, uint32_t v) { host.io.smmuWrite(off, v); });
-  if (sb) { *why = sb; return false; }
+  // The UFS host on this SoC is reachable through two streams (0xe0 and 0x4e0),
+  // exactly as the observer established; 0x60 is the SM8550 wiring and its
+  // stream-match write does not read back on SM8250.
+  auto sread = [&](unsigned off) { return host.io.smmuRead(off); };
+  auto swrite = [&](unsigned off, uint32_t v) { host.io.smmuWrite(off, v); };
+  UfsSmmuPlan p0 = planUfsSmmu(0xe0, host.io.dma, kDmaBytes, sread);
+  if (p0.error) { *why = p0.error; return false; }
+  if (p0.reuse) { *why = "existing e0 mapping not owned"; return false; }
+  auto reservedRead = [&](unsigned off) {
+    if (off == 0x800 + 4 * p0.slot) return 0x800000e0U;
+    if (off == 0xc00 + 4 * p0.slot) return uint32_t(p0.bank);
+    return sread(off);
+  };
+  UfsSmmuPlan p1 = planUfsSmmu(0x4e0, host.io.dma, kDmaBytes, reservedRead);
+  if (p1.error) { *why = p1.error; return false; }
+  if (p1.reuse || p1.slot == p0.slot || p1.bank == p0.bank) { *why = "mapping ownership"; return false; }
+  const char *e0 = configureUfsSmmu(p0, 0xe0, sread, swrite);
+  if (e0) { *why = e0; return false; }
+  const char *e1 = configureUfsSmmu(p1, 0x4e0, sread, swrite);
+  if (e1) { *why = e1; return false; }
 
   // NOP OUT proves the transport before any SCSI read.
   auto *w = reinterpret_cast<uint32_t *>(host.io.data);
