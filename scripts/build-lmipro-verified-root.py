@@ -45,6 +45,7 @@ fallback.write_text('''/* Weak owner-root hooks so the flag-off reference build 
 #include <sys/types.h>
 
 int native_verified_block_root_authorized(dev_t device);
+int native_verified_block_volume_owned(dev_t parent, dev_t child);
 int native_verified_block_volume_device(const char *uuid, dev_t *device, char *path, size_t size);
 
 __attribute__((weak)) int
@@ -60,6 +61,14 @@ native_verified_block_volume_device(const char *uuid, dev_t *device, char *path,
 	(void)uuid;
 	if (device) *device = (dev_t)-1;
 	if (path && size) path[0] = 0;
+	return 0;
+}
+
+__attribute__((weak)) int
+native_verified_block_volume_owned(dev_t parent, dev_t child)
+{
+	(void)parent;
+	(void)child;
 	return 0;
 }
 ''')
