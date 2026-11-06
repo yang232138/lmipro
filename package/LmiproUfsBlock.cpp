@@ -376,6 +376,13 @@ static bool lmReadManifest(LmiproUfsHost &host, LmiproRootLayout &out, const cha
 // ---- block device ----------------------------------------------------------
 static LmiproUfsHost gHost;
 static volatile int gUfsPublishState = 0;
+static char gUfsPublishWhy[64];
+static void lmSetPublishWhy(const char *why)
+{
+  size_t k = 0;
+  for (; why && why[k] && k + 1 < sizeof(gUfsPublishWhy); ++k) gUfsPublishWhy[k] = why[k];
+  gUfsPublishWhy[k] = 0;
+}
 static IOLock *gUfsLock = nullptr;
 
 class LmiproUfsBlock : public IOBlockStorageDevice {
@@ -475,6 +482,8 @@ static void lmiproPublishThread(void *arg, wait_result_t)
     if (gDiag) panic("LMIPRO UFS BLOCK\nbring-up: %s", why ? why : "?");
     IOLog("LmiproUfsBlock: bring-up failed: %s\n", why ? why : "?");
     gUfsPublishState = -1;
+    lmSetPublishWhy(why);
+    panic("LMIPRO UFS PUBLISH FAILED: %s", why ? why : "?");
     ctl->release();
     return;
   }
@@ -484,6 +493,8 @@ static void lmiproPublishThread(void *arg, wait_result_t)
                      gHost.lastLba, gHost.blockBytes);
     IOLog("LmiproUfsBlock: %s\n", why ? why : "?");
     gUfsPublishState = -1;
+    lmSetPublishWhy(why);
+    panic("LMIPRO UFS PUBLISH FAILED: %s", why ? why : "?");
     ctl->release();
     return;
   }
@@ -493,6 +504,8 @@ static void lmiproPublishThread(void *arg, wait_result_t)
                      (unsigned long long)layout.userdataLast);
     IOLog("LmiproUfsBlock: manifest refused: %s\n", why ? why : "?");
     gUfsPublishState = -1;
+    lmSetPublishWhy(why);
+    panic("LMIPRO UFS PUBLISH FAILED: %s", why ? why : "?");
     ctl->release();
     return;
   }
@@ -558,25 +571,19 @@ extern "C" int lmipro_ufs_block_start(void)
     if (diag) panic("LMIPRO UFS BLOCK\ncontroller start");
     return 0;
   }
-  // Publish synchronously: the owner root mount needs the window media while
-  // bsd_init still owns the boot CPU, and a worker thread is not scheduled early
-  // enough on this bring-up.
-  lmiproPublishThread(ctl, 0);
+  thread_t thread = nullptr;
+  if (kernel_thread_start(lmiproPublishThread, ctl, &thread) != KERN_SUCCESS) {
+    ctl->release();
+    if (diag) panic("LMIPRO UFS BLOCK\npublisher thread");
+    return 0;
+  }
+  thread_deallocate(thread);
   return 1;
 }
 
 // The root mount matches the window media, so wait until the publisher finished
 // before the platform power publication runs. A failed or empty publication is
 // reported to the caller instead of being hidden.
-extern "C" int lmipro_ufs_block_wait(unsigned timeoutMs)
-{
-  for (unsigned elapsed = 0; elapsed < timeoutMs; elapsed += 10) {
-    int state = gUfsPublishState;
-    if (state) return state;
-    IODelay(10000);
-  }
-  return 0;
-}
 
 // The XNU root check calls this for a read-only mounted root device when
 // XNU_OWNER_ROOT_TRUST is enabled. Every window this driver publishes is a
