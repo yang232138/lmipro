@@ -558,13 +558,10 @@ extern "C" int lmipro_ufs_block_start(void)
     if (diag) panic("LMIPRO UFS BLOCK\ncontroller start");
     return 0;
   }
-  thread_t thread = nullptr;
-  if (kernel_thread_start(lmiproPublishThread, ctl, &thread) != KERN_SUCCESS) {
-    ctl->release();
-    if (diag) panic("LMIPRO UFS BLOCK\npublisher thread");
-    return 0;
-  }
-  thread_deallocate(thread);
+  // Publish synchronously: the owner root mount needs the window media while
+  // bsd_init still owns the boot CPU, and a worker thread is not scheduled early
+  // enough on this bring-up.
+  lmiproPublishThread(ctl, 0);
   return 1;
 }
 
