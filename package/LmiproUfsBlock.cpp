@@ -17,6 +17,7 @@
 #include <libkern/c++/OSIterator.h>
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSString.h>
+#include <libkern/c++/OSBoolean.h>
 #include <pexpert/pexpert.h>
 #include <kern/task.h>
 #include <kern/thread.h>
@@ -463,6 +464,7 @@ OSDefineMetaClassAndStructors(LmiproUfsController, IOService)
 
 static unsigned gDiag = 0;
 static LmiproUfsBlock *gSystemOsBlock = nullptr;
+static LmiproUfsBlock *gOsBlock = nullptr;
 
 static void lmiproPublishThread(void *arg, wait_result_t)
 {
@@ -499,6 +501,7 @@ static void lmiproPublishThread(void *arg, wait_result_t)
     if (!dev->configure(layout.window[i].name, absolute, layout.window[i].size)) { dev->release(); break; }
     if (!dev->attach(ctl)) { dev->release(); break; }
     if (!dev->start(ctl)) { dev->detach(ctl); dev->release(); break; }
+    if (!__builtin_strcmp(layout.window[i].name, "OS")) gOsBlock = dev;
     if (!__builtin_strcmp(layout.window[i].name, "SystemOS")) gSystemOsBlock = dev;
     ++published;
   }
@@ -576,6 +579,26 @@ extern "C" int native_verified_block_root_authorized(dev_t device)
 // chain reaches one of this driver's windows, and require exactly one volume
 // with the requested UUID. A miss reports the candidates it saw instead of
 // returning a bare EAUTH.
+extern "C" int snprintf(char *buffer, size_t size, const char *format, ...);
+
+static const char *lmClassName(IOService *service)
+{
+  OSString *name = OSDynamicCast(OSString, service->getProperty("IOClass"));
+  return (name && name->getLength()) ? name->getCStringNoCopy() : "?";
+}
+
+static bool lmWholeMedia(IOService *service)
+{
+  OSBoolean *whole = OSDynamicCast(OSBoolean, service->getProperty("Whole"));
+  return whole && whole->isTrue();
+}
+
+static unsigned long long lmMediaSize(IOService *service)
+{
+  OSNumber *size = OSDynamicCast(OSNumber, service->getProperty("Size"));
+  return size ? size->unsigned64BitValue() : 0;
+}
+
 // The IOStorage driver that matched this device publishes the media carrying the
 // window bytes. That media is the device a container mount needs.
 static bool lmDeviceMedia(IOService *device, dev_t *deviceOut, char *nameOut, size_t size)
@@ -632,37 +655,62 @@ extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *devi
   match->release();
   if (!it) return 0;
   unsigned seen = 0, withUuid = 0, ours = 0, matched = 0, listedCount = 0;
-  char sample[40] = {};
   char candidate[64] = {};
-  char listing[4][40] = {};
-  unsigned listedOurs[4] = {};
+  char diag[4][2][192] = {};
   dev_t candidateDevice = (dev_t)-1;
   bool found = false;
   while (IOService *media = OSDynamicCast(IOService, it->getNextObject())) {
     ++seen;
     OSString *identity = OSDynamicCast(OSString, media->getProperty("UUID"));
     const char *text = (identity && identity->getLength() == 36) ? identity->getCStringNoCopy() : nullptr;
-    if (text) {
-      ++withUuid;
-      if (!sample[0]) {
-        unsigned i = 0;
-        for (; i + 1 < sizeof(sample) && text[i]; ++i) sample[i] = text[i];
-        sample[i] = 0;
+    if (text) ++withUuid;
+    char chain[160] = {};
+    size_t chainLen = 0;
+    LmiproUfsBlock *nearest = nullptr;
+    bool truncated = false;
+    unsigned depth = 0;
+    for (IOService *provider = media; provider && depth < 64; provider = provider->getProvider()) {
+      if (depth < 8) {
+        const char *cls = lmClassName(provider);
+        size_t len = __builtin_strlen(cls);
+        if (chainLen + len + 2 < sizeof(chain)) {
+          if (chainLen) chain[chainLen++] = '>';
+          for (size_t i = 0; i < len; ++i) chain[chainLen++] = cls[i];
+        }
+      } else if (provider->getProvider()) {
+        truncated = true;
       }
+      if (!nearest) {
+        LmiproUfsBlock *block = OSDynamicCast(LmiproUfsBlock, provider);
+        if (block) nearest = block;
+      }
+      ++depth;
     }
-    unsigned chain = 0;
-    bool mine = false;
-    for (IOService *provider = media->getProvider(); provider && chain < 64; provider = provider->getProvider()) {
-      ++chain;
-      if (OSDynamicCast(LmiproUfsBlock, provider)) { mine = true; break; }
-    }
+    const bool mine = nearest != nullptr;
     if (listedCount < 4) {
-      if (text) {
+      OSString *bsd = OSDynamicCast(OSString, media->getProperty(kIOBSDNameKey));
+      OSNumber *maj = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMajorKey));
+      OSNumber *mnr = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMinorKey));
+      OSString *content = OSDynamicCast(OSString, media->getProperty("Content"));
+      char contentText[24] = {};
+      if (content && content->getLength()) {
         unsigned i = 0;
-        for (; i + 1 < sizeof(listing[0]) && text[i]; ++i) listing[listedCount][i] = text[i];
-        listing[listedCount][i] = 0;
+        const char *ct = content->getCStringNoCopy();
+        for (; i + 1 < sizeof(contentText) && ct[i]; ++i) contentText[i] = ct[i];
+        contentText[i] = 0;
       }
-      listedOurs[listedCount] = mine ? 1 : 0;
+      const char *bsdText = (bsd && bsd->getLength()) ? bsd->getCStringNoCopy() : "-";
+      const unsigned devValue = (maj && mnr) ? (unsigned)makedev(maj->unsigned32BitValue(), mnr->unsigned32BitValue()) : 0;
+      char ownerMark = '-';
+      if (nearest) ownerMark = (nearest == gSystemOsBlock) ? 'S' : (nearest == gOsBlock) ? 'O' : 'L';
+      snprintf(diag[listedCount][0], sizeof(diag[0][0]),
+               "m%u cls=%s rid=%llx bsd=%s dev=%x whole=%u content=%s uuid=%s",
+               listedCount, lmClassName(media), (unsigned long long)media->getRegistryEntryID(),
+               bsdText, devValue, lmWholeMedia(media) ? 1 : 0, contentText[0] ? contentText : "-",
+               text ? text : "-");
+      snprintf(diag[listedCount][1], sizeof(diag[0][1]),
+               "   chain=%s trunc=%u own=%c ptr=%p size=%llx",
+               chain, truncated ? 1 : 0, ownerMark, nearest, lmMediaSize(media));
       ++listedCount;
     }
     if (!mine) continue;
@@ -699,13 +747,11 @@ extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *devi
       path[n] = 0;
       return 1;
     }
-    panic("owner SystemOS volume not found: %s seen=%u uuid36=%u ours=%u match=%u win=%d/%d\n"
-          "c0=%s/%u c1=%s/%u c2=%s/%u c3=%s/%u",
-          uuid, seen, withUuid, ours, matched, gSystemOsBlock ? 1 : 0, windowOk,
-          listedCount > 0 ? listing[0] : "-", listedCount > 0 ? listedOurs[0] : 0,
-          listedCount > 1 ? listing[1] : "-", listedCount > 1 ? listedOurs[1] : 0,
-          listedCount > 2 ? listing[2] : "-", listedCount > 2 ? listedOurs[2] : 0,
-          listedCount > 3 ? listing[3] : "-", listedCount > 3 ? listedOurs[3] : 0);
+    panic("UFS MEDIA DUMP seen=%u uuid36=%u ours=%u match=%u sos=%p os=%p\n"
+          "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\ntarget=%s",
+          seen, withUuid, ours, matched, gSystemOsBlock, gOsBlock,
+          diag[0][0], diag[0][1], diag[1][0], diag[1][1],
+          diag[2][0], diag[2][1], diag[3][0], diag[3][1], uuid);
   }
   *device = candidateDevice;
   size_t n = 0;
