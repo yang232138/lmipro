@@ -631,21 +631,24 @@ extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *devi
   OSIterator *it = IOService::getMatchingServices(match);
   match->release();
   if (!it) return 0;
-  unsigned seen = 0, withUuid = 0, ours = 0, matched = 0, depth = 0;
+  unsigned seen = 0, withUuid = 0, ours = 0, matched = 0, depth = 0, listedCount = 0;
   char sample[40] = {};
   char candidate[64] = {};
+  char listing[4][40] = {};
+  unsigned listedOurs[4] = {};
   dev_t candidateDevice = (dev_t)-1;
   bool found = false;
   while (IOService *media = OSDynamicCast(IOService, it->getNextObject())) {
     ++seen;
     OSString *identity = OSDynamicCast(OSString, media->getProperty("UUID"));
-    if (!identity || identity->getLength() != 36) continue;
-    ++withUuid;
-    const char *text = identity->getCStringNoCopy();
-    if (!sample[0]) {
-      unsigned i = 0;
-      for (; i + 1 < sizeof(sample) && text[i]; ++i) sample[i] = text[i];
-      sample[i] = 0;
+    const char *text = (identity && identity->getLength() == 36) ? identity->getCStringNoCopy() : nullptr;
+    if (text) {
+      ++withUuid;
+      if (!sample[0]) {
+        unsigned i = 0;
+        for (; i + 1 < sizeof(sample) && text[i]; ++i) sample[i] = text[i];
+        sample[i] = 0;
+      }
     }
     unsigned chain = 0;
     bool mine = false;
@@ -653,9 +656,18 @@ extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *devi
       ++chain;
       if (OSDynamicCast(LmiproUfsBlock, provider)) { mine = true; break; }
     }
+    if (listedCount < 4) {
+      if (text) {
+        unsigned i = 0;
+        for (; i + 1 < sizeof(listing[0]) && text[i]; ++i) listing[listedCount][i] = text[i];
+        listing[listedCount][i] = 0;
+      }
+      listedOurs[listedCount] = mine ? 1 : 0;
+      ++listedCount;
+    }
     if (!mine) continue;
     ++ours;
-    if (!lmSameUuid(text, uuid)) continue;
+    if (!text || !lmSameUuid(text, uuid)) continue;
     ++matched;
     depth = chain;
     OSNumber *maj = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMajorKey));
@@ -679,12 +691,22 @@ extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *devi
     // media; the owner cache mount opens it as a container and the kernel then checks
     // that the mounted volume descends from this media.
     dev_t window = (dev_t)-1;
-    if (gSystemOsBlock && lmDeviceMedia(gSystemOsBlock, &window, path, size)) {
+    char windowPath[64] = {};
+    int windowOk = gSystemOsBlock && lmDeviceMedia(gSystemOsBlock, &window, windowPath, sizeof(windowPath));
+    if (windowOk) {
       *device = window;
+      size_t n = 0;
+      while (windowPath[n] && n + 1 < size) { path[n] = windowPath[n]; ++n; }
+      path[n] = 0;
       return 1;
     }
-    panic("owner SystemOS volume not found: uuid=%s seen=%u uuid36=%u ours=%u match=%u depth=%u sample=%s",
-          uuid, seen, withUuid, ours, matched, depth, sample);
+    panic("owner SystemOS volume not found: %s seen=%u uuid36=%u ours=%u match=%u win=%d/%d\n"
+          "c0=%s/%u c1=%s/%u c2=%s/%u c3=%s/%u",
+          uuid, seen, withUuid, ours, matched, gSystemOsBlock ? 1 : 0, windowOk,
+          listedCount > 0 ? listing[0] : "-", listedCount > 0 ? listedOurs[0] : 0,
+          listedCount > 1 ? listing[1] : "-", listedCount > 1 ? listedOurs[1] : 0,
+          listedCount > 2 ? listing[2] : "-", listedCount > 2 ? listedOurs[2] : 0,
+          listedCount > 3 ? listing[3] : "-", listedCount > 3 ? listedOurs[3] : 0);
   }
   *device = candidateDevice;
   size_t n = 0;
@@ -692,10 +714,6 @@ extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *devi
   path[n] = 0;
   return 1;
 }
-
-// The owner cache mount opens the SystemOS window as a container and the mounted
-// volume is a different media. Accept that volume only when its provider chain
-// reaches the selected window media (or its block device).
 extern "C" int native_verified_block_volume_owned(dev_t parent, dev_t child)
 {
   if (parent == (dev_t)-1 || child == (dev_t)-1) return 0;
