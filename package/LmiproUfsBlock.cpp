@@ -375,6 +375,7 @@ static bool lmReadManifest(LmiproUfsHost &host, LmiproRootLayout &out, const cha
 
 // ---- block device ----------------------------------------------------------
 static LmiproUfsHost gHost;
+static volatile int gUfsPublishState = 0;
 static IOLock *gUfsLock = nullptr;
 
 class LmiproUfsBlock : public IOBlockStorageDevice {
@@ -473,6 +474,7 @@ static void lmiproPublishThread(void *arg, wait_result_t)
   if (!lmUfsBringUp(gHost, &why)) {
     if (gDiag) panic("LMIPRO UFS BLOCK\nbring-up: %s", why ? why : "?");
     IOLog("LmiproUfsBlock: bring-up failed: %s\n", why ? why : "?");
+    gUfsPublishState = -1;
     ctl->release();
     return;
   }
@@ -481,6 +483,7 @@ static void lmiproPublishThread(void *arg, wait_result_t)
     if (gDiag) panic("LMIPRO UFS BLOCK\nGPT: %s\nlast=%x block=%x", why ? why : "?",
                      gHost.lastLba, gHost.blockBytes);
     IOLog("LmiproUfsBlock: %s\n", why ? why : "?");
+    gUfsPublishState = -1;
     ctl->release();
     return;
   }
@@ -489,6 +492,7 @@ static void lmiproPublishThread(void *arg, wait_result_t)
                      layout.manifest, (unsigned long long)layout.userdataFirst,
                      (unsigned long long)layout.userdataLast);
     IOLog("LmiproUfsBlock: manifest refused: %s\n", why ? why : "?");
+    gUfsPublishState = -1;
     ctl->release();
     return;
   }
@@ -518,6 +522,7 @@ static void lmiproPublishThread(void *arg, wait_result_t)
           layout.windows > 1 ? (unsigned long long)layout.window[1].size : 0ULL,
           gHost.blockBytes, gHost.lastLba);
   }
+  gUfsPublishState = published ? 1 : -1;
   IOLog("LmiproUfsBlock: %u window(s) published\n", published);
   ctl->release();
 }
@@ -561,6 +566,19 @@ extern "C" int lmipro_ufs_block_start(void)
   }
   thread_deallocate(thread);
   return 1;
+}
+
+// The root mount matches the window media, so wait until the publisher finished
+// before the platform power publication runs. A failed or empty publication is
+// reported to the caller instead of being hidden.
+extern "C" int lmipro_ufs_block_wait(unsigned timeoutMs)
+{
+  for (unsigned elapsed = 0; elapsed < timeoutMs; elapsed += 10) {
+    int state = gUfsPublishState;
+    if (state) return state;
+    IODelay(10000);
+  }
+  return 0;
 }
 
 // The XNU root check calls this for a read-only mounted root device when
