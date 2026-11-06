@@ -574,8 +574,6 @@ extern "C" int native_verified_block_root_authorized(dev_t device)
 // chain reaches one of this driver's windows, and require exactly one volume
 // with the requested UUID. A miss reports the candidates it saw instead of
 // returning a bare EAUTH.
-extern "C" void panic(const char *format, ...) __attribute__((noreturn, format(printf, 1, 2)));
-
 static bool lmSameUuid(const char *text, const char *wanted)
 {
   for (unsigned i = 0; i < 36; ++i) {
