@@ -13,7 +13,6 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/IOBSD.h>
-#include <IOKit/IOMedia.h>
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSIterator.h>
 #include <libkern/c++/OSNumber.h>
@@ -589,7 +588,6 @@ static bool lmDeviceMedia(IOService *device, dev_t *deviceOut, char *nameOut, si
     OSIterator *medias = driver->getChildIterator(gIOServicePlane);
     if (!medias) continue;
     while (IOService *media = OSDynamicCast(IOService, medias->getNextObject())) {
-      if (!OSDynamicCast(IOMedia, media)) continue;
       OSNumber *maj = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMajorKey));
       OSNumber *min = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMinorKey));
       OSString *name = OSDynamicCast(OSString, media->getProperty(kIOBSDNameKey));
