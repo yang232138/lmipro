@@ -1,7 +1,7 @@
 diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -688,6 +688,17 @@
+@@ -688,6 +688,18 @@
  	bsd_init_kprintf("calling bsd_bufferinit\n");
  	bsd_bufferinit();
  
@@ -11,7 +11,8 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 +	extern int lmipro_ufs_block_start(void);
 +	lmipro_ufs_block_start();
 +	extern int lmipro_ufs_block_wait(unsigned);
-+	lmipro_ufs_block_wait(2000);
++	int publish = lmipro_ufs_block_wait(20000);
++	if (publish != 1) panic("LMIPRO UFS PUBLISH: %d", publish);
 +	extern void lmipro_pmgr_run(void);
 +	lmipro_pmgr_run();
 +#endif
