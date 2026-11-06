@@ -569,48 +569,84 @@ extern "C" int native_verified_block_root_authorized(dev_t device)
 }
 
 // The owner SystemOS mount resolves a volume UUID to the block device that
-// carries it. Only the media created on top of this driver's windows qualify.
+// carries it. APFS publishes a volume IOMedia for every container it has
+// attached, so walk every IOMedia instance, keep only those whose provider
+// chain reaches one of this driver's windows, and require exactly one volume
+// with the requested UUID. A miss reports the candidates it saw instead of
+// returning a bare EAUTH.
+extern "C" void panic(const char *format, ...) __attribute__((noreturn, format(printf, 1, 2)));
+
+static bool lmSameUuid(const char *text, const char *wanted)
+{
+  for (unsigned i = 0; i < 36; ++i) {
+    char a = text[i], b = wanted[i];
+    if (!a || !b) return false;
+    if (a >= 'a' && a <= 'z') a = char(a - 'a' + 'A');
+    if (b >= 'a' && b <= 'z') b = char(b - 'a' + 'A');
+    if (a != b) return false;
+  }
+  return text[36] == 0 && wanted[36] == 0;
+}
+
 extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *device, char *path, size_t size)
 {
   if (!uuid || !device || !path || size < 8) return 0;
-  // NODEV lives in <sys/conf.h>, which is outside the storage ABI header set.
   *device = (dev_t)-1;
   path[0] = 0;
   OSDictionary *match = IOService::serviceMatching("IOMedia");
   if (!match) return 0;
-  OSDictionary *props = OSDictionary::withCapacity(1);
-  OSString *want = OSString::withCString(uuid);
-  if (props && want) props->setObject(kIOMediaUUIDKey, want);
-  if (props) match->setObject("IOPropertyMatch", props);
   OSIterator *it = IOService::getMatchingServices(match);
-  int found = 0;
-  if (it) {
-    while (IOService *media = OSDynamicCast(IOService, it->getNextObject())) {
-      bool ours = false;
-      IOService *provider = media->getProvider();
-      for (int depth = 0; provider && depth < 4; ++depth) {
-        if (OSDynamicCast(LmiproUfsBlock, provider)) { ours = true; break; }
-        provider = provider->getProvider();
-      }
-      if (!ours) continue;
-      OSNumber *maj = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMajorKey));
-      OSNumber *min = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMinorKey));
-      OSString *name = OSDynamicCast(OSString, media->getProperty(kIOBSDNameKey));
-      if (!maj || !min || !name) continue;
-      *device = makedev(maj->unsigned32BitValue(), min->unsigned32BitValue());
-      static const char prefix[] = "/dev/";
-      size_t n = 0;
-      while (prefix[n] && n + 1 < size) { path[n] = prefix[n]; ++n; }
-      const char *nm = name->getCStringNoCopy();
-      for (size_t k = 0; nm && nm[k] && n + 1 < size; ++k) path[n++] = nm[k];
-      path[n] = 0;
-      found = 1;
-      break;
-    }
-    it->release();
-  }
   match->release();
-  if (props) props->release();
-  if (want) want->release();
-  return found;
+  if (!it) return 0;
+  unsigned seen = 0, withUuid = 0, ours = 0, matched = 0, depth = 0;
+  char sample[40] = {};
+  char candidate[64] = {};
+  dev_t candidateDevice = (dev_t)-1;
+  bool found = false;
+  while (IOService *media = OSDynamicCast(IOService, it->getNextObject())) {
+    ++seen;
+    OSString *identity = OSDynamicCast(OSString, media->getProperty("UUID"));
+    if (!identity || identity->getLength() != 36) continue;
+    ++withUuid;
+    const char *text = identity->getCStringNoCopy();
+    if (!sample[0]) {
+      unsigned i = 0;
+      for (; i + 1 < sizeof(sample) && text[i]; ++i) sample[i] = text[i];
+      sample[i] = 0;
+    }
+    unsigned chain = 0;
+    bool mine = false;
+    for (IOService *provider = media->getProvider(); provider && chain < 64; provider = provider->getProvider()) {
+      ++chain;
+      if (OSDynamicCast(LmiproUfsBlock, provider)) { mine = true; break; }
+    }
+    if (!mine) continue;
+    ++ours;
+    if (!lmSameUuid(text, uuid)) continue;
+    ++matched;
+    depth = chain;
+    OSNumber *maj = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMajorKey));
+    OSNumber *min = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMinorKey));
+    OSString *name = OSDynamicCast(OSString, media->getProperty(kIOBSDNameKey));
+    if (!maj || !min || !name) { found = false; continue; }
+    candidateDevice = makedev(maj->unsigned32BitValue(), min->unsigned32BitValue());
+    static const char prefix[] = "/dev/";
+    unsigned n = 0;
+    while (prefix[n] && n + 1 < sizeof(candidate)) { candidate[n] = prefix[n]; ++n; }
+    const char *nm = name->getCStringNoCopy();
+    for (size_t k = 0; nm && nm[k] && n + 1 < sizeof(candidate); ++k) candidate[n++] = nm[k];
+    candidate[n] = 0;
+    found = true;
+    if (matched > 1) { found = false; break; }
+  }
+  it->release();
+  if (!found || matched != 1) {
+    panic("owner SystemOS volume not found: uuid=%s seen=%u uuid36=%u ours=%u match=%u depth=%u sample=%s",
+          uuid, seen, withUuid, ours, matched, depth, sample);
+  }
+  *device = candidateDevice;
+  size_t n = 0;
+  while (candidate[n] && n + 1 < size) { path[n] = candidate[n]; ++n; }
+  path[n] = 0;
+  return 1;
 }
