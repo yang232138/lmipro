@@ -13,6 +13,7 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/IOBSD.h>
+#include <IOKit/IOMedia.h>
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSIterator.h>
 #include <libkern/c++/OSNumber.h>
@@ -462,6 +463,7 @@ class LmiproUfsController : public IOService {
 OSDefineMetaClassAndStructors(LmiproUfsController, IOService)
 
 static unsigned gDiag = 0;
+static LmiproUfsBlock *gSystemOsBlock = nullptr;
 
 static void lmiproPublishThread(void *arg, wait_result_t)
 {
@@ -498,6 +500,7 @@ static void lmiproPublishThread(void *arg, wait_result_t)
     if (!dev->configure(layout.window[i].name, absolute, layout.window[i].size)) { dev->release(); break; }
     if (!dev->attach(ctl)) { dev->release(); break; }
     if (!dev->start(ctl)) { dev->detach(ctl); dev->release(); break; }
+    if (!__builtin_strcmp(layout.window[i].name, "SystemOS")) gSystemOsBlock = dev;
     ++published;
   }
   if (gDiag) {
@@ -574,6 +577,40 @@ extern "C" int native_verified_block_root_authorized(dev_t device)
 // chain reaches one of this driver's windows, and require exactly one volume
 // with the requested UUID. A miss reports the candidates it saw instead of
 // returning a bare EAUTH.
+// The IOStorage driver that matched this device publishes the media carrying the
+// window bytes. That media is the device a container mount needs.
+static bool lmDeviceMedia(IOService *device, dev_t *deviceOut, char *nameOut, size_t size)
+{
+  if (!device || !deviceOut || !nameOut || size < 6) return false;
+  OSIterator *drivers = device->getChildIterator(gIOServicePlane);
+  if (!drivers) return false;
+  bool found = false;
+  while (IOService *driver = OSDynamicCast(IOService, drivers->getNextObject())) {
+    OSIterator *medias = driver->getChildIterator(gIOServicePlane);
+    if (!medias) continue;
+    while (IOService *media = OSDynamicCast(IOService, medias->getNextObject())) {
+      if (!OSDynamicCast(IOMedia, media)) continue;
+      OSNumber *maj = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMajorKey));
+      OSNumber *min = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMinorKey));
+      OSString *name = OSDynamicCast(OSString, media->getProperty(kIOBSDNameKey));
+      if (!maj || !min || !name) continue;
+      *deviceOut = makedev(maj->unsigned32BitValue(), min->unsigned32BitValue());
+      static const char prefix[] = "/dev/";
+      size_t n = 0;
+      while (prefix[n] && n + 1 < size) { nameOut[n] = prefix[n]; ++n; }
+      const char *nm = name->getCStringNoCopy();
+      for (size_t k = 0; nm && nm[k] && n + 1 < size; ++k) nameOut[n++] = nm[k];
+      nameOut[n] = 0;
+      found = true;
+      break;
+    }
+    medias->release();
+    if (found) break;
+  }
+  drivers->release();
+  return found;
+}
+
 static bool lmSameUuid(const char *text, const char *wanted)
 {
   for (unsigned i = 0; i < 36; ++i) {
@@ -639,6 +676,15 @@ extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *devi
   }
   it->release();
   if (!found || matched != 1) {
+    // The SHNGROOT SystemOS window is an APFS container of its own, so APFS publishes
+    // no volume media for it until that container is mounted. Fall back to the window
+    // media; the owner cache mount opens it as a container and the kernel then checks
+    // that the mounted volume descends from this media.
+    dev_t window = (dev_t)-1;
+    if (gSystemOsBlock && lmDeviceMedia(gSystemOsBlock, &window, path, size)) {
+      *device = window;
+      return 1;
+    }
     panic("owner SystemOS volume not found: uuid=%s seen=%u uuid36=%u ours=%u match=%u depth=%u sample=%s",
           uuid, seen, withUuid, ours, matched, depth, sample);
   }
@@ -647,4 +693,34 @@ extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *devi
   while (candidate[n] && n + 1 < size) { path[n] = candidate[n]; ++n; }
   path[n] = 0;
   return 1;
+}
+
+// The owner cache mount opens the SystemOS window as a container and the mounted
+// volume is a different media. Accept that volume only when its provider chain
+// reaches the selected window media (or its block device).
+extern "C" int native_verified_block_volume_owned(dev_t parent, dev_t child)
+{
+  if (parent == (dev_t)-1 || child == (dev_t)-1) return 0;
+  OSDictionary *match = IOService::serviceMatching("IOMedia");
+  if (!match) return 0;
+  OSIterator *it = IOService::getMatchingServices(match);
+  match->release();
+  if (!it) return 0;
+  int owned = 0;
+  while (IOService *media = OSDynamicCast(IOService, it->getNextObject())) {
+    OSNumber *maj = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMajorKey));
+    OSNumber *min = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMinorKey));
+    if (!maj || !min) continue;
+    if (makedev(maj->unsigned32BitValue(), min->unsigned32BitValue()) != child) continue;
+    for (IOService *provider = media->getProvider(); provider; provider = provider->getProvider()) {
+      if (gSystemOsBlock && OSDynamicCast(LmiproUfsBlock, provider) == gSystemOsBlock) { owned = 1; break; }
+      OSNumber *pmaj = OSDynamicCast(OSNumber, provider->getProperty(kIOBSDMajorKey));
+      OSNumber *pmin = OSDynamicCast(OSNumber, provider->getProperty(kIOBSDMinorKey));
+      if (!pmaj || !pmin) continue;
+      if (makedev(pmaj->unsigned32BitValue(), pmin->unsigned32BitValue()) == parent) { owned = 1; break; }
+    }
+    break;
+  }
+  it->release();
+  return owned;
 }
