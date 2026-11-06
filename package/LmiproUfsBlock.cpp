@@ -376,6 +376,8 @@ static bool lmReadManifest(LmiproUfsHost &host, LmiproRootLayout &out, const cha
 // ---- block device ----------------------------------------------------------
 static LmiproUfsHost gHost;
 static volatile int gUfsPublishState = 0;
+static volatile unsigned gPublishedWindows = 0;
+static volatile unsigned gDeviceMediaStage = 0;
 static char gUfsPublishWhy[64];
 static void lmSetPublishWhy(const char *why)
 {
@@ -535,6 +537,7 @@ static void lmiproPublishThread(void *arg, wait_result_t)
           layout.windows > 1 ? (unsigned long long)layout.window[1].size : 0ULL,
           gHost.blockBytes, gHost.lastLba);
   }
+  gPublishedWindows = published;
   gUfsPublishState = published ? 1 : -1;
   IOLog("LmiproUfsBlock: %u window(s) published\n", published);
   ctl->release();
@@ -625,9 +628,9 @@ static unsigned long long lmMediaSize(IOService *service)
 // window bytes. That media is the device a container mount needs.
 static bool lmDeviceMedia(IOService *device, dev_t *deviceOut, char *nameOut, size_t size)
 {
-  if (!device || !deviceOut || !nameOut || size < 6) return false;
+  if (!device || !deviceOut || !nameOut || size < 6) { gDeviceMediaStage = 1; return false; }
   OSIterator *drivers = device->getChildIterator(gIOServicePlane);
-  if (!drivers) return false;
+  if (!drivers) { gDeviceMediaStage = 1; return false; }
   bool found = false;
   while (IOService *driver = OSDynamicCast(IOService, drivers->getNextObject())) {
     OSIterator *medias = driver->getChildIterator(gIOServicePlane);
@@ -636,7 +639,7 @@ static bool lmDeviceMedia(IOService *device, dev_t *deviceOut, char *nameOut, si
       OSNumber *maj = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMajorKey));
       OSNumber *min = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMinorKey));
       OSString *name = OSDynamicCast(OSString, media->getProperty(kIOBSDNameKey));
-      if (!maj || !min || !name) continue;
+      if (!maj || !min || !name) { gDeviceMediaStage = 3; continue; }
       *deviceOut = makedev(maj->unsigned32BitValue(), min->unsigned32BitValue());
       static const char prefix[] = "/dev/";
       size_t n = 0;
@@ -645,13 +648,25 @@ static bool lmDeviceMedia(IOService *device, dev_t *deviceOut, char *nameOut, si
       for (size_t k = 0; nm && nm[k] && n + 1 < size; ++k) nameOut[n++] = nm[k];
       nameOut[n] = 0;
       found = true;
+      gDeviceMediaStage = 4;
       break;
     }
     medias->release();
     if (found) break;
   }
   drivers->release();
+  if (!found && !gDeviceMediaStage) gDeviceMediaStage = 2;
   return found;
+}
+
+static unsigned lmChildCount(IOService *service)
+{
+  OSIterator *it = service ? service->getChildIterator(gIOServicePlane) : nullptr;
+  if (!it) return 0;
+  unsigned n = 0;
+  while (it->getNextObject()) ++n;
+  it->release();
+  return n;
 }
 
 static bool lmSameUuid(const char *text, const char *wanted)
@@ -769,9 +784,14 @@ extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *devi
       path[n] = 0;
       return 1;
     }
-    panic("UFS MEDIA DUMP seen=%u uuid36=%u ours=%u match=%u sos=%p os=%p\n"
+    panic("UFS MEDIA DUMP seen=%u uuid36=%u ours=%u match=%u published=%u sos=%p os=%p\n"
+          "sosRid=%llx sosState=%x sosKids=%u mediaStage=%u\n"
           "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\ntarget=%s",
-          seen, withUuid, ours, matched, gSystemOsBlock, gOsBlock,
+          seen, withUuid, ours, matched, gPublishedWindows, gSystemOsBlock, gOsBlock,
+          gSystemOsBlock ? (unsigned long long)gSystemOsBlock->getRegistryEntryID() : 0ULL,
+          gSystemOsBlock ? (unsigned)gSystemOsBlock->getState() : 0u,
+          gSystemOsBlock ? lmChildCount(gSystemOsBlock) : 0u,
+          gDeviceMediaStage,
           diag[0][0], diag[0][1], diag[1][0], diag[1][1],
           diag[2][0], diag[2][1], diag[3][0], diag[3][1], uuid);
   }
