@@ -631,7 +631,7 @@ extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *devi
   OSIterator *it = IOService::getMatchingServices(match);
   match->release();
   if (!it) return 0;
-  unsigned seen = 0, withUuid = 0, ours = 0, matched = 0, depth = 0, listedCount = 0;
+  unsigned seen = 0, withUuid = 0, ours = 0, matched = 0, listedCount = 0;
   char sample[40] = {};
   char candidate[64] = {};
   char listing[4][40] = {};
@@ -669,7 +669,6 @@ extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *devi
     ++ours;
     if (!text || !lmSameUuid(text, uuid)) continue;
     ++matched;
-    depth = chain;
     OSNumber *maj = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMajorKey));
     OSNumber *min = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMinorKey));
     OSString *name = OSDynamicCast(OSString, media->getProperty(kIOBSDNameKey));
