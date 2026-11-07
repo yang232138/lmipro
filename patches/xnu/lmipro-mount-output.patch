@@ -1,0 +1,88 @@
+--- a/bsd/kern/sys_generic.c
++++ b/bsd/kern/sys_generic.c
+@@ -650,6 +650,54 @@
+ 	return fp_writev(ctx, fp, uio, flags, retval);
+ }
+ 
++#if DEVELOPMENT && defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++/* Bring-up evidence only: attempted stdout/stderr from the observed mount[3].
++ * Never consume the uio, change a syscall result, or capture other processes.
++ * Copy before taking the nonblocking append guard: copyin may fault/sleep.
++ */
++char lmipro_mount_output[641];
++unsigned int lmipro_mount_output_used;
++static volatile int lmipro_mount_output_busy;
++
++static __attribute__((noinline)) void
++lmipro_capture_mount_output(struct proc *p, int fd, uio_t uio)
++{
++	char copy[128];
++	size_t budget = 640;
++	if (proc_getpid(p) != 3 || strcmp(p->p_name, "mount") ||
++	    (fd != 1 && fd != 2)) return;
++	for (int i = 0; i < uio_iovcnt(uio) && i < 16 && budget; i++) {
++		user_addr_t address;
++		user_size_t length;
++		if (uio_getiov(uio, i, &address, &length)) break;
++		while (length && budget) {
++			size_t count = length < sizeof(copy) ? (size_t)length : sizeof(copy);
++			if (count > budget) count = budget;
++			if (copyin(address, copy, count)) return;
++			for (size_t j = 0; j < count; j++) {
++				unsigned char c = (unsigned char)copy[j];
++				if ((c < 32 && c != '\n' && c != '\t') || c > 126) copy[j] = '?';
++			}
++			if (!__sync_bool_compare_and_swap(&lmipro_mount_output_busy, 0, 1)) return;
++			unsigned int used = lmipro_mount_output_used;
++			if (used + count > 640) {
++				size_t drop = used + count - 640;
++				memmove(lmipro_mount_output, lmipro_mount_output + drop, used - drop);
++				used -= (unsigned int)drop;
++			}
++			memcpy(lmipro_mount_output + used, copy, count);
++			used += (unsigned int)count;
++			lmipro_mount_output[used] = 0;
++			lmipro_mount_output_used = used;
++			__sync_lock_release(&lmipro_mount_output_busy);
++			address += count;
++			length -= count;
++			budget -= count;
++		}
++	}
++}
++#endif
++
+ static int
+ writev_internal(struct proc *p, int fd, uio_t uio, int flags,
+     guardid_t *puguard, user_ssize_t *retval)
+@@ -665,6 +713,10 @@
+ 
+ 	context = *(vfs_context_current());
+ 	context.vc_ucred = fp->fp_glob->fg_cred;
++
++#if DEVELOPMENT && defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++	lmipro_capture_mount_output(p, fd, uio);
++#endif
+ 
+ 	error = fp_writev(&context, fp, uio, flags, retval);
+ 
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -1865,6 +1865,17 @@
+ 
+ 	sync(p, (void *)NULL, (int *)NULL);
+ 
++#if DEVELOPMENT && defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++	if (proc_getpid(p) == 3 && !strcmp(p->p_name, "mount")) {
++		extern char lmipro_mount_output[641];
++		extern unsigned int lmipro_mount_output_used;
++		panic_with_options(0, NULL, DEBUGGER_OPTION_INITPROC_PANIC,
++		    "MOUNT LOG v1 signal=%d exit=%d bytes=%u\n%s\nEND MOUNT LOG",
++		    WTERMSIG(rv), WEXITSTATUS(rv), lmipro_mount_output_used,
++		    lmipro_mount_output_used ? lmipro_mount_output : "No stdout/stderr captured");
++	}
++#endif
++
+ 	if (p->p_exit_reason == OS_REASON_NULL) {
+ 		panic_with_options(0, NULL, DEBUGGER_OPTION_INITPROC_PANIC, "%s -- no exit reason available -- (signal %d, exit status %d %s)",
+ 		    prefix_str, WTERMSIG(rv), WEXITSTATUS(rv), ((proc_getcsflags(p) & CS_KILLED) ? "CS_KILLED" : ""));

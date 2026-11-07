@@ -1,3 +1,4 @@
 # Board patch paths, one per line in application order.
 lmipro-platform-pmgr.patch
 skip-root-auth.patch
+lmipro-mount-output.patch
