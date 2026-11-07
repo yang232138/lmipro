@@ -627,6 +627,28 @@ static unsigned long long lmMediaSize(IOService *service)
   return size ? size->unsigned64BitValue() : 0;
 }
 
+// The SystemOS window is a bare APFS container; no partition scheme claims it, so
+// its IOMedia never gets a BSD identity. Hint the container content and let the
+// deferred match pass assign it.
+static bool lmHintApfsContent(IOService *device)
+{
+  OSIterator *drivers = device ? device->getChildIterator(gIOServicePlane) : nullptr;
+  if (!drivers) return false;
+  bool hinted = false;
+  while (IOService *driver = OSDynamicCast(IOService, drivers->getNextObject())) {
+    OSIterator *medias = driver->getChildIterator(gIOServicePlane);
+    if (!medias) continue;
+    while (IOService *media = OSDynamicCast(IOService, medias->getNextObject())) {
+      if (media->getProperty(kIOBSDNameKey)) continue;
+      media->setProperty("Content", "Apple_APFS");
+      hinted = true;
+    }
+    medias->release();
+  }
+  drivers->release();
+  return hinted;
+}
+
 // The IOStorage driver that matched this device publishes the media carrying the
 // window bytes. That media is the device a container mount needs.
 static bool lmDeviceMedia(IOService *device, dev_t *deviceOut, char *nameOut, size_t size)
@@ -689,6 +711,10 @@ extern "C" int native_verified_block_volume_device(const char *uuid, dev_t *devi
   if (!uuid || !device || !path || size < 8) return 0;
   *device = (dev_t)-1;
   path[0] = 0;
+  if (gSystemOsBlock && lmHintApfsContent(gSystemOsBlock)) {
+    IOService::startDeferredMatches();
+    IOSleep(20);
+  }
   OSDictionary *match = IOService::serviceMatching("IOMedia");
   if (!match) return 0;
   OSIterator *it = IOService::getMatchingServices(match);
