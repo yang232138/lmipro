@@ -537,6 +537,9 @@ static void lmiproPublishThread(void *arg, wait_result_t)
           layout.windows > 1 ? (unsigned long long)layout.window[1].size : 0ULL,
           gHost.blockBytes, gHost.lastLba);
   }
+  // Both window devices are registered now; start the deferred match pass so
+  // IOStorage attaches a driver to the second one as well.
+  IOService::startDeferredMatches();
   gPublishedWindows = published;
   gUfsPublishState = published ? 1 : -1;
   IOLog("LmiproUfsBlock: %u window(s) published\n", published);
