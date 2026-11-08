@@ -37,3 +37,6 @@ CONFIG_XNU_OWNER_CACHE_STARTUP=y
 # Owner cache composition: union the verified SystemOS over the OS root so
 # dyld's default cache path resolves inside the mounted volume.
 CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
+
+# Volatile APFS Data transport; persistent callbacks are absent.
+CONFIG_XNU_NATIVE_RAM_BLOCK=y

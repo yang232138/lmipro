@@ -17,7 +17,7 @@ kit = "lmipro"
 # VerifiedRoot is selected for its kernel archive: the owner-root probe the
 # defconfig enables needs build/verified-root-xnu/libVerifiedRootProbe.a, which
 # scripts/build-lmipro-verified-root.py builds from kits/VerifiedRoot.
-include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "VerifiedRoot"]
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "VerifiedRoot", "RamBlock"]
 
 [kernel]
 defconfig = "lmipro_defconfig"
@@ -33,6 +33,8 @@ archives = [
   "build-software-aes-bindings.py",
   "build-mockfs-fixture.py",
   "build-libpthread-kernel.py",
+  "component:RamBlock",
+  "build-lmipro-ram-bindings.py",
   "build-lmipro-platform-power.py",
   "build-lmipro-ufs-handoff.py",
   "build-lmipro-ufs-block.py",
@@ -101,6 +103,7 @@ title = "Redmi K30 Pro"
 kernel_args = ["-v", "serial=3"]
 
 [payload.adt]
+packed_data_ramdisk = true
 # The platform seed is never stored in a repository: payload builds take it from
 # --unique-chip-id or UNIXNU_UNIQUE_CHIP_ID.
 # chip-id seeds the platform identity together with that seed; it matches the donor
