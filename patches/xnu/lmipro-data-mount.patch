@@ -1,10 +1,13 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -1,2 +1,72 @@
+@@ -8079,6 +8079,75 @@
+ }
+ #endif
+ 
 +/* Board scratch Data: exact seed, typed RAM provider, no disk writes. */
 +#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
-+#define LMIPRO_DATA_UUID "LMIPRO_DATA_UUID_REQUIRED"
-+static const uint8_t lmipro_data_expected_sha256[32] = { LMIPRO_DATA_HASH_REQUIRED };
++#define LMIPRO_DATA_UUID "32EC6E37-C75B-4305-AA27-C2FEA4E67F30"
++static const uint8_t lmipro_data_expected_sha256[32] = { 0x8e,0x9f,0xf9,0x8f,0x62,0xa4,0xdf,0xc5,0xf8,0xe8,0x2e,0xf3,0x0f,0x43,0x5c,0xfe,0x03,0x5a,0xb9,0x83,0x0f,0xac,0x59,0x21,0x0f,0x8f,0x6a,0x67,0xa5,0xef,0x09,0x7c };
 +extern int native_ram_block_volume_seed(const char *, dev_t *, char *, size_t, uint64_t *, uint64_t *, uint8_t *);
 +volatile int lmipro_data_status = -1;
 +volatile int lmipro_data_stage = 0;
@@ -68,17 +71,19 @@
 +	lmipro_data_status = error;
 +	return error;
 +}
-+
 +#endif
 +
  static int
  load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path, user_addr_t envp)
---- a/bsd/kern/kern_exec.c
-+++ b/bsd/kern/kern_exec.c
-@@ -1,2 +1,6 @@
+ {
+@@ -8223,6 +8292,10 @@
+ 	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
+ 	extern int lmipro_publish_boot_identity(void);
  	if (!lmipro_publish_boot_identity()) panic("LMIPRO boot identity publication failed");
 +	int lmipro_data_error = lmipro_data_prepare(p, (user_addr_t)scratch_addr);
 +	if (lmipro_data_error) panic("LMIPRO Data mount failed: error=%d stage=%d readonly=%d",
 +	    lmipro_data_error, lmipro_data_stage, lmipro_data_readonly);
 +	boot_progress_stage("LMIPRO writable RAM Data mounted");
  #endif
+ #if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
+ 	boot_progress_stage("Data mount enter");
