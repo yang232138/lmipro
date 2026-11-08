@@ -19,6 +19,7 @@
 #include <libkern/c++/OSString.h>
 #include <libkern/c++/OSBoolean.h>
 #include <libkern/c++/OSData.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <libkern/crypto/sha2.h>
 #include <pexpert/pexpert.h>
 #include <kern/task.h>
