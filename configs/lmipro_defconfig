@@ -34,3 +34,9 @@ CONFIG_XNU_OWNER_CACHE_MOUNT=y
 # Owner Data mount: give launchd a writable /private/var so tzinit and friends
 # stop failing with EROFS. The scratch block device is memory backed, so this
 # only unblocks the write path until a real Data volume exists.
+
+# Owner cache startup: release the dyld ignition gate for the mounted SystemOS cache.
+CONFIG_XNU_OWNER_CACHE_STARTUP=y
+# Owner cache composition: union the verified SystemOS over the OS root so
+# dyld's default cache path resolves inside the mounted volume.
+CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
