@@ -16,7 +16,6 @@
 
 / {
     model = "Xiaomi Redmi K30 Pro";
-    };
 
     compatible = "xiaomi,lmi", "qcom,sm8250";
 
