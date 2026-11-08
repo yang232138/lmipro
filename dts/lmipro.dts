@@ -16,6 +16,22 @@
 
 / {
     model = "Xiaomi Redmi K30 Pro";
+    // Placeholder boot-manifest evidence for the offline bring-up. mount asks
+    // IODeviceTree for /chosen/secure-boot-hashes; the real value comes from
+    // the device APTicket and is not in the IPSW. Replace before any analysis
+    // that depends on the hash being authentic.
+    chosen {
+        secure-boot-hashes {
+            boot-manifest-hash = [00 00 00 00 00 00 00 00 00 00 00 00
+                                  00 00 00 00 00 00 00 00 00 00 00 00
+                                  00 00 00 00 00 00 00 00 00 00 00 00
+                                  00 00 00 00 00 00 00 00 00 00 00 00
+                                  00 00 00 00 00 00 00 00 00 00 00 00
+                                  00 00 00 00];
+            crypto-hash-method = "sha2-384";
+        };
+    };
+
     compatible = "xiaomi,lmi", "qcom,sm8250";
 
     // REQUIRED: base and size of the first DRAM bank, from /memory in the
