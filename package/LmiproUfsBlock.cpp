@@ -18,6 +18,8 @@
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSString.h>
 #include <libkern/c++/OSBoolean.h>
+#include <libkern/c++/OSData.h>
+#include <libkern/crypto/sha2.h>
 #include <pexpert/pexpert.h>
 #include <kern/task.h>
 #include <kern/thread.h>
@@ -349,6 +351,39 @@ static bool lmReadGpt(LmiproUfsHost &host, LmiproRootLayout &out, const char **w
   return false;
 }
 
+
+// Board boot namespace identity, NOT Apple or VerifiedRoot authentication.
+// Bind the checksum-checked on-disk layout to the locally verified image set.
+static uint8_t gLmiproBootIdentity[48];
+static bool gLmiproBootIdentityReady;
+static const char gLmiproBootDomain[] = "Lmipro.SHNGROOT.ImageSet.v1";
+static bool lmValidateBootIdentity(const uint8_t *b, uint32_t blockBytes)
+{
+  gLmiproBootIdentityReady = false;
+  if (blockBytes != 4096 || lmLe(b + 8) != 1 || lmLe(b + 12) != 2 ||
+      lmLe64(b + 16) != 9382658048ULL) return false;
+  uint8_t checksum[32];
+  SHA256_CTX check;
+  SHA256_Init(&check); SHA256_Update(&check, b, 4064); SHA256_Final(checksum, &check);
+  if (memcmp(checksum, b + 4064, 32)) return false;
+  static const char names[2][32] = {"OS", "SystemOS"};
+  static const uint64_t offsets[2] = {1048576ULL, 6079643648ULL};
+  static const uint64_t sizes[2] = {6077580800ULL, 3303014400ULL};
+  static const uint8_t hashes[2][32] = {{0xe5,0x63,0x4d,0x04,0xa8,0xac,0x35,0xf0,0x24,0x84,0x5f,0x58,0x33,0x94,0xe0,0xa3,0x5d,0xeb,0x26,0xa0,0x4c,0xb0,0xc0,0x02,0x86,0xa8,0x67,0x4e,0x25,0xa9,0xa4,0xf2},{0xb4,0x90,0x8c,0xde,0x41,0xd2,0x3e,0x6b,0xc0,0x5e,0x6a,0xf5,0x1a,0x2c,0x9e,0xeb,0x00,0xcf,0x0f,0x86,0x3a,0x6a,0x18,0xb1,0x60,0x0c,0x96,0xa3,0xfd,0x70,0x41,0x4f}};
+  for (unsigned i = 0; i < 2; i++) {
+    const uint8_t *e = b + 24 + 128 * i;
+    if (memcmp(e, names[i], 32) || lmLe64(e + 32) != offsets[i] ||
+        lmLe64(e + 40) != sizes[i] || memcmp(e + 56, hashes[i], 32)) return false;
+  }
+  SHA384_CTX identity;
+  SHA384_Init(&identity);
+  SHA384_Update(&identity, gLmiproBootDomain, sizeof(gLmiproBootDomain));
+  SHA384_Update(&identity, b, 4096);
+  SHA384_Final(gLmiproBootIdentity, &identity);
+  gLmiproBootIdentityReady = true;
+  return true;
+}
+
 static bool lmReadManifest(LmiproUfsHost &host, LmiproRootLayout &out, const char **why)
 {
   uint32_t oc = 15;
@@ -369,6 +404,7 @@ static bool lmReadManifest(LmiproUfsHost &host, LmiproRootLayout &out, const cha
     if ((out.window[i].offset & 4095ULL) || !out.window[i].size) { out.manifest = 4; *why = "window alignment"; return false; }
     if (out.window[i].offset / 4096ULL > 0xffffffffULL) { out.manifest = 5; *why = "window offset range"; return false; }
   }
+  if (!lmValidateBootIdentity(b, host.blockBytes)) { out.manifest = 6; *why = "boot identity layout/checksum/pin mismatch"; return false; }
   out.manifest = 0;
   return true;
 }
@@ -855,4 +891,35 @@ extern "C" int native_verified_block_volume_owned(dev_t parent, dev_t child)
   }
   it->release();
   return owned;
+}
+
+
+// Called only after the original owner SystemOS mount succeeded. This property
+// supplies mount's boot namespace, not content/signature authorization. The
+// original trust-cache, AMFI and APFS paths remain unchanged.
+extern "C" int lmipro_publish_boot_identity(void)
+{
+  if (!gLmiproBootIdentityReady || !gOsBlock || !gSystemOsBlock ||
+      gOsBlock == gSystemOsBlock || gPublishedWindows != 2) return 0;
+  IORegistryEntry *chosen = IORegistryEntry::fromPath("/chosen", gIODTPlane);
+  if (!chosen) return 0;
+  if (chosen->getProperty("boot-manifest-hash") || chosen->getProperty("lmipro-boot-manifest-domain")) {
+    chosen->release(); return 0;
+  }
+  OSData *hash = OSData::withBytes(gLmiproBootIdentity, sizeof(gLmiproBootIdentity));
+  OSData *domain = OSData::withBytes(gLmiproBootDomain, sizeof(gLmiproBootDomain));
+  bool tagged = domain && chosen->setProperty("lmipro-boot-manifest-domain", domain);
+  bool published = tagged && hash && chosen->setProperty("boot-manifest-hash", hash);
+  OSData *actual = OSDynamicCast(OSData, chosen->getProperty("boot-manifest-hash"));
+  bool ok = published && actual && actual->getLength() == 48 &&
+      !memcmp(actual->getBytesNoCopy(), gLmiproBootIdentity, 48);
+  if (!ok) {
+    if (published) chosen->removeProperty("boot-manifest-hash");
+    if (tagged) chosen->removeProperty("lmipro-boot-manifest-domain");
+  }
+  if (hash) hash->release();
+  if (domain) domain->release();
+  chosen->release();
+  IOLog("LMIPRO boot identity: %s (pinned SHNGROOT layout, not content authentication)\n", ok ? "published" : "failed");
+  return ok ? 1 : 0;
 }

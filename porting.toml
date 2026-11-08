@@ -351,7 +351,7 @@ configuration = [
 procedure = [
   "Integrate the firmware log exporter (QR code) from the log-capture guide, and photograph the panel for each bring-up stage.",
 ]
-findings = ["Current union1 baseline reaches mount[3] signal 0 / exit 66; see docs/observations/mount-output-20261108.md. A bounded stdout/stderr capture is added; handset result is pending.", "Image 5f5cbdfb0350d8a345ce9fc8dc87e70ddeb38acb41642243935ffca0c908b35e produced actual AMFI: No PMGR? at ConfigurationSettings.cpp:235; photograph 1793311356118.jpg.", "The next mode-1 diagnostic reports PASS only after actual ABI, binding, read-value and cleanup checks; this is separate from functional power support."]
+findings = ["Handset mount stderr confirms missing boot-manifest-hash. Add pinned, checksum-validated SHNGROOT boot namespace identity; see docs/observations/boot-identity-20261108.md. Full content authentication is not claimed.", "Current union1 baseline reaches mount[3] signal 0 / exit 66; see docs/observations/mount-output-20261108.md. A bounded stdout/stderr capture is added; handset result is pending.", "Image 5f5cbdfb0350d8a345ce9fc8dc87e70ddeb38acb41642243935ffca0c908b35e produced actual AMFI: No PMGR? at ConfigurationSettings.cpp:235; photograph 1793311356118.jpg.", "The next mode-1 diagnostic reports PASS only after actual ABI, binding, read-value and cleanup checks; this is separate from functional power support."]
 completion = [
   "Every claimed milestone has a reproducible command, a matching revision and an accessible result.",
 ]

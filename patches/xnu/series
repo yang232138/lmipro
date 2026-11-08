@@ -2,3 +2,4 @@
 lmipro-platform-pmgr.patch
 skip-root-auth.patch
 lmipro-mount-output.patch
+lmipro-boot-identity.patch
