@@ -35,3 +35,4 @@ CONFIG_XNU_OWNER_CACHE_MOUNT=y
 # stop failing with EROFS. The scratch block device is memory backed, so this
 # only unblocks the write path until a real Data volume exists.
 CONFIG_XNU_OWNER_DATA_MOUNT=y
+CONFIG_XNU_OWNER_BOOT_MANIFEST=y
