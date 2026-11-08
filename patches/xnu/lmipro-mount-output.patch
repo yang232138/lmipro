@@ -4,7 +4,7 @@
  	return fp_writev(ctx, fp, uio, flags, retval);
  }
  
-+#if DEVELOPMENT && defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++#if DEVELOPMENT
 +/* Bring-up evidence only: attempted stdout/stderr from the observed mount[3].
 + * Never consume the uio, change a syscall result, or capture other processes.
 + * Copy before taking the nonblocking append guard: copyin may fault/sleep.
@@ -60,7 +60,7 @@
  	context = *(vfs_context_current());
  	context.vc_ucred = fp->fp_glob->fg_cred;
 +
-+#if DEVELOPMENT && defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++#if DEVELOPMENT
 +	lmipro_capture_mount_output(p, fd, uio);
 +#endif
  
@@ -72,7 +72,7 @@
  
  	sync(p, (void *)NULL, (int *)NULL);
  
-+#if DEVELOPMENT && defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++#if DEVELOPMENT
 +	if (proc_getpid(p) == 3 && !strcmp(p->p_name, "mount")) {
 +		extern char lmipro_mount_output[641];
 +		extern unsigned int lmipro_mount_output_used;
