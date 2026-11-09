@@ -1,5 +1,8 @@
 // Opt-in diagnostic only. No I/O commands, locks, retries or error substitution.
 extern "C" {
+// Static kernel API from xnu-10063.141.1 kern/thread.h; IOKit's sanitized
+// export header omits this MACH_KERNEL_PRIVATE declaration.
+void thread_terminate_self(void);
 extern volatile int lmipro_data_stage, lmipro_data_status, lmipro_data_readonly;
 extern volatile uint32_t native_ram_block_ready;
 extern volatile uint64_t native_ram_block_bytes, native_ram_block_reads,

@@ -25,8 +25,8 @@ static void IOSleep(unsigned ms){slept=ms;}
 [[noreturn]] static void panic(const char *fmt,...){va_list ap;va_start(ap,fmt);vsnprintf(message,sizeof message,fmt,ap);va_end(ap);throw std::runtime_error(message);}
 static int kernel_thread_start(void (*f)(void *,wait_result_t),void *,thread_t *out){if(failThread)return 5;entry=f;*out=(void *)1;++created;return 0;}
 static void thread_deallocate(thread_t t){assert(t==(void *)1);++released;}
-[[noreturn]] static void thread_terminate_self(){throw Stopped{};}
 #include "../package/LmiproDataWatch.h"
+extern "C" void thread_terminate_self(){throw Stopped{};}
 int main(){
   lmiproStartDataWatch();assert(!created);supplied=true;lmiproStartDataWatch();assert(!created);
   for(unsigned invalid:{4U,121U}){arg=invalid;bool caught=false;try{lmiproStartDataWatch();}catch(const std::runtime_error&){caught=true;}assert(caught&&!created);}

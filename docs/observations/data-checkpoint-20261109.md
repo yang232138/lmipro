@@ -37,3 +37,13 @@ plus recovery patches. Removing the diagnostic additions reproduces the exact
 previous UFS transport/GPT/APFS implementation. CI checks the new linked watch
 thread, stage initializer -2, selected runtime argument and header source hash.
 No handset checkpoint result is claimed before observing the timed snapshot.
+
+
+Build 42617864877 completed the reference kernel, then the board compilation
+reported thread_terminate_self undeclared in its sanitized IOKit export header.
+The pinned original header declares extern void thread_terminate_self(void),
+and the already linked current kernel contains _thread_terminate_self at
+0xfffffff0072dc848. Add that exact C-linkage declaration for this statically
+linked board code, with no stub or replacement implementation. Move the host
+mock definition after the actual header include, so the host test also checks
+that the header supplies this private API declaration rather than hiding it.
