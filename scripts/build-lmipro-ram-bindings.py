@@ -52,7 +52,8 @@ subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Werror',
 
 
 archive=out/'libRamBlock.a'
-provider=root/'package/LmiproVolatileStore.c'
+# tree.py maps board package/ to kits/<board>, while tree/package is shared.
+provider=root/'kits/lmipro/LmiproVolatileStore.c'
 provider_obj=out/'LmiproVolatileStore.o'
 subprocess.run(['xcrun','clang','-target','arm64-apple-ios17.0','-O2',
                 '-ffreestanding','-fno-stack-protector','-Wall','-Wextra','-Werror',

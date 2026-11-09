@@ -51,6 +51,11 @@ one for success), GPT returns 0xff/not checked. No physical I/O implementation
 is supplied. This resolves linkage without ignoring undefined symbols or masking
 RAM/APFS errors. Host tests check refusal and unchanged caller buffers; final
 kernel verification checks actual mode/read/write/sync bodies and source hash.
+Run 42554550015 then exposed a board source-path mistake in the new recipe:
+tree/package is the shared package; tree.py maps the board package to
+kits/lmipro. Correct only the recipe provider path to kits/lmipro, matching
+the existing UFS and handoff recipes. The macOS host refusal test passed before
+this missing-input error; there was no boot image from this failed run.
 
 ## Host checks and limitations
 
