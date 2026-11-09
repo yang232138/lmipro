@@ -87,7 +87,9 @@ if missing:
     raise SystemExit(f'unqualified storage import: {missing}')
 
 assembly = out / 'lmipro-ufs-block-bindings.S'
-assembly.write_text(''.join(f'.globl {name}\n.set {name}, {possible[name]:#x}\n' for name in sorted(set(undefined))))
+ram=json.loads((root/'build/ram-block/lmipro-bindings.json').read_text())
+assert all(possible[name] == ram['bindings'][name] for name in undefined if name in ram['bindings'])
+assembly.write_text(''.join(f'.globl {name}\n.set {name}, {possible[name]:#x}\n' for name in sorted(set(undefined)) if name not in ram['bindings']))
 subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Werror',
                 '-Wno-incompatible-sysroot', '-c', str(assembly), '-o', str(out / 'lmipro-ufs-block-bindings.o')],
                check=True, timeout=120)

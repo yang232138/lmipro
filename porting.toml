@@ -153,7 +153,7 @@ limits = [
 next_action = [
   "Read the GPT and record userdata and boot sizes before selecting a storage implementation.",
 ]
-evidence = [{ kind = "source", reference = "docs/observations/mount-regression-20261109.md", result = "Restore omitted identity and diagnostics; hardware untested." }, ]
+evidence = [{ kind = "source", reference = "docs/observations/current-data-20261109.md", result = "Audited fixed seed and import/mount checks; fix early KernelCache dependency; hardware untested." }, { kind = "source", reference = "docs/observations/mount-regression-20261109.md", result = "Restore omitted identity and diagnostics; hardware untested." }, ]
 
 [[area]]
 id = "display"

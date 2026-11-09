@@ -1,0 +1,89 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8079,6 +8079,75 @@
+ }
+ #endif
+ 
++/* Board scratch Data: exact seed, typed RAM provider, no disk writes. */
++#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++#define LMIPRO_DATA_UUID "32EC6E37-C75B-4305-AA27-C2FEA4E67F30"
++static const uint8_t lmipro_data_expected_sha256[32] = { 0x8e,0x9f,0xf9,0x8f,0x62,0xa4,0xdf,0xc5,0xf8,0xe8,0x2e,0xf3,0x0f,0x43,0x5c,0xfe,0x03,0x5a,0xb9,0x83,0x0f,0xac,0x59,0x21,0x0f,0x8f,0x6a,0x67,0xa5,0xef,0x09,0x7c };
++extern int native_ram_block_volume_seed(const char *, dev_t *, char *, size_t, uint64_t *, uint64_t *, uint8_t *);
++volatile int lmipro_data_status = -1;
++volatile int lmipro_data_stage = 0;
++volatile int lmipro_data_readonly = -1;
++volatile dev_t lmipro_data_device = NODEV;
++uint64_t lmipro_data_seed_base, lmipro_data_seed_size;
++uint8_t lmipro_data_seed_sha256[32];
++char lmipro_data_device_path[64];
++
++static int
++lmipro_data_prepare(proc_t p, user_addr_t scratch)
++{
++	uint64_t base = 0, size = 0;
++	dev_t device = NODEV;
++	int error = EINVAL;
++	vnode_t data_root = NULLVP;
++	char device_path[64] = {0};
++	/* The typed provider supplies logical seed identity for both dense and
++	 * sparse media. A sparse disk has no contiguous logical-byte address. */
++	if (!native_ram_block_volume_seed(LMIPRO_DATA_UUID, &device, device_path,
++	    sizeof(device_path), &base, &size, lmipro_data_seed_sha256)) { error = ENOENT; goto done; }
++	/* The typed provider's disk may be far larger than 2 GiB (a persistent Data disk keeps only its seed's nonzero pages). */
++	if (size != UINT64_C(33554432) || memcmp(lmipro_data_seed_sha256,
++            lmipro_data_expected_sha256, 32)) goto done;
++	lmipro_data_seed_base = base;
++	lmipro_data_seed_size = size;
++	lmipro_data_stage = 1;
++	strlcpy(lmipro_data_device_path, device_path, sizeof(lmipro_data_device_path));
++	uint8_t payload[0x150] = {0};
++	user64_addr_t spec = scratch + 0x160;
++	uint16_t mode = 1;
++	uint32_t anonymous_owner = 99;
++	memcpy(payload, &spec, sizeof(spec));
++	memcpy(payload + 16, &mode, sizeof(mode));
++	memcpy(payload + 0x144, &anonymous_owner, sizeof(anonymous_owner));
++	memcpy(payload + 0x148, &anonymous_owner, sizeof(anonymous_owner));
++	struct mount_args request = {.type = scratch + 0x100, .path = scratch + 0x120,
++	    .flags = 0, .data = scratch + 0x200};
++	int32_t result = 0;
++	if ((error = copyout("apfs", request.type, 5)) ||
++	    (error = copyout("/private/var", request.path, 13)) ||
++	    (error = copyout(device_path, spec, strlen(device_path) + 1)) ||
++	    (error = copyout(payload, request.data, sizeof(payload)))) goto done;
++	lmipro_data_stage = 2;
++	error = mount(p, &request, &result);
++	if (error) goto done;
++	lmipro_data_stage = 3;
++	error = vnode_lookup("/private/var", 0, &data_root, vfs_context_current());
++	if (error) goto done;
++	mount_t data_mount = vnode_mount(data_root);
++	vnode_t device_node = vfs_devvp(data_mount);
++	dev_t actual = device_node ? vnode_specrdev(device_node) : NODEV;
++	if (device_node) vnode_put(device_node);
++	lmipro_data_device = actual;
++	lmipro_data_readonly = (vfs_flags(data_mount) & MNT_RDONLY) != 0;
++	if (actual != device || (vfs_flags(data_mount) & MNT_RDONLY) ||
++	    strcmp(vfs_statfs(data_mount)->f_fstypename, "apfs")) error = EINVAL;
++	if (!error) lmipro_data_stage = 4;
++done:
++	if (data_root) vnode_put(data_root);
++	lmipro_data_status = error;
++	return error;
++}
++#endif
++
+ static int
+ load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path, user_addr_t envp)
+ {
+@@ -8223,6 +8292,10 @@
+ 	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
+ 	extern int lmipro_publish_boot_identity(void);
+ 	if (!lmipro_publish_boot_identity()) panic("LMIPRO boot identity publication failed");
++	int lmipro_data_error = lmipro_data_prepare(p, (user_addr_t)scratch_addr);
++	if (lmipro_data_error) panic("LMIPRO Data mount failed: error=%d stage=%d readonly=%d",
++	    lmipro_data_error, lmipro_data_stage, lmipro_data_readonly);
++	boot_progress_stage("LMIPRO writable RAM Data mounted");
+ #endif
+ #if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
+ 	boot_progress_stage("Data mount enter");
