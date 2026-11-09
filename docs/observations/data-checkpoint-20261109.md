@@ -23,15 +23,16 @@ lookup; 1 is checked seed identity; 2 is mount; 3 is post-mount validation;
 original real errno and panic paths. The timer reports stage, errno, readiness,
 capacity and RAM read/write/failure counters, then intentionally stops with a
 clearly labeled diagnostic panic. A stalled operation is not falsely assigned
-an I/O error. Stage 4 makes the diagnostic thread terminate without a panic.
+an I/O error. The explicitly enabled timer also reports stage 4; it is a
+diagnostic snapshot, not a failure-only watchdog. Without the boot argument
+or with value zero, no diagnostic thread is started.
 
 Do not enable the global BootProgress build option: the pinned framework guards
 it behind NativeUfs/Virtio dependencies absent on this board. The board snapshot
 does not enable those dependencies, change the root windows or add persistence.
-thread_terminate_self is declared in the pinned xnu-10063.141.1 kern/thread.h.
 
 Host checks exercise the actual header: default-off/zero, invalid delays,
-thread creation failure, all tracked stages and success cleanup; stage and
+thread creation failure, all tracked stages including successful stage 4; stage and
 errno remain unchanged. The board patch applies against the current framework
 plus recovery patches. Removing the diagnostic additions reproduces the exact
 previous UFS transport/GPT/APFS implementation. CI checks the new linked watch
@@ -47,3 +48,20 @@ and the already linked current kernel contains _thread_terminate_self at
 linked board code, with no stub or replacement implementation. Move the host
 mock definition after the actual header include, so the host test also checks
 that the header supplies this private API declaration rather than hiding it.
+
+## 2026-11-10: report successful Data state too
+
+The same new kernel with lmipro-ufs-diag=1 reached its intentional pre-deferred
+checkpoint on the handset: userdata=2c0000..3b4b7fa, windows=2, published=2
+(user transcription). This confirms window device starts, not the subsequent
+deferred match pass or APFS mount. The prior timed candidate produced color
+bands without text. Its stage-4 silent exit made that observation ambiguous:
+Data might already have passed while execution stopped later. Remove only
+that suppression. The opt-in snapshot now prints all stages, including the
+actual success tuple stage=4/status=0/readonly=0, without modifying those
+values or the original error paths. No UFS transport, root publication,
+SystemOS/Owner Cache, APFS, seed, bindings or mount code changes are needed.
+The termination API is no longer needed because this opt-in thread always
+ends in the labeled diagnostic stop. A normal build without the argument
+keeps the previous behavior. Handset Data success remains unobserved until
+the new snapshot supplies its actual values.

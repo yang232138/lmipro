@@ -1,8 +1,5 @@
 // Opt-in diagnostic only. No I/O commands, locks, retries or error substitution.
 extern "C" {
-// Static kernel API from xnu-10063.141.1 kern/thread.h; IOKit's sanitized
-// export header omits this MACH_KERNEL_PRIVATE declaration.
-void thread_terminate_self(void);
 extern volatile int lmipro_data_stage, lmipro_data_status, lmipro_data_readonly;
 extern volatile uint32_t native_ram_block_ready;
 extern volatile uint64_t native_ram_block_bytes, native_ram_block_reads,
@@ -14,8 +11,9 @@ static unsigned gLmiproDataWatchSeconds = 0;
 static void lmiproDataWatchThread(void *, wait_result_t)
 {
   IOSleep(gLmiproDataWatchSeconds * 1000U);
-  if (lmipro_data_stage != 4) {
-    panic("LMIPRO DATA CHECKPOINT timeout=%u\n"
+  // The opt-in snapshot must also report stage 4. Silence at success cannot
+  // distinguish a later userspace stall from a watch that never started.
+  panic("LMIPRO DATA CHECKPOINT timeout=%u\n"
           "rootphase=%u pubState=%d completeWindows=%u\n"
           "dataStage=%d status=%d readonly=%d\n"
           "ramReady=%u bytes=%llu\nreads=%llu writes=%llu failures=%llu\n"
@@ -27,8 +25,6 @@ static void lmiproDataWatchThread(void *, wait_result_t)
           (unsigned long long)native_ram_block_reads,
           (unsigned long long)native_ram_block_writes,
           (unsigned long long)native_ram_block_failures);
-  }
-  thread_terminate_self();
 }
 
 static void lmiproStartDataWatch(void)
