@@ -52,6 +52,15 @@ subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Werror',
 
 
 archive=out/'libRamBlock.a'
-subprocess.run(['xcrun','ar','rcs',str(archive),str(out/'lmipro-ram-bindings.o')],check=True)
+provider=root/'package/LmiproVolatileStore.c'
+provider_obj=out/'LmiproVolatileStore.o'
+subprocess.run(['xcrun','clang','-target','arm64-apple-ios17.0','-O2',
+                '-ffreestanding','-fno-stack-protector','-Wall','-Wextra','-Werror',
+                '-Wno-incompatible-sysroot','-c',str(provider),'-o',str(provider_obj)],
+               check=True,timeout=120)
+subprocess.run(['xcrun','ar','rcs',str(archive),str(out/'lmipro-ram-bindings.o'),str(provider_obj)],check=True)
 (out/'lmipro-bindings.json').write_text(json.dumps(dict(object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),
-    bindings={n:possible[n] for n in sorted(set(undefined))}, origin=origin),indent=2)+'\n')
+    bindings={n:possible[n] for n in sorted(set(undefined))}, origin=origin,
+    persistence_mode=0, persistence_io_result=0,
+    volatile_provider_sha256=hashlib.sha256(provider.read_bytes()).hexdigest(),
+    volatile_provider_object_sha256=hashlib.sha256(provider_obj.read_bytes()).hexdigest()),indent=2)+'\n')

@@ -42,7 +42,15 @@ or non-APFS filesystem. It preserves errno and stage; there is no success-on-err
 The UFS driver source, GPT/window parser and SystemOS implementation are unchanged.
 Only overlapping already-qualified absolute IOStorageFamily aliases are emitted
 once by the RAM and UFS binding recipes, with equality checks before deduplication.
-No persistence callbacks or physical write implementation are supplied.
+Build 42552959529 reached final kernel link after archive-10 succeeded, then
+failed on six native_ufs_store_* undefined references. Darwin static linking
+requires these weak_import symbols despite RamBlock documenting them as optional.
+The board now supplies LmiproVolatileStore.c: mode zero selects the existing
+volatile branch; open/read/write/sync all refuse with result zero (this ABI uses
+one for success), GPT returns 0xff/not checked. No physical I/O implementation
+is supplied. This resolves linkage without ignoring undefined symbols or masking
+RAM/APFS errors. Host tests check refusal and unchanged caller buffers; final
+kernel verification checks actual mode/read/write/sync bodies and source hash.
 
 ## Host checks and limitations
 
