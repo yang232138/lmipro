@@ -512,6 +512,7 @@ OSDefineMetaClassAndStructors(LmiproUfsController, IOService)
 static unsigned gDiag = 0;
 static LmiproUfsBlock *gSystemOsBlock = nullptr;
 static LmiproUfsBlock *gOsBlock = nullptr;
+#include "LmiproDataWatch.h"
 
 static void lmiproPublishThread(void *arg, wait_result_t)
 {
@@ -576,7 +577,10 @@ static void lmiproPublishThread(void *arg, wait_result_t)
   }
   // Both window devices are registered now; start the deferred match pass so
   // IOStorage attaches a driver to the second one as well.
+  gLmiproDataRootPhase = 1;
+  lmiproStartDataWatch();
   IOService::startDeferredMatches();
+  gLmiproDataRootPhase = 2;
   gPublishedWindows = published;
   gUfsPublishState = published ? 1 : -1;
   IOLog("LmiproUfsBlock: %u window(s) published\n", published);
