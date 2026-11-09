@@ -103,6 +103,8 @@ title = "Redmi K30 Pro"
 kernel_args = ["-v", "serial=3"]
 
 [payload.adt]
+# scratch-data.img is DBR packed sparse data, not raw APFS bytes.
+packed_data_ramdisk = true
 # The platform seed is never stored in a repository: payload builds take it from
 # --unique-chip-id or UNIXNU_UNIQUE_CHIP_ID.
 # chip-id seeds the platform identity together with that seed; it matches the donor

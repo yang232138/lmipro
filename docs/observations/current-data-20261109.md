@@ -73,3 +73,39 @@ hardware checkpoints. In particular, a one-shot IOMedia lookup returning ENOENT
 would require readiness evidence before adding a wait/retry. A 32 MiB volatile
 seed is a bounded bring-up input, not a production Data volume or full UI claim.
 Do not flash, write userdata, or count compilation as hardware success.
+
+
+## Actual packed input audit after kernel build
+
+Run 42555657558 compiled the reference and PMGR kernel and packed a boot image.
+Its final verifier incorrectly required an optional boot_progress_stage string:
+CONFIG_XNU_BOOT_PROGRESS is disabled and the macro compiles to ((void)0).
+The failure panic and stage variables are present. Correct the verifier using
+the compiled config and verify real BL calls, not a disabled progress string.
+Actual load_init_program calls: identity 0xfffffff0076ec79c, RAM seed
+0xfffffff0076ec7e8, Data mount 0xfffffff0076ec97c, then launchd exec wrapper.
+
+Inspecting the embedded ADT exposed an independent real Data input error: the
+DBR seed was labeled RAMDisk. NativeRamBlock::start selects its packed importer
+only for PackedRAMDisk; the 942160-byte DBR input is not a page-aligned raw disk,
+and the ordinary path would fail its byte-length check. Set board
+payload.adt.packed_data_ramdisk=true, matching the actual seed format.
+
+The already compiled kernel is reused. Re-serialize the actual ADT with the
+pinned framework's node() encoder after checking a complete byte-exact round
+trip; change only /chosen/memory-map/RAMDisk to PackedRAMDisk, retaining the
+16-byte loader placeholder. All other ADT bytes and payload file contents are
+compared unchanged. Pack with the original pack_bootimg.py, pinned Mu-Silicium
+mkbootimg.py and same BootShim source; verify shim/FD/firmware DTB unchanged.
+No kernel rebuild was necessary for this packaging-only source change.
+
+Result boot SHA256 880a4d296d099581850a9849d54e945f4a9781aca4abbcacabaa9ad5f9ea35b1.
+Raw kernel e5e92445c294720e27885b779b9bcf969022fac41c85d65a441a071411fffe31,
+payload kernel a564724022a29572bad88a1aedfd89941d12684a357d3b7a3302e29f9888e691.
+Independent verification checks actual embedded files, 11 storage aliases,
+strong identity, real identity/seed/mount/exec calls, refusal bodies, config,
+seed/patch/provider source hashes, and confines probe changes to original entry
+and panic areas. The cloud run remains failed at its original verifier; the
+repack and corrected verification are local results, not a green cloud run.
+Handset mount, tzinit exit 30 resolution, Data writes and launchd startup have
+not been observed. No device command, flash or userdata write was performed.
