@@ -1,0 +1,8 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7391,3 +7391,5 @@
+ 	boot_progress_stage("SystemOS mount returned");
+ 	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
++	extern int lmipro_publish_boot_identity(void);
++	if (!lmipro_publish_boot_identity()) panic("LMIPRO boot identity publication failed");
+ #endif
