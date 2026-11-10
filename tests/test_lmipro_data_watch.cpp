@@ -11,6 +11,9 @@ extern "C" {
 volatile int lmipro_data_stage=-2,lmipro_data_status=37,lmipro_data_readonly=-1;
 volatile int lmipro_init_stage=22,lmipro_init_error=0;
 char lmipro_init_path[128]="/sbin/launchd";
+unsigned long cs_native4k_full_blocks=0,cs_native4k_ready_blobs=0;
+unsigned long cs_validate_page_bad_hash=0,cs_validate_page_no_hash=0;
+uint64_t cs_native4k_bytes=0,cs_native4k_read_ticks=0,cs_native4k_hash_ticks=0;
 volatile uint32_t native_ram_block_ready=1;
 volatile uint64_t native_ram_block_bytes=33554432,native_ram_block_reads=20,
     native_ram_block_writes=3,native_ram_block_failures=0;
@@ -33,7 +36,7 @@ extern "C" int proc_selfpid(){return tracePid;}
 extern "C" void proc_name(int pid,char *buffer,int size){assert(pid>=1&&pid<=64&&size==17);++processQueries;const char *name=pid==1?"launchd":pid==3?"mount":pid==17?"tzinit":"";snprintf(buffer,(size_t)size,"%s",name);}
 int main(){
   lmiproStartDataWatch();assert(!created);supplied=true;lmiproStartDataWatch();assert(!created);
-  for(unsigned invalid:{4U,121U}){arg=invalid;bool caught=false;try{lmiproStartDataWatch();}catch(const std::runtime_error&){caught=true;}assert(caught&&!created);}
+  for(unsigned invalid:{4U,601U}){arg=invalid;bool caught=false;try{lmiproStartDataWatch();}catch(const std::runtime_error&){caught=true;}assert(caught&&!created);}
   arg=30;failThread=true;bool caught=false;try{lmiproStartDataWatch();}catch(const std::runtime_error&){caught=true;}assert(caught&&!created);
   failThread=false;lmiproStartDataWatch();assert(created==1&&released==1&&entry);
   gLmiproDataRootPhase=2;

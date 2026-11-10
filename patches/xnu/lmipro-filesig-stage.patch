@@ -1,0 +1,83 @@
+--- a/bsd/kern/kern_descrip.c
++++ b/bsd/kern/kern_descrip.c
+@@ -102,6 +102,14 @@
+ #include <sys/codedir_internal.h>
+ #include <sys/mount_internal.h>
+ #include <sys/kdebug.h>
++
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++extern void lmipro_user_trace_event(unsigned, int, uint64_t, uint64_t, uint64_t);
++#define LMIPRO_SIG_EVENT(stage,detail,size,base) lmipro_user_trace_event(5,stage,(uint64_t)(detail),(uint64_t)(size),(uint64_t)(base))
++#else
++#define LMIPRO_SIG_EVENT(...) ((void)0)
++#endif
++
+ #include <sys/sysproto.h>
+ #include <sys/pipe.h>
+ #include <sys/spawn.h>
+@@ -3908,6 +3916,7 @@
+ 		    offsetof(struct user_fsignatures, fs_cdhash /* first output element */) :
+ 		    offsetof(struct user_fsignatures, fs_fsignatures_size /* compat */));
+ 
++		LMIPRO_SIG_EVENT(0,cmd,0,0);
+ 		if (fp->f_type != DTYPE_VNODE) {
+ 			error = EBADF;
+ 			goto out;
+@@ -3951,6 +3960,7 @@
+ 			goto outdrop;
+ 		}
+ 
++		LMIPRO_SIG_EVENT(1,fs.fs_blob_start,fs.fs_blob_size,fs.fs_file_start);
+ 		/*
+ 		 * First check if we have something loaded a this offset
+ 		 */
+@@ -3987,6 +3997,7 @@
+ 			}
+ 
+ 			kernel_blob_size = CAST_DOWN(vm_size_t, fs.fs_blob_size);
++			LMIPRO_SIG_EVENT(2,fs.fs_blob_start,fs.fs_blob_size,fs.fs_file_start);
+ 			kr = ubc_cs_blob_allocate(&kernel_blob_addr, &kernel_blob_size);
+ 			if (kr != KERN_SUCCESS || kernel_blob_size < fs.fs_blob_size) {
+ 				error = ENOMEM;
+@@ -4001,6 +4012,7 @@
+ 			} else { /* F_ADDFILESIGS || F_ADDFILESIGS_RETURN || F_ADDFILESIGS_FOR_DYLD_SIM || F_ADDFILESIGS_INFO */
+ 				int resid;
+ 
++				LMIPRO_SIG_EVENT(3,fs.fs_blob_start,fs.fs_blob_size,fs.fs_file_start);
+ 				error = vn_rdwr(UIO_READ,
+ 				    vp,
+ 				    (caddr_t) kernel_blob_addr,
+@@ -4011,6 +4023,7 @@
+ 				    kauth_cred_get(),
+ 				    &resid,
+ 				    p);
++				LMIPRO_SIG_EVENT(4,error,fs.fs_blob_size,fs.fs_file_start);
+ 				if ((error == 0) && resid) {
+ 					/* kernel_blob_size rounded to a page size, but signature may be at end of file */
+ 					memset((void *)(kernel_blob_addr + (kernel_blob_size - resid)), 0x0, resid);
+@@ -4025,6 +4038,7 @@
+ 			}
+ 
+ 			blob = NULL;
++			LMIPRO_SIG_EVENT(5,fs.fs_blob_start,fs.fs_blob_size,fs.fs_file_start);
+ 			error = ubc_cs_blob_add(vp,
+ 			    proc_platform(p),
+ 			    CPU_TYPE_ANY,                       /* not for a specific architecture */
+@@ -4035,6 +4049,7 @@
+ 			    NULL,
+ 			    blob_add_flags,
+ 			    &blob);
++			LMIPRO_SIG_EVENT(6,error,fs.fs_blob_size,fs.fs_file_start);
+ 
+ 			/* ubc_blob_add() has consumed "kernel_blob_addr" if it is zeroed */
+ 			if (error) {
+@@ -4097,7 +4112,9 @@
+ 			}
+ 		}
+ 
++		LMIPRO_SIG_EVENT(7,error,fs.fs_blob_size,fs.fs_file_start);
+ 		(void) vnode_put(vp);
++		LMIPRO_SIG_EVENT(8,error,fs.fs_blob_size,fs.fs_file_start);
+ 		break;
+ 	}
+ #if CONFIG_SUPPLEMENTAL_SIGNATURES

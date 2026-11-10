@@ -21,6 +21,8 @@ int main(){
   assert(gLmiproTrace.exceptions==1&&gLmiproTrace.exception.b==0x4000);
   lmipro_user_trace_event(4,0,0x8000,0x9000,0);
   assert(gLmiproTrace.interrupts==1&&gLmiproTrace.interrupt.pc==0x8000);
+  lmipro_user_trace_event(5,5,0x90000000,8192,0);
+  assert(gLmiproTrace.signature.code==5&&gLmiproTrace.signature.a==8192);
   gLmiproTraceBusy=1;lmipro_user_trace_event(1,8,0,0,0);
   assert(gLmiproTraceDropped==1&&gLmiproTrace.entries==1);
   char out[640];lmiproFormatUserTrace(out,sizeof out);assert(strstr(out,"snapshot unavailable"));
@@ -28,6 +30,7 @@ int main(){
   assert(strstr(out,"svcIn=1 svcOut=3 userExc=1 dropped=1"));
   assert(strstr(out,"code=5 errno=2 pc=1238"));
   assert(strstr(out,"EL0 irq=1 pc=8000 sp=9000 cpsr=0"));
+  assert(strstr(out,"fileSig stage=5 detail=90000000 sigBytes=8192 base=0"));
   char tiny[8];memset(tiny,'X',sizeof tiny);lmiproFormatUserTrace(tiny,sizeof tiny);assert(tiny[7]==0);
   assert(gLmiproTrace.entry.code==5&&gLmiproTrace.returned.a==13&&!gLmiproTraceBusy);
   puts("PASS: opt-in PID filter; exact event values; first BSD error retained; nonwaiting drops; bounded snapshot");

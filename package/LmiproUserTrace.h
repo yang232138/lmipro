@@ -7,7 +7,7 @@ struct LmiproTraceEvent {
 struct LmiproTraceState {
   uint64_t entries, returns, exceptions, interrupts;
   unsigned first_error_valid;
-  LmiproTraceEvent entry, returned, exception, interrupt, first_error;
+  LmiproTraceEvent entry, returned, exception, interrupt, signature, first_error;
 };
 static LmiproTraceState gLmiproTrace = {};
 static volatile unsigned gLmiproTraceEnabled = 0;
@@ -35,6 +35,8 @@ extern "C" void lmipro_user_trace_event(unsigned kind, int code,
     ++gLmiproTrace.exceptions; gLmiproTrace.exception = event;
   } else if (kind == 4) {
     ++gLmiproTrace.interrupts; gLmiproTrace.interrupt = event;
+  } else if (kind == 5) {
+    gLmiproTrace.signature = event;
   }
   __sync_lock_release(&gLmiproTraceBusy);
 }
@@ -54,6 +56,7 @@ static __attribute__((noinline)) void lmiproFormatUserTrace(char *out, size_t ca
     "out code=%d pc=%llx r0=%llx cpsr=%llx\n"
     "exc ec=%x pc=%llx esr=%llx far=%llx\n"
     "EL0 irq=%llu pc=%llx sp=%llx cpsr=%llx\n"
+    "fileSig stage=%d detail=%llx sigBytes=%llu base=%llx\n"
     "first BSD carry error valid=%u code=%d errno=%llu pc=%llx\n",
     (unsigned long long)s.entries, (unsigned long long)s.returns,
     (unsigned long long)s.exceptions, (unsigned long long)gLmiproTraceDropped,
@@ -65,6 +68,8 @@ static __attribute__((noinline)) void lmiproFormatUserTrace(char *out, size_t ca
     (unsigned long long)s.exception.a, (unsigned long long)s.exception.b,
     (unsigned long long)s.interrupts, (unsigned long long)s.interrupt.pc,
     (unsigned long long)s.interrupt.a, (unsigned long long)s.interrupt.b,
+    s.signature.code,(unsigned long long)s.signature.pc,
+    (unsigned long long)s.signature.a,(unsigned long long)s.signature.b,
     s.first_error_valid, s.first_error.code,
     (unsigned long long)s.first_error.a, (unsigned long long)s.first_error.pc);
 }

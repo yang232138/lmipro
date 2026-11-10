@@ -6,3 +6,4 @@ lmipro-boot-identity.patch
 lmipro-data-mount.patch
 lmipro-userspace-checkpoint.patch
 lmipro-pid1-trace.patch
+lmipro-filesig-stage.patch

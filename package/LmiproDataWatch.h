@@ -12,6 +12,7 @@ extern volatile uint64_t native_ram_block_bytes, native_ram_block_reads,
 static volatile unsigned gLmiproDataRootPhase = 0;
 static unsigned gLmiproDataWatchSeconds = 0;
 #include "LmiproUserTrace.h"
+#include "LmiproSignProgress.h"
 
 // Bounded read-only sample, not a complete process census. proc_name owns and
 // drops its proc_find reference; no raw proc pointers or transition waits here.
@@ -33,7 +34,8 @@ static __attribute__((noinline)) void lmiproSampleProcesses(char *buffer, size_t
 
 static void lmiproDataWatchThread(void *, wait_result_t)
 {
-  IOSleep(gLmiproDataWatchSeconds * 1000U);
+  char signatures[448];
+  lmiproWaitSignProgress(signatures, sizeof(signatures));
   char processes[384];
   lmiproSampleProcesses(processes, sizeof(processes));
   char trace[640];
@@ -47,6 +49,7 @@ static void lmiproDataWatchThread(void *, wait_result_t)
           "initStage=%d execError=%d path=%s\n"
           "process sample pid<=64: %s\n"
           "%s"
+          "%s"
           "Diagnostic stop; not an inferred I/O error",
           gLmiproDataWatchSeconds, gLmiproDataRootPhase,
           gUfsPublishState, gPublishedWindows,
@@ -56,7 +59,7 @@ static void lmiproDataWatchThread(void *, wait_result_t)
           (unsigned long long)native_ram_block_writes,
           (unsigned long long)native_ram_block_failures,
           lmipro_init_stage, lmipro_init_error, lmipro_init_path,
-          processes, trace);
+          processes, signatures, trace);
 }
 
 static void lmiproStartDataWatch(void)
@@ -64,7 +67,7 @@ static void lmiproStartDataWatch(void)
   unsigned seconds = 0;
   if (!PE_parse_boot_argn("lmipro-data-watch", &seconds, sizeof(seconds)) || !seconds)
     return;
-  if (seconds < 5 || seconds > 120)
+  if (seconds < 5 || seconds > 600)
     panic("LMIPRO DATA CHECKPOINT invalid delay: %u", seconds);
   gLmiproDataWatchSeconds = seconds;
   gLmiproTraceEnabled = 1;
