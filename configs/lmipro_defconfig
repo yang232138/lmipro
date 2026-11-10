@@ -43,3 +43,6 @@ CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
 
 # Independent volatile Data transport; no persistence backend.
 CONFIG_XNU_NATIVE_RAM_BLOCK=y
+
+# Original 21H461 Legacy interface with board-owned GOP init; runtime opt-in.
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y

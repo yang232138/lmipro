@@ -157,30 +157,17 @@ evidence = [{ kind = "source", reference = "docs/observations/data-checkpoint-20
 
 [[area]]
 id = "display"
-status = "planned"
-components = []
-paths = ["package/**", "dts/**", "scripts/**"]
-inputs = [
-  "6.67-inch 1080x2400 AMOLED at 60 Hz; the lmi UEFI port keeps the panel as the bootloader initialized it and reports the framebuffer at 0x9c000000.",
-  "Panel timing, DSI lanes and backlight control are unread.",
-]
-configuration = [
-  "No display component is selected; the device tree only reserves the framebuffer range.",
-]
-procedure = [
-  "Build the firmware, read the GOP geometry and stride from the UniXNU menu, then select GopFramebuffer.",
-]
-findings = ["The framebuffer base is the only display fact recorded; the resolution and stride reported by GOP still have to be captured.", "The PMGR bridge adds no display power operation. Its lifecycle result uses the existing official panic-screen and GOP mapping."]
-completion = [
-  "A known frame appears with the correct geometry and colors, then userland presents and the backlight is controlled.",
-]
-limits = [
-  "No display component, no panel data, no backlight service.",
-]
-next_action = [
-  "Temporarily boot the hash-qualified display snapshot, record actual PE console geometry and published service counts, then choose the board display bridge.",
-]
-evidence = [{ kind = "source", reference = "docs/observations/display-handoff-20261110.md", result = "Real userspace services and RAM writes observed on run 42742941670; add opt-in read-only PE console and bounded published-display census before selecting a backend; Handset records 1080x2400 stride 4320 base 0x9c000000 and one IOSurfaceRoot; null target iterators were ambiguous, so correct census filtering; new census hardware untested." }]
+status = "implemented"
+components = ["GopFramebuffer"]
+paths = ["board.toml", "configs/lmipro_defconfig", "package/LmiproDisplay*", "scripts/*display*", "docs/observations/display-handoff-20261110.md"]
+inputs = ["Photo 1794289338194.jpg: complete matched census MobileFB=0 LegacyFB=0 IOSurface=1 GOP=0; launchd/backboardd present.", "PE console base 0x9c000000, 1080x2400, depth 32, stride 4320, B8G8R8, span 10368000; reserved range 36 MiB.", "GopFramebuffer cf3b42979a9c44219e7bb149543e6fc3388b58ed; original 21H461 IOMobileGraphicsFamily executable and constructor chain independently checked."]
+configuration = ["Select pinned GopFramebuffer and board-only build-lmipro-display.py with NATIVE_LEGACY_DISPLAY; existing post-IOKitBSDInit caller runs board startup only with lmipro-display-init=1.", "Original Legacy methods retained; register and map actual GOP resource; no SM8550 peripheral initialization or register values."]
+procedure = ["Run host geometry/census checks and porting-record validation; build fresh flag-off reference then actual archive, kernel, payload and boot image.", "Verify exact archive/source hashes and linked startup before temporary handset test."]
+findings = ["Complete handset census proves no matched framebuffer service at the sample; board previously had no display archive.", "Board wrapper implements original family/IOSurface dependency checks, runtime original-class extent guard, real memory/provider/DT lifecycle, and preserves first failing stage and return status."]
+completion = ["Real display service is published and accepts original user clients; qualify mapping before frame transfer.", "Actual userspace frames, correct colors, swaps and backlight are separately observed."]
+limits = ["New initialization archive is not yet built or observed on handset.", "CPU/GPU transfer, console ownership, physical refresh and backlight are not qualified by this publication-only test."]
+next_action = ["Build and verify the exact opt-in display-init candidate, then temporarily boot and record its original init/start/mapping/registration results."]
+evidence = [{ kind = "source", reference = "docs/observations/display-handoff-20261110.md", result = "Photo-qualified console geometry and corrected zero matched display counts; minimal startup wrapper implemented, handset initialization pending." }]
 
 [[area]]
 id = "input"

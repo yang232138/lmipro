@@ -58,3 +58,36 @@ Do not infer absence from an incomplete or unavailable scan. No retry or wait.
 Host tests now include nonempty populations containing zero target instances,
 the exact 4096 boundary, overflow past the scan cap, and reference cleanup.
 New census remains hardware untested until the new hash-qualified image is booted.
+
+## Corrected census on handset
+
+Photo 1794289338194.jpg of run 42761115816 records complete counts:
+MobileFB=0, LegacyFB=0, IOSurface=1, GOP=0. Console geometry is unchanged.
+Launchd and backboardd remain present. This qualifies absence of matched
+framebuffer instances at this sample, not absence of class code or all UI jobs.
+The current board selects no GOP archive; connect the pinned original Legacy
+backend with a board-owned startup wrapper. First qualify init/start/publication
+and retained framebuffer mapping. Transfer and GPU remain disabled until their
+ownership and producer-completion requirements are qualified on this board.
+
+## Board-only original Legacy initialization candidate
+
+The pinned GopFramebuffer implementation is used unchanged. The board recipe
+audits the actual current-job flag-off reference: full original graphics text,
+358 slots, abstract leaves, original constructor/destructor chain, class metadata
+arguments and IOSurface getter instructions. It compiles the owned backend and
+board wrapper only. No sheng peripheral package is linked. Runtime additionally
+checks the loaded original class extent before creating the owned subclass.
+
+The existing post-IOKitBSDInit hook invokes startup with lmipro-display-init=1.
+Original family and IOSurface load statuses are preserved. The provider owns a
+single GOP resource whose geometry and RGB spelling must match the handset.
+Original probe/start/registerService run with the original generic user client.
+Every failure reports its first stage; cleanup releases failed resources. Active
+services and their mapping remain owned until this test reboots. A 600-second
+checkpoint retains the census and adds actual init/client/mapping counters.
+
+This first test enables only GOP mapping and publication. Frame validation,
+transfer, retirement, GPU offer and timer-vsync are disabled. The board's
+prepare-scanout hook refuses transfer until producer and console ownership are
+qualified. This is not a claimed graphical startup.
