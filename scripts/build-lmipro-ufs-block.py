@@ -123,6 +123,7 @@ proof = dict(combined_archive_sha256=combined, source_sha256=hashlib.sha256(sour
              data_watch_header_sha256=hashlib.sha256((source.parent / "LmiproDataWatch.h").read_bytes()).hexdigest(),
              user_trace_header_sha256=hashlib.sha256((source.parent / "LmiproUserTrace.h").read_bytes()).hexdigest(),
              sign_progress_header_sha256=hashlib.sha256((source.parent / "LmiproSignProgress.h").read_bytes()).hexdigest(),
+             display_watch_header_sha256=hashlib.sha256((source.parent / "LmiproDisplayWatch.h").read_bytes()).hexdigest(),
              object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),
              bindings={name: hex(value) for name, value in sorted(possible.items())},
              undefined=[name for name in sorted(set(undefined))],

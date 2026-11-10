@@ -31,6 +31,10 @@ static void IOSleep(unsigned ms){slept=ms;}
 [[noreturn]] static void panic(const char *fmt,...){va_list ap;va_start(ap,fmt);vsnprintf(message,sizeof message,fmt,ap);va_end(ap);throw std::runtime_error(message);}
 static int kernel_thread_start(void (*f)(void *,wait_result_t),void *,thread_t *out){if(failThread)return 5;entry=f;*out=(void *)1;++created;return 0;}
 static void thread_deallocate(thread_t t){assert(t==(void *)1);++released;}
+// Display diagnostics have their own public-API fixture; retain the Data test's
+// focus on original timer/init state preservation and invocation order.
+static unsigned displaySamples=0;
+static void lmiproDisplayCheckpoint(unsigned seconds,const char *processes){assert(seconds==arg&&strstr(processes,"1:launchd"));++displaySamples;}
 #include "../package/LmiproDataWatch.h"
 extern "C" int proc_selfpid(){return tracePid;}
 extern "C" void proc_name(int pid,char *buffer,int size){assert(pid>=1&&pid<=64&&size==17);++processQueries;const char *name=pid==1?"launchd":pid==3?"mount":pid==17?"tzinit":"";snprintf(buffer,(size_t)size,"%s",name);}
@@ -53,6 +57,7 @@ int main(){
   assert(strstr(message,"initStage=22 execError=0 path=/sbin/launchd"));
   assert(strstr(message,"1:launchd 3:mount 17:tzinit"));
   assert(lmipro_init_stage==22&&lmipro_init_error==0);
+  assert(displaySamples==9);
   char tiny[8];memset(tiny,'X',sizeof tiny);lmiproSampleProcesses(tiny,sizeof tiny);
   assert(tiny[7]==0);unsigned queries=processQueries;
   char one='X';lmiproSampleProcesses(&one,1);assert(one==0&&queries==processQueries);

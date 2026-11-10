@@ -38,6 +38,7 @@ static void lmiproDataWatchThread(void *, wait_result_t)
   lmiproWaitSignProgress(signatures, sizeof(signatures));
   char processes[384];
   lmiproSampleProcesses(processes, sizeof(processes));
+  lmiproDisplayCheckpoint(gLmiproDataWatchSeconds, processes);
   char trace[640];
   lmiproFormatUserTrace(trace, sizeof(trace));
   // The opt-in snapshot must also report stage 4. Silence at success cannot

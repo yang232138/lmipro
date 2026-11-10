@@ -178,9 +178,9 @@ limits = [
   "No display component, no panel data, no backlight service.",
 ]
 next_action = [
-  "Record the GOP geometry and stride from the firmware menu.",
+  "Temporarily boot the hash-qualified display snapshot, record actual PE console geometry and published service counts, then choose the board display bridge.",
 ]
-evidence = []
+evidence = [{ kind = "source", reference = "docs/observations/display-handoff-20261110.md", result = "Real userspace services and RAM writes observed on run 42742941670; add opt-in read-only PE console and bounded published-display census before selecting a backend; new observer hardware untested." }]
 
 [[area]]
 id = "input"
