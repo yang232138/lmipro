@@ -124,7 +124,8 @@ if observer_path.exists():
         bindings_origin=origin, reads_only=True)
     observer_path.write_text(json.dumps(observer, indent=2) + '\n')
 
-proof = dict(combined_archive_sha256=combined, source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+proof = dict(ui_trace_header_sha256=hashlib.sha256((source.parent / "LmiproUITrace.h").read_bytes()).hexdigest(),
+             combined_archive_sha256=combined, source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
              data_watch_header_sha256=hashlib.sha256((source.parent / "LmiproDataWatch.h").read_bytes()).hexdigest(),
              user_trace_header_sha256=hashlib.sha256((source.parent / "LmiproUserTrace.h").read_bytes()).hexdigest(),
              sign_progress_header_sha256=hashlib.sha256((source.parent / "LmiproSignProgress.h").read_bytes()).hexdigest(),

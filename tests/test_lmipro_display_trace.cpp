@@ -31,5 +31,11 @@ int main()
     lmiproFormatDisplayMethods(out,sizeof(out));assert(strstr(out,"shown=4 of 12"));
     char tiny[4]={};lmiproFormatDisplayMethods(tiny,sizeof(tiny));assert(tiny[3]==0);
     lmiproFormatDisplayMethods(nullptr,0);
+    const char name[17]="1234567890123456";
+    lmiproRecordDisplayMethod(0,28,0,94,0,0,0,name);
+    assert(!strcmp(gLmiproDisplayLastIn.name,name));
+    assert(gLmiproDisplayLastIn.name[16]==0);
+    lmiproFormatDisplayMethods(out,sizeof(out));
+    assert(strstr(out,"pid=94 name=1234567890123456"));
     puts("PASS: disabled path; unmatched entry; exact first/last error; selector bounds; nonwaiting drops; capped snapshot and termination");
 }

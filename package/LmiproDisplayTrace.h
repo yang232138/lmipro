@@ -5,6 +5,7 @@ struct LmiproDisplayMethod {
     uint32_t selector,status;
     int pid;
     uint64_t scalar[3];
+    char name[17];
 };
 struct LmiproDisplaySelector {
     uint64_t entered,returned;
@@ -19,13 +20,14 @@ static LmiproDisplayMethod gLmiproDisplayLastIn={},gLmiproDisplayLastOut={},gLmi
 static LmiproDisplaySelector gLmiproDisplaySelectors[96]={};
 
 static void lmiproRecordDisplayMethod(unsigned kind,uint32_t selector,uint32_t status,
-    int pid,uint64_t a,uint64_t b,uint64_t c)
+    int pid,uint64_t a,uint64_t b,uint64_t c,const char *name=nullptr)
 {
     if(!gLmiproDisplayTraceEnabled || kind>1)return;
     if(!__sync_bool_compare_and_swap(&gLmiproDisplayTraceBusy,0,1)) {
         __atomic_fetch_add(&gLmiproDisplayTraceDropped,1,__ATOMIC_RELAXED);return;
     }
-    LmiproDisplayMethod event={selector,status,pid,{a,b,c}};
+    LmiproDisplayMethod event={selector,status,pid,{a,b,c},{}};
+    if(name)for(unsigned i=0;i<16 && name[i];++i)event.name[i]=name[i];
     if(kind==0) {
         ++gLmiproDisplayEntered;gLmiproDisplayLastIn=event;
         if(selector<96)++gLmiproDisplaySelectors[selector].entered;
@@ -59,13 +61,13 @@ static unsigned lmiproFormatDisplayMethods(char *out,unsigned capacity)
     __sync_lock_release(&gLmiproDisplayTraceBusy);
     int n=snprintf(out,capacity,
       "Display calls in=%llu out=%llu dropped=%llu\n"
-      "last in sel=%u pid=%d a=%llx/%llx/%llx\n"
-      "last out sel=%u pid=%d status=%x\n"
+      "last in sel=%u pid=%d name=%s a=%llx/%llx/%llx\n"
+      "last out sel=%u pid=%d name=%s status=%x\n"
       "first error valid=%u sel=%u status=%x; expected errors possible\n"
       "selectors shown=%u of %u: ",
       (unsigned long long)entered,(unsigned long long)returned,(unsigned long long)gLmiproDisplayTraceDropped,
-      in.selector,in.pid,(unsigned long long)in.scalar[0],(unsigned long long)in.scalar[1],(unsigned long long)in.scalar[2],
-      back.selector,back.pid,back.status,valid,err.selector,err.status,shown,unique);
+      in.selector,in.pid,in.name,(unsigned long long)in.scalar[0],(unsigned long long)in.scalar[1],(unsigned long long)in.scalar[2],
+      back.selector,back.pid,back.name,back.status,valid,err.selector,err.status,shown,unique);
     if(n<0)return 0;
     unsigned used=(unsigned)n<capacity?(unsigned)n:capacity-1;
     for(unsigned i=0;i<shown && used<capacity-1;++i) {

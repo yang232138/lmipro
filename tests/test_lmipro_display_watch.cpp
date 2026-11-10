@@ -40,6 +40,9 @@ static int PE_parse_boot_argn(const char *name,void *out,int size){assert(!strcm
 #include "../package/LmiproDisplayWatch.h"
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
 static unsigned boardReports=0;
+extern "C" unsigned lmipro_ui_trace_report(char *out,unsigned capacity) {
+  return snprintf(out,capacity,"UI snapshot fixture\n");
+}
 extern "C" unsigned lmipro_display_report(char *out,unsigned capacity) {
   ++boardReports;return snprintf(out,capacity,"board snapshot fixture\n");
 }

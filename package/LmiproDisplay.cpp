@@ -20,6 +20,8 @@ extern "C" void lmipro_display_static_init(void) __asm__("__GLOBAL__sub_I_Native
 extern "C" IOService *native_legacy_display_allocate(void);
 extern "C" kern_return_t OSKextLoadKextWithIdentifier(const char *);
 extern "C" int proc_selfpid(void);
+extern "C" void proc_selfname(char *,int);
+extern "C" void lmipro_ui_trace_enable(unsigned);
 
 static volatile unsigned stage,registered,clients,clientType,guardSlot;
 static volatile int result,clientStatus;
@@ -28,7 +30,7 @@ static IOService *activeDisplay,*activeProvider;
 
 extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
 {
-    char methods[512]={};
+    char methods[640]={};
     lmiproFormatDisplayMethods(methods,sizeof(methods));
     return snprintf(out,capacity,
       "Legacy initStage=%u status=%d registered=%u guard=%u\n"
@@ -51,7 +53,8 @@ extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t select
         unsigned count=args->scalarInputCount<3?args->scalarInputCount:3;
         for(unsigned i=0;i<count;++i)values[i]=args->scalarInput[i];
     }
-    lmiproRecordDisplayMethod(kind,selector,(uint32_t)status,proc_selfpid(),values[0],values[1],values[2]);
+    char name[17]={};proc_selfname(name,sizeof(name));name[16]=0;
+    lmiproRecordDisplayMethod(kind,selector,(uint32_t)status,proc_selfpid(),values[0],values[1],values[2],name);
 }
 extern "C" __attribute__((noreturn)) void native_legacy_backend_guard(unsigned slot,void *,void *caller)
 {
@@ -90,6 +93,8 @@ extern "C" void native_legacy_display_late_probe(void)
     if(!PE_parse_boot_argn("lmipro-display-init",&enabled,sizeof(enabled)) || enabled!=1 || stage)return;
     unsigned trace=0;PE_parse_boot_argn("lmipro-display-calls",&trace,sizeof(trace));
     gLmiproDisplayTraceEnabled=trace==1;
+    unsigned ui=0;PE_parse_boot_argn("lmipro-ui-watch",&ui,sizeof(ui));
+    lmipro_ui_trace_enable(ui);
     stage=1;
     result=OSKextLoadKextWithIdentifier("com.apple.iokit.IOMobileGraphicsFamily");
     if(result)panic("LMIPRO DISPLAY family load failed stage=%u status=%d",stage,result);

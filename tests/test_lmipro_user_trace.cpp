@@ -4,6 +4,9 @@
 #include <assert.h>
 static int currentPid=1;
 extern "C" int proc_selfpid(){return currentPid;}
+extern "C" void proc_selfname(char *out,int size){snprintf(out,(size_t)size,"unrelated");}
+static void *current_thread(){return (void *)1;}
+static uint64_t thread_tid(void *){return 42;}
 #include "../package/LmiproUserTrace.h"
 int main(){
   lmipro_user_trace_event(1,5,0x1234,7,8);assert(!gLmiproTrace.entries);

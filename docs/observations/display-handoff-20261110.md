@@ -106,3 +106,30 @@ the original IOMobileFramebufferUserClient class. Preserve its original ipcEnter
 externalMethod dispatch, ipcExit and return value. Count bounded selector/status
 and scalar-input snapshots without replacing the original client vptr or methods.
 Do not infer the first nonzero IOReturn is the root cause; some are expected.
+
+## SpringBoard observed and original display query qualified
+
+Photo 1794314831783.jpg of the explicitly repeated run 42789076216 shows
+SpringBoard PID 26 and backboardd PID 58, but no GUI. Original display method
+entries/returns are 2/2 with zero drops: selector 8 succeeds, selector 28
+returns e00002f0. Its caller PID 94 is outside the <=64 process sample.
+The genuine table at 0xfffffff005f354c0 is indexed with selector*24 in three
+original externalMethod paths. Selector 8 calls the dimensions getter (slot
+249); selector 28 calls getDotPitch (slot 188), with one scalar output. The
+unchanged pinned backend returns kIOReturnNotFound when the actual provider
+lacks dot-pitch. This board provides no measured pitch property. Do not invent
+one or replace the failure with success: causality for the UI is not established.
+
+The next opt-in lmipro-ui-watch=1 observer copies only the exact current process
+name and scalar execution events for SpringBoard/backboardd using the existing
+entry/return/exception hook. proc_selfname in pinned XNU copies current_proc's
+name without proc_find, allocation or transition waits. Record thread IDs to
+avoid treating aggregate latest events from different threads as paired waits.
+Two bounded actor records use one CAS attempt with explicit contention drops;
+a new PID resets that actor's old events and increments its generation.
+The existing PID1 path, original syscall results and all kernel patches remain
+unchanged. Display calls now retain a bounded copied caller name as well.
+The 600-second observer still intentionally stops. Its output qualifies activity,
+not a thread backtrace or GUI. All presentation gates remain disabled until
+real frame submission/producer ownership can be qualified. Storage source,
+SystemOS, Owner Cache, Data seed and RAM block bindings are unchanged.

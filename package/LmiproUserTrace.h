@@ -1,5 +1,6 @@
 // Opt-in PID 1 evidence only: no allocation, user-memory access or register writes.
 extern "C" int proc_selfpid(void);
+#include "LmiproUITrace.h"
 struct LmiproTraceEvent {
   int code;
   uint64_t pc, a, b;
@@ -17,7 +18,9 @@ static volatile uint64_t gLmiproTraceDropped = 0;
 extern "C" void lmipro_user_trace_event(unsigned kind, int code,
     uint64_t pc, uint64_t a, uint64_t b)
 {
-  if (!gLmiproTraceEnabled || proc_selfpid() != 1) return;
+  if (!gLmiproTraceEnabled) return;
+  int pid=proc_selfpid();
+  if (pid!=1) {lmipro_ui_user_event(kind,code,pc,a,b,pid);return;}
   if (!__sync_bool_compare_and_swap(&gLmiproTraceBusy, 0, 1)) {
     __atomic_fetch_add(&gLmiproTraceDropped, 1, __ATOMIC_RELAXED);
     return;

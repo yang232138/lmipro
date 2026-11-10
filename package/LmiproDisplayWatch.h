@@ -3,6 +3,7 @@
 // No mapping, framebuffer stores, service creation or display/power operations.
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
 extern "C" unsigned lmipro_display_report(char *,unsigned);
+extern "C" unsigned lmipro_ui_trace_report(char *,unsigned);
 #endif
 static unsigned lmiproConsoleLayout(const PE_Video &v, uint64_t *bytes)
 {
@@ -77,12 +78,14 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
   if (!PE_parse_boot_argn("lmipro-display-watch", &enabled, sizeof(enabled)) || !enabled) return;
   char display[576];
   lmiproFormatDisplaySnapshot(display, sizeof(display));
-  char detail[800] = {};
+  char detail[896] = {};
+  char ui[960] = {};
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
   lmipro_display_report(detail,sizeof(detail));
+  lmipro_ui_trace_report(ui,sizeof(ui));
 #endif
-  panic("LMIPRO DISPLAY CHECKPOINT timeout=%u\n%s%s"
+  panic("LMIPRO DISPLAY CHECKPOINT timeout=%u\n%s%s%s"
     "process sample pid<=64: %s\n"
     "Diagnostic stop; display not initialized by this observer",
-    seconds, display, detail, processes);
+    seconds, display, detail, ui, processes);
 }
