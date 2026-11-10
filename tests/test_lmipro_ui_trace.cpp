@@ -33,5 +33,14 @@ int main(){
     assert(strstr(out,"esr=92000007 far=300 tid=77"));
     char tiny[4];memset(tiny,'X',sizeof(tiny));lmipro_ui_trace_report(tiny,sizeof(tiny));assert(tiny[3]==0);
     lmipro_ui_trace_report(nullptr,0);
+    uint64_t regs[29]={};regs[24]=1;regs[25]=1080;regs[26]=2400;
+    regs[22]=2;regs[23]=1;regs[28]=1;
+    testName="backboardd";lmipro_ui_fault_event(0x1234,regs);assert(!gLmiproUIFaultValid);
+    testName="SpringBoard";lmipro_ui_fault_event(0x1234,regs);
+    assert(gLmiproUIFaultValid&&gLmiproUIFaultPC==0x1234&&gLmiproUIFaultWords[5]==1);
+    regs[24]=999;lmipro_ui_fault_event(0x5678,regs);
+    assert(gLmiproUIFaultPC==0x1234&&gLmiproUIFaultWords[5]==1);
+    char fault[1200];lmipro_ui_trace_report(fault,sizeof(fault));
+    assert(strstr(fault,"UI first BRK valid=1 pc=1234 x24=1 x25=438 x26=960"));
     puts("PASS: opt-in exact-name actors, real scalar/thread snapshots, restart separation, bounds, no-wait contention and truncation");
 }

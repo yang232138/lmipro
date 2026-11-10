@@ -46,12 +46,31 @@ extern "C" __attribute__((noinline)) void lmipro_ui_user_event(unsigned kind,int
         lmiproRecordUI(i,pid,kind,code,pc,a,b,thread_tid(current_thread()));return;
     }
 }
+static unsigned gLmiproUIFaultValid=0;
+static uint64_t gLmiproUIFaultPC=0,gLmiproUIFaultWords[10]={};
+extern "C" __attribute__((noinline)) void lmipro_ui_fault_event(uint64_t pc,const uint64_t *regs) {
+    if(!gLmiproUIEnabled || !regs)return;
+    char name[17]={};proc_selfname(name,sizeof(name));name[16]=0;
+    if(strcmp(name,"SpringBoard"))return;
+    if(!__sync_bool_compare_and_swap(&gLmiproUIBusy,0,1)) {
+        __atomic_fetch_add(&gLmiproUIDropped,1,__ATOMIC_RELAXED);return;
+    }
+    if(!gLmiproUIFaultValid) {
+        gLmiproUIFaultPC=pc;
+        for(unsigned i=0;i<10;++i)gLmiproUIFaultWords[i]=regs[19+i];
+        gLmiproUIFaultValid=1;
+    }
+    __sync_lock_release(&gLmiproUIBusy);
+}
 extern "C" __attribute__((noinline)) unsigned lmipro_ui_trace_report(char *out,unsigned capacity)
 {
     if(!out || !capacity)return 0;
     if(!__sync_bool_compare_and_swap(&gLmiproUIBusy,0,1))
         return snprintf(out,capacity,"UI activity snapshot busy; unavailable\n");
     LmiproUIActor snapshot[2]={gLmiproUIActors[0],gLmiproUIActors[1]};
+    const unsigned faultValid=gLmiproUIFaultValid;
+    const uint64_t faultPC=gLmiproUIFaultPC;
+    uint64_t words[10]={};memcpy(words,gLmiproUIFaultWords,sizeof(words));
     __sync_lock_release(&gLmiproUIBusy);
     int n=snprintf(out,capacity,"UI activity enabled=%u dropped=%llu; last events across threads\n",
         gLmiproUIEnabled,(unsigned long long)gLmiproUIDropped);
@@ -76,6 +95,15 @@ extern "C" __attribute__((noinline)) unsigned lmipro_ui_trace_report(char *out,u
           (unsigned long long)s.exception.tid);
         if(n<0)break;
         used+=(unsigned)n<capacity-used?(unsigned)n:capacity-used-1;
+    }
+    if(used<capacity-1) {
+        n=snprintf(out+used,capacity-used,
+          "UI first BRK valid=%u pc=%llx x24=%llx x25=%llx x26=%llx\n"
+          " x22=%llx x23=%llx x28=%llx x19=%llx\n",faultValid,
+          (unsigned long long)faultPC,(unsigned long long)words[5],(unsigned long long)words[6],
+          (unsigned long long)words[7],(unsigned long long)words[3],(unsigned long long)words[4],
+          (unsigned long long)words[9],(unsigned long long)words[0]);
+        if(n>0)used+=(unsigned)n<capacity-used?(unsigned)n:capacity-used-1;
     }
     return used;
 }

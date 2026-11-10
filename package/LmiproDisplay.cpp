@@ -14,6 +14,7 @@
 #include <pexpert/pexpert.h>
 #include <mach/kmod.h>
 #include "LmiproDisplayPolicy.h"
+#include "LmiproModePolicy.h"
 #include "LmiproDisplayTrace.h"
 extern "C" kmod_info_t g_kernel_kmod_info;
 extern "C" void lmipro_display_static_init(void) __asm__("__GLOBAL__sub_I_NativeLegacyDisplay.cpp");
@@ -28,6 +29,41 @@ static volatile int result,clientStatus;
 static volatile uint64_t mappedBase,mappedBytes,validationCalls,transferCalls;
 static IOService *activeDisplay,*activeProvider;
 
+static LmiproModePolicy modePolicy;
+static IORegistryEntry *modeChosen;
+static void lmiproModeFinish(bool keep) {
+    if(modeChosen && !keep) {
+        if(modePolicy.rotationAdded)modeChosen->removeProperty("display-rotation");
+        if(modePolicy.scaleAdded)modeChosen->removeProperty("display-scale");
+    }
+    OSSafeReleaseNULL(modeChosen);
+}
+static __attribute__((noinline)) bool lmiproConfigureDisplayMode(const PE_Video &video) {
+    unsigned enabled=0;PE_parse_boot_argn("lmipro-display-mode",&enabled,sizeof(enabled));
+    if(!enabled)return true;
+    if(enabled!=1 || video.v_scale!=1 || video.v_rotate || video.v_display!=1) {
+        modePolicy.status=-1;return false;
+    }
+    modeChosen=IORegistryEntry::fromPath("/chosen",gIODTPlane);
+    if(!modeChosen){modePolicy.status=-5;return false;}
+    auto read=[](const char *key,uint32_t *word)->int {
+        OSObject *object=modeChosen->getProperty(key);if(!object)return 0;
+        OSData *data=OSDynamicCast(OSData,object);
+        if(!data || data->getLength()!=4)return -1;
+        memcpy(word,data->getBytesNoCopy(),4);return 1;
+    };
+    auto write=[](const char *key,unsigned word)->bool {
+        OSData *data=OSData::withBytes(&word,4);
+        bool ok=data && modeChosen->setProperty(key,data);OSSafeReleaseNULL(data);return ok;
+    };
+    auto erase=[](const char *key){modeChosen->removeProperty(key);};
+    if(!lmiproModeInstall(modePolicy,video.v_scale,video.v_rotate,read,write,erase)) {
+        lmiproModeFinish(false);return false;
+    }
+    return true;
+}
+
+
 extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
 {
     char methods[640]={};
@@ -35,11 +71,12 @@ extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
     return snprintf(out,capacity,
       "Legacy initStage=%u status=%d registered=%u guard=%u\n"
       "mapping=%llx bytes=%llu clientCalls=%u type=%u status=%x\n"
-      "validate=%llu transfers=%llu active=%u; publication-only test\n%s",
+      "validate=%llu transfers=%llu active=%u; publication-only test\n"
+      "Mode policy stage=%u status=%d scale=1 rotation=0\n%s",
       stage,result,registered,guardSlot,(unsigned long long)mappedBase,
       (unsigned long long)mappedBytes,clients,clientType,clientStatus,
       (unsigned long long)validationCalls,(unsigned long long)transferCalls,
-      activeDisplay && activeProvider ? 1U:0U,methods);
+      activeDisplay && activeProvider ? 1U:0U,modePolicy.stage,modePolicy.status,methods);
 }
 extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t selector,
     IOExternalMethodArguments *args,unsigned kind,IOReturn status)
@@ -123,6 +160,8 @@ extern "C" void native_legacy_display_late_probe(void)
         video.v_depth,video.v_rowBytes,video.v_offset,video.v_rotate,&bytes) || video.v_display!=1 ||
         strncmp(video.v_pixelFormat,"BBBBBBBBGGGGGGGGRRRRRRRR",24))
         panic("LMIPRO DISPLAY unexpected GOP handoff stage=%u status=%d base=%llx",stage,result,(unsigned long long)video.v_baseAddr);
+    if(!lmiproConfigureDisplayMode(video))
+        panic("LMIPRO DISPLAY mode policy failed stage=%u status=%d",modePolicy.stage,modePolicy.status);
     IOService *display=native_legacy_display_allocate();
     IOPlatformDevice *nub=new IOPlatformDevice;
     IOService *home=IOService::getResourceService();
@@ -148,13 +187,14 @@ extern "C" void native_legacy_display_late_probe(void)
             if(attached) {
                 stage=7;result=(int)kIOReturnNotReady;
                 if(display->start(nub)) {
-                    activeDisplay=display;activeProvider=nub;stage=8;result=0;
+                    activeDisplay=display;activeProvider=nub;stage=8;result=0;lmiproModeFinish(true);
                     // These initial references own the active services until reboot.
                     ranges->release();memory->release();dt->release();return;
                 }
             }
         }
     }
+    lmiproModeFinish(false);
     if(attached)display->detach(nub);
     if(dtAttached)nub->detachFromParent(dt,gIODTPlane);
     if(nubStarted)nub->stop(home);

@@ -133,3 +133,48 @@ The 600-second observer still intentionally stops. Its output qualifies activity
 not a thread backtrace or GUI. All presentation gates remain disabled until
 real frame submission/producer ownership can be qualified. Storage source,
 SystemOS, Owner Cache, Data seed and RAM block bindings are unchanged.
+
+## Original mode validation failure on handset, 2026-11-11
+
+Photo 1794343572693.jpg (run 42822768304) shows real backboardd calls:
+17 entered/17 returned, zero drops, 15 distinct selectors; only four sorted
+rows were requested. Last selector 50 returns e00002c7; the first error remains
+selector 28 dot-pitch e00002f0. These are not established as fatal UI failures.
+SpringBoard PID 26 and backboardd PID 58 each remain observation generation 1.
+SpringBoard's captured real EL0 BRK PC is 0x1bd7bc744, ESR class 0x3c.
+
+Copied only the SystemOS APFS window from the existing local SHNGROOT image,
+source opened read-only. Its complete SHA256 matches the OS-profile input:
+b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f.
+Extracted unchanged main cache and selected code subcaches using official
+portable 7-Zip 26.06; cache UUID 590d839a82d230f1a17d0cc053420f73 matches
+the profile. Local symbols use unsupported ZBM resource compression; no claim
+that those symbols were decoded. Exact original instructions suffice here.
+The photographed kevent_id return PC 0x1e9b6c8c0 matches the unique original
+375/SVC wrapper return 0x1cb7808c0, giving page-aligned slide 0x1e3ec000.
+The actual BRK then maps to 0x19f3d0744, inside the original FBSDisplayMode
+initializer at 0x19f3d0500. All 584 bytes match the already-qualified SHA256
+ca4857e6617670f2369a0a6eb68be09e29135ce5dfda19ac1ea829229f0cc0ec.
+Disassembly follows invalid-mode validation to error policy 1 and BRK, not
+the separate no-main-CADisplay assertion. The exact invalid input was not in
+the previous scalar-only photo: do not claim scale alone is proven causal.
+
+The current exact payload ADT lacks /chosen display-scale and display-rotation;
+GOP handoff reports scale 1, rotate 0 and real 1080x2400 scanout. Introduce
+opt-in lmipro-display-mode=1: publish only missing words matching that actual
+handoff before original driver registration. Never replace conflicting/malformed
+existing values. Verify reads after publication and remove only newly created
+words on failure. This is an explicit 1:1 logical mode policy, not physical
+density, a fake panel mode, refresh rate or an Apple hardware identity.
+Original userspace and its mode validator remain byte-for-byte unchanged.
+
+Add one read-only source hook at an actual EL0 BRK. The existing exact-name
+SpringBoard observer records the first PC and x19..x28 from the kernel-owned
+saved register array. No user-pointer dereference, user-code change, exception
+suppression, allocation, transition wait or invented return. At the audited
+mode failure, x24/x25/x26 retain original preferred-scale/width/height under
+the real AAPCS preserved-register ABI; their raw values will diagnose a repeat.
+The hook is removed exactly to reproduce the prior complete sleh.c fixture.
+Existing PID1, Data, UFS/GPT/APFS, Owner Cache, authentication and presentation
+gates are preserved. First qualify the mode result; actual frame transfer and
+graphical startup remain separate, unverified milestones.

@@ -211,7 +211,7 @@ archive=OUT/'libNativeLegacyDisplay.late.a';archive.unlink(missing_ok=True)
 run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LmiproDisplay.o'])
 sources=[ROOT/'drivers/GopFramebuffer/NativeLegacyDisplay.cpp',
  ROOT/'drivers/GopFramebuffer/NativeLegacyRequest.h',source,
- ROOT/'kits/lmipro/LmiproDisplayPolicy.h',ROOT/'kits/lmipro/LmiproDisplayTrace.h',ROOT/'scripts/build-lmipro-display.py',
+ ROOT/'kits/lmipro/LmiproModePolicy.h',ROOT/'kits/lmipro/LmiproDisplayPolicy.h',ROOT/'kits/lmipro/LmiproDisplayTrace.h',ROOT/'scripts/build-lmipro-display.py',
  ROOT/'scripts/audit-lmipro-display.py']
 (OUT/'build-report.json').write_text(json.dumps(dict(
  source_sha256={str(p.relative_to(ROOT)):sha(p) for p in sources},

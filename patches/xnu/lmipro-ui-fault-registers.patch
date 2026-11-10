@@ -1,0 +1,22 @@
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -67,6 +67,7 @@
+ 
+ #if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
+ extern void lmipro_user_trace_event(unsigned, int, uint64_t, uint64_t, uint64_t);
++extern void lmipro_ui_fault_event(uint64_t, const uint64_t *);
+ #define LMIPRO_USER_EVENT(...) lmipro_user_trace_event(__VA_ARGS__)
+ #else
+ #define LMIPRO_USER_EVENT(...) ((void)0)
+@@ -663,6 +664,11 @@
+ 		if (class != ESR_EC_SVC_64) {
+ 			LMIPRO_USER_EVENT(3, class, get_saved_state_pc(state), esr, far);
+ 		}
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++        if (class == ESR_EC_BRK_AARCH64 && is_saved_state64(state)) {
++            lmipro_ui_fault_event(get_saved_state_pc(state), saved_state64(state)->x);
++        }
++#endif
+ 		/* Sanitize FAR (but only if the exception was taken from userspace) */
+ 		switch (class) {
+ 		case ESR_EC_IABORT_EL1:
