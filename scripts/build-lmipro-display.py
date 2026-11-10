@@ -19,8 +19,8 @@ def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 component=ROOT/'drivers/GopFramebuffer'
 component_revision=run(['git','-C',component,'rev-parse','HEAD'],text=True).strip()
 require(component_revision=='cf3b42979a9c44219e7bb149543e6fc3388b58ed','Exact device-selected GOP revision')
-require(sha(component/'NativeLegacyDisplay.cpp')=='981fe4e9ee628de59473095fd0630f80fbe7c1f5190887f84d2959f78babbfdd','Exact audited GOP backend bytes')
-require(sha(component/'NativeLegacyRequest.h')=='0eb17651d41626f9e98324215a2b0dd369210efa1421a3ec62b60aba6f48d453','Exact audited GOP request bytes')
+require(sha(component/'NativeLegacyDisplay.cpp')=='09d7811db8fc6b659e12a05690867326e851f0d11bec7ffbb36b72c33ea035ca','Exact audited GOP backend bytes')
+require(sha(component/'NativeLegacyRequest.h')=='81e89e1f40f2f1d0919567f53bc0564c650488843082693d00b9ea256cafae21','Exact audited GOP request bytes')
 print(run(['python3',ROOT/'scripts/audit-lmipro-display.py'],text=True),end='')
 audit=json.loads((ROOT/'build/display-analysis/mobile-graphics-legacy-abi.json').read_text())
 pure=audit['abstract_slots'];methods=audit['methods']
