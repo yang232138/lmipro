@@ -16,6 +16,11 @@ def run(cmd,**kw):return subprocess.check_output([str(x) for x in cmd],timeout=9
 def require(v,why):
     if not v:raise SystemExit(why)
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+component=ROOT/'drivers/GopFramebuffer'
+component_revision=run(['git','-C',component,'rev-parse','HEAD'],text=True).strip()
+require(component_revision=='cf3b42979a9c44219e7bb149543e6fc3388b58ed','Exact device-selected GOP revision')
+require(sha(component/'NativeLegacyDisplay.cpp')=='981fe4e9ee628de59473095fd0630f80fbe7c1f5190887f84d2959f78babbfdd','Exact audited GOP backend bytes')
+require(sha(component/'NativeLegacyRequest.h')=='0eb17651d41626f9e98324215a2b0dd369210efa1421a3ec62b60aba6f48d453','Exact audited GOP request bytes')
 print(run(['python3',ROOT/'scripts/audit-lmipro-display.py'],text=True),end='')
 audit=json.loads((ROOT/'build/display-analysis/mobile-graphics-legacy-abi.json').read_text())
 pure=audit['abstract_slots'];methods=audit['methods']
@@ -215,7 +220,7 @@ sources=[ROOT/'drivers/GopFramebuffer/NativeLegacyDisplay.cpp',
  compiled_object_sha256=sha(obj),late_object_sha256=sha(late),archive_sha256=sha(archive),
  bindings={n:hex(v) for n,v in bindings.items()},virtual_entries=358,owned_entries=owned,
  inherited_native_entries=native,guarded_backend_leaves=[i for i in pure if i not in (213,337)],
- component_revision='cf3b42979a9c44219e7bb149543e6fc3388b58ed',
+ component_revision=component_revision,
  publication_only=True,frame_transfer_enabled=False,gpu_enabled=False,
  original_instructions_modified=False,driver_initialized=False,display_presented=False),indent=2)+'\n')
 print('Built board-only Legacy init archive; original vtable/imports audited; transfer disabled')
