@@ -23,7 +23,6 @@ static volatile unsigned stage,registered,clients,clientType,guardSlot;
 static volatile int result,clientStatus;
 static volatile uint64_t mappedBase,mappedBytes,validationCalls,transferCalls;
 static IOService *activeDisplay,*activeProvider;
-extern "C" {volatile uint64_t native_legacy_early_retires=0,native_legacy_early_failures=0;}
 
 extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
 {
