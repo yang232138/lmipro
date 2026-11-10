@@ -1,0 +1,111 @@
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -64,6 +64,14 @@
+ 
+ #include <sys/errno.h>
+ #include <sys/kdebug.h>
++
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++extern void lmipro_user_trace_event(unsigned, int, uint64_t, uint64_t, uint64_t);
++#define LMIPRO_USER_EVENT(...) lmipro_user_trace_event(__VA_ARGS__)
++#else
++#define LMIPRO_USER_EVENT(...) ((void)0)
++#endif
++
+ #include <sys/code_signing.h>
+ #include <kperf/kperf.h>
+ 
+@@ -652,6 +660,9 @@
+ 	 * that would disclose the behavior of PT_DENY_ATTACH processes.
+ 	 */
+ 	if (is_user) {
++		if (class != ESR_EC_SVC_64) {
++			LMIPRO_USER_EVENT(3, class, get_saved_state_pc(state), esr, far);
++		}
+ 		/* Sanitize FAR (but only if the exception was taken from userspace) */
+ 		switch (class) {
+ 		case ESR_EC_IABORT_EL1:
+@@ -1908,6 +1919,8 @@
+ 	}
+ 
+ 	current_cached_proc_cred_update();
++	LMIPRO_USER_EVENT(1, trap_no, get_saved_state_pc(state),
++	    saved_state64(state)->x[0], saved_state64(state)->x[1]);
+ 
+ 	if (trap_no < 0) {
+ 		switch (trap_no) {
+@@ -1931,6 +1944,8 @@
+ 
+ 		unix_syscall(state, thread, p);
+ 	}
++	LMIPRO_USER_EVENT(2, trap_no, get_saved_state_pc(state),
++	    saved_state64(state)->x[0], get_saved_state_cpsr(state));
+ }
+ 
+ static void
+@@ -1938,6 +1953,8 @@
+ {
+ 	uint64_t now = mach_absolute_time();
+ 	saved_state64(state)->x[0] = now;
++	LMIPRO_USER_EVENT(2, get_saved_state_svc_number(state), get_saved_state_pc(state),
++	    saved_state64(state)->x[0], get_saved_state_cpsr(state));
+ }
+ 
+ static void
+@@ -1945,6 +1962,8 @@
+ {
+ 	uint64_t now = mach_continuous_time();
+ 	saved_state64(state)->x[0] = now;
++	LMIPRO_USER_EVENT(2, get_saved_state_svc_number(state), get_saved_state_pc(state),
++	    saved_state64(state)->x[0], get_saved_state_cpsr(state));
+ }
+ 
+ 
+@@ -2115,6 +2134,10 @@
+ 
+ 	sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
+ 	boot_progress_irq(get_saved_state_pc(state), get_saved_state_cpsr(state), get_saved_state_sp(state));
++	if (PSR64_IS_USER(get_saved_state_cpsr(state))) {
++		LMIPRO_USER_EVENT(4, 0, get_saved_state_pc(state),
++		    get_saved_state_sp(state), get_saved_state_cpsr(state));
++	}
+ 
+ #if USE_APPLEARMSMP
+ 	PE_handle_ext_interrupt();
+@@ -2289,6 +2312,8 @@
+ 
+ 	assert(is_saved_state64(state));
+ 	saved_state64(state)->x[0] = error;
++	LMIPRO_USER_EVENT(2, get_saved_state_svc_number(state), get_saved_state_pc(state),
++	    saved_state64(state)->x[0], get_saved_state_cpsr(state));
+ 
+ #if MACH_ASSERT
+ 	kern_allocation_name_t
+--- a/bsd/dev/arm/systemcalls.c
++++ b/bsd/dev/arm/systemcalls.c
+@@ -25,6 +25,14 @@
+ #include <sys/user.h>
+ #include <sys/errno.h>
+ #include <sys/kdebug.h>
++
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++extern void lmipro_user_trace_event(unsigned, int, uint64_t, uint64_t, uint64_t);
++#define LMIPRO_USER_EVENT(...) lmipro_user_trace_event(__VA_ARGS__)
++#else
++#define LMIPRO_USER_EVENT(...) ((void)0)
++#endif
++
+ #include <sys/sysent.h>
+ #include <sys/sysproto.h>
+ #include <sys/kauth.h>
+@@ -265,6 +273,10 @@
+ 	 * Get index into sysent table
+ 	 */
+ 	arm_prepare_syscall_return(callp, regs, uthread, error);
++	if (is_saved_state64(regs)) {
++		LMIPRO_USER_EVENT(2, code, get_saved_state_pc(regs),
++		    saved_state64(regs)->x[0], get_saved_state_cpsr(regs));
++	}
+ 
+ 	uthread->uu_flag &= ~UT_NOTCANCELPT;
+ 	uthread->syscall_code = 0;

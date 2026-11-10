@@ -20,6 +20,7 @@ static volatile unsigned gPublishedWindows=2;
 static unsigned arg=0,slept=0,created=0,released=0;
 static bool supplied=false,failThread=false;
 static unsigned processQueries=0;
+static int tracePid=1;
 static void (*entry)(void *,wait_result_t);
 static char message[1024];
 static int PE_parse_boot_argn(const char *name,void *out,unsigned n){assert(!strcmp(name,"lmipro-data-watch")&&n==sizeof(arg));if(!supplied)return 0;memcpy(out,&arg,n);return 1;}
@@ -28,6 +29,7 @@ static void IOSleep(unsigned ms){slept=ms;}
 static int kernel_thread_start(void (*f)(void *,wait_result_t),void *,thread_t *out){if(failThread)return 5;entry=f;*out=(void *)1;++created;return 0;}
 static void thread_deallocate(thread_t t){assert(t==(void *)1);++released;}
 #include "../package/LmiproDataWatch.h"
+extern "C" int proc_selfpid(){return tracePid;}
 extern "C" void proc_name(int pid,char *buffer,int size){assert(pid>=1&&pid<=64&&size==17);++processQueries;const char *name=pid==1?"launchd":pid==3?"mount":pid==17?"tzinit":"";snprintf(buffer,(size_t)size,"%s",name);}
 int main(){
   lmiproStartDataWatch();assert(!created);supplied=true;lmiproStartDataWatch();assert(!created);

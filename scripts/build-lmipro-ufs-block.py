@@ -121,6 +121,7 @@ if observer_path.exists():
 
 proof = dict(combined_archive_sha256=combined, source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
              data_watch_header_sha256=hashlib.sha256((source.parent / "LmiproDataWatch.h").read_bytes()).hexdigest(),
+             user_trace_header_sha256=hashlib.sha256((source.parent / "LmiproUserTrace.h").read_bytes()).hexdigest(),
              object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),
              bindings={name: hex(value) for name, value in sorted(possible.items())},
              undefined=[name for name in sorted(set(undefined))],
