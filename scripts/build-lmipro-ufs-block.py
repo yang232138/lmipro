@@ -43,6 +43,11 @@ command += ['-I', str(root / 'build/storage-abi/include'),
             '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
             '-Wno-c99-designator', '-Wno-reorder-init-list',
             '-Wno-deprecated-enum-enum-conversion', '-Wno-unnecessary-virtual-specifier']
+# Only the enabled display archive supplies its snapshot function. Flag-off
+# references and standalone host fixtures must not import that board symbol.
+display_mode=__import__('os').environ.get('XNU_NATIVE_LEGACY_DISPLAY','0')
+assert display_mode in ('0','1')
+command.append('-DLMIPRO_DISPLAY_BOARD='+display_mode)
 subprocess.run(command, cwd=record['directory'], check=True, timeout=180)
 
 symbols = subprocess.check_output(['llvm-nm', '-u', str(obj)], text=True)

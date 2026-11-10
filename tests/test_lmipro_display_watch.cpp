@@ -38,6 +38,12 @@ static int PE_current_console(PE_Video *out){++consoleCalls;*out=console;return 
 static int PE_parse_boot_argn(const char *name,void *out,int size){assert(!strcmp(name,"lmipro-display-watch")&&size==sizeof(enabled));if(!supplied)return 0;memcpy(out,&enabled,sizeof enabled);return 1;}
 [[noreturn]] static void panic(const char *fmt,...){char out[2048];va_list ap;va_start(ap,fmt);vsnprintf(out,sizeof out,fmt,ap);va_end(ap);throw std::runtime_error(out);}
 #include "../package/LmiproDisplayWatch.h"
+#if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
+static unsigned boardReports=0;
+extern "C" unsigned lmipro_display_report(char *out,unsigned capacity) {
+  ++boardReports;return snprintf(out,capacity,"board snapshot fixture\n");
+}
+#endif
 int main(){
   lmiproDisplayCheckpoint(600,"1:launchd");assert(!consoleCalls);
   supplied=true;lmiproDisplayCheckpoint(600,"1:launchd");assert(!consoleCalls);
@@ -74,5 +80,8 @@ int main(){
   try{lmiproDisplayCheckpoint(600,"1:launchd 57:backboardd");}
   catch(const std::runtime_error &e){caught=true;assert(strstr(e.what(),"LMIPRO DISPLAY CHECKPOINT timeout=600"));assert(strstr(e.what(),"57:backboardd"));}
   assert(caught&&!liveMatches&&!liveIterators);
+#if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
+  assert(boardReports==1);
+#endif
   puts("PASS: disabled path; malformed/overflowing layout; bounded registry counts; allocation/mutation errors; reference balance; bounded strings; no console mutation");
 }

@@ -1,8 +1,8 @@
 // Read-only console/registry evidence for selecting the LMIPRO display backend.
 // Included after the public IOKit/pexpert headers in LmiproUfsBlock.cpp.
 // No mapping, framebuffer stores, service creation or display/power operations.
-#if defined(__APPLE__)
-extern "C" unsigned lmipro_display_report(char *,unsigned) __attribute__((weak_import));
+#if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
+extern "C" unsigned lmipro_display_report(char *,unsigned);
 #endif
 static unsigned lmiproConsoleLayout(const PE_Video &v, uint64_t *bytes)
 {
@@ -78,8 +78,8 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
   char display[576];
   lmiproFormatDisplaySnapshot(display, sizeof(display));
   char detail[320] = {};
-#if defined(__APPLE__)
-  if (lmipro_display_report) lmipro_display_report(detail,sizeof(detail));
+#if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
+  lmipro_display_report(detail,sizeof(detail));
 #endif
   panic("LMIPRO DISPLAY CHECKPOINT timeout=%u\n%s%s"
     "process sample pid<=64: %s\n"
