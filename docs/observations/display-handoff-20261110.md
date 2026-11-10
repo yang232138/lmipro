@@ -91,3 +91,18 @@ This first test enables only GOP mapping and publication. Frame validation,
 transfer, retirement, GPU offer and timer-vsync are disabled. The board's
 prepare-scanout hook refuses transfer until producer and console ownership are
 qualified. This is not a claimed graphical startup.
+
+## Published Legacy framebuffer observed on handset
+
+Photo 1794298617391.jpg of run 42771882999 records MobileFB=1, LegacyFB=1,
+IOSurface=1, GOP=0; Legacy initStage=8 status=0 registered=1 guard=0,
+mapping=0x9c000000 bytes=10368000 active=1. Four connection calls were counted,
+with the last type=0/status=0; this does not prove all four returned success.
+Validate/transfers remain zero in the explicitly publication-only test.
+Launchd, backboardd and other services remain present. No GUI is observed.
+
+Next observe genuine IOUserClient callExternalMethod entry/return, filtered to
+the original IOMobileFramebufferUserClient class. Preserve its original ipcEnter,
+externalMethod dispatch, ipcExit and return value. Count bounded selector/status
+and scalar-input snapshots without replacing the original client vptr or methods.
+Do not infer the first nonzero IOReturn is the root cause; some are expected.

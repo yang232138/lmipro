@@ -77,7 +77,7 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
   if (!PE_parse_boot_argn("lmipro-display-watch", &enabled, sizeof(enabled)) || !enabled) return;
   char display[576];
   lmiproFormatDisplaySnapshot(display, sizeof(display));
-  char detail[320] = {};
+  char detail[800] = {};
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
   lmipro_display_report(detail,sizeof(detail));
 #endif

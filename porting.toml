@@ -165,9 +165,9 @@ configuration = ["Select pinned GopFramebuffer and board-only build-lmipro-displ
 procedure = ["Run host geometry/census checks and porting-record validation; build fresh flag-off reference then actual archive, kernel, payload and boot image.", "Verify exact archive/source hashes and linked startup before temporary handset test."]
 findings = ["Complete handset census proves no matched framebuffer service at the sample; board previously had no display archive.", "Board wrapper implements original family/IOSurface dependency checks, runtime original-class extent guard, real memory/provider/DT lifecycle, and preserves first failing stage and return status."]
 completion = ["Real display service is published and accepts original user clients; qualify mapping before frame transfer.", "Actual userspace frames, correct colors, swaps and backlight are separately observed."]
-limits = ["New initialization archive is not yet built or observed on handset.", "CPU/GPU transfer, console ownership, physical refresh and backlight are not qualified by this publication-only test."]
-next_action = ["Build and verify the exact opt-in display-init candidate, then temporarily boot and record its original init/start/mapping/registration results."]
-evidence = [{ kind = "source", reference = "docs/observations/display-handoff-20261110.md", result = "Photo-qualified console geometry and corrected zero matched display counts; minimal startup wrapper implemented, handset initialization pending." }]
+limits = ["Original Legacy initStage=8/status=0, registration=1 and mapping observed on run 42771882999; new dispatch observer is not yet built or tested.", "CPU/GPU transfer, console ownership, physical refresh and backlight are not qualified by this publication-only test."]
+next_action = ["Build and verify source-native IOUserClient dispatch tracing; observe actual selector entry/return before enabling presentation."]
+evidence = [{ kind = "source", reference = "docs/observations/display-handoff-20261110.md", result = "Photo-qualified console geometry and corrected zero matched display counts; minimal startup wrapper implemented, handset initialization/mapping/publication observed in photo 1794298617391.jpg; observe actual client dispatch next." }]
 
 [[area]]
 id = "input"

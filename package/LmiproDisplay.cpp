@@ -14,10 +14,12 @@
 #include <pexpert/pexpert.h>
 #include <mach/kmod.h>
 #include "LmiproDisplayPolicy.h"
+#include "LmiproDisplayTrace.h"
 extern "C" kmod_info_t g_kernel_kmod_info;
 extern "C" void lmipro_display_static_init(void) __asm__("__GLOBAL__sub_I_NativeLegacyDisplay.cpp");
 extern "C" IOService *native_legacy_display_allocate(void);
 extern "C" kern_return_t OSKextLoadKextWithIdentifier(const char *);
+extern "C" int proc_selfpid(void);
 
 static volatile unsigned stage,registered,clients,clientType,guardSlot;
 static volatile int result,clientStatus;
@@ -26,14 +28,30 @@ static IOService *activeDisplay,*activeProvider;
 
 extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
 {
+    char methods[512]={};
+    lmiproFormatDisplayMethods(methods,sizeof(methods));
     return snprintf(out,capacity,
       "Legacy initStage=%u status=%d registered=%u guard=%u\n"
       "mapping=%llx bytes=%llu clientCalls=%u type=%u status=%x\n"
-      "validate=%llu transfers=%llu active=%u; publication-only test\n",
+      "validate=%llu transfers=%llu active=%u; publication-only test\n%s",
       stage,result,registered,guardSlot,(unsigned long long)mappedBase,
       (unsigned long long)mappedBytes,clients,clientType,clientStatus,
       (unsigned long long)validationCalls,(unsigned long long)transferCalls,
-      activeDisplay && activeProvider ? 1U:0U);
+      activeDisplay && activeProvider ? 1U:0U,methods);
+}
+extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t selector,
+    IOExternalMethodArguments *args,unsigned kind,IOReturn status)
+{
+    if(!gLmiproDisplayTraceEnabled || !client ||
+       !client->metaCast("IOMobileFramebufferUserClient"))return;
+    uint64_t values[3]={};
+    // The MIG dispatch supplies a kernel-owned scalar array. Copy at most three
+    // input values on entry only; retain no pointers and inspect no user memory.
+    if(kind==0 && args && args->scalarInput) {
+        unsigned count=args->scalarInputCount<3?args->scalarInputCount:3;
+        for(unsigned i=0;i<count;++i)values[i]=args->scalarInput[i];
+    }
+    lmiproRecordDisplayMethod(kind,selector,(uint32_t)status,proc_selfpid(),values[0],values[1],values[2]);
 }
 extern "C" __attribute__((noreturn)) void native_legacy_backend_guard(unsigned slot,void *,void *caller)
 {
@@ -70,6 +88,8 @@ extern "C" void native_legacy_display_late_probe(void)
 {
     unsigned enabled=0;
     if(!PE_parse_boot_argn("lmipro-display-init",&enabled,sizeof(enabled)) || enabled!=1 || stage)return;
+    unsigned trace=0;PE_parse_boot_argn("lmipro-display-calls",&trace,sizeof(trace));
+    gLmiproDisplayTraceEnabled=trace==1;
     stage=1;
     result=OSKextLoadKextWithIdentifier("com.apple.iokit.IOMobileGraphicsFamily");
     if(result)panic("LMIPRO DISPLAY family load failed stage=%u status=%d",stage,result);

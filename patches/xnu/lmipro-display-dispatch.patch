@@ -1,0 +1,33 @@
+--- a/iokit/Kernel/IOUserClient.cpp
++++ b/iokit/Kernel/IOUserClient.cpp
+@@ -6422,10 +6422,19 @@
+ }
+ } /* extern "C" */
+ 
++#if (DEVELOPMENT || DEBUG) && defined(XNU_NATIVE_LEGACY_DISPLAY) && XNU_NATIVE_LEGACY_DISPLAY
++extern "C" void lmipro_display_method_event(IOUserClient *, uint32_t,
++    IOExternalMethodArguments *, unsigned, IOReturn);
++#endif
++
+ IOReturn
+ IOUserClient::callExternalMethod(uint32_t selector, IOExternalMethodArguments * args)
+ {
+ 	IOReturn ret;
++
++#if (DEVELOPMENT || DEBUG) && defined(XNU_NATIVE_LEGACY_DISPLAY) && XNU_NATIVE_LEGACY_DISPLAY
++	lmipro_display_method_event(this, selector, args, 0, kIOReturnSuccess);
++#endif
+ 
+ 	ipcEnter(defaultLocking ? (defaultLockingSingleThreadExternalMethod ? kIPCLockWrite : kIPCLockRead) : kIPCLockNone);
+ 	if (uc2022) {
+@@ -6434,6 +6443,10 @@
+ 		ret = externalMethod(selector, args);
+ 	}
+ 	ipcExit(defaultLocking ? (defaultLockingSingleThreadExternalMethod ? kIPCLockWrite : kIPCLockRead) : kIPCLockNone);
++
++#if (DEVELOPMENT || DEBUG) && defined(XNU_NATIVE_LEGACY_DISPLAY) && XNU_NATIVE_LEGACY_DISPLAY
++	lmipro_display_method_event(this, selector, args, 1, ret);
++#endif
+ 
+ 	return ret;
+ }
