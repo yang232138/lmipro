@@ -143,7 +143,7 @@ for name,address,field,wide in [
     ('planes',0xfffffff004b9ebf4,152,False)]:
     expected=(0xf9400000 if wide else 0xb9400000)|((field//(8 if wide else 4))<<10)
     require(read(address,8)==struct.pack('<2I',expected,0xd65f03c0),'Exact original surface getter '+name)
-    bindings['_native_legacy_surface_'+name]=address
+    bindings['_lmipro_original_surface_descriptor' if name=='descriptor' else '_native_legacy_surface_'+name]=address
 # The original display-refresh notification sender (self, timestamp, continuous host time, frame interval): it sends the six-word
 # vsync message (type 5) to every client entry queued at +5592, the tail queue that selector 72's registration (slot 208) fills at
 # +5512 + type*16. The platform subclass that normally calls it on each panel vblank is not part of this port.
@@ -211,7 +211,7 @@ archive=OUT/'libNativeLegacyDisplay.late.a';archive.unlink(missing_ok=True)
 run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LmiproDisplay.o'])
 sources=[ROOT/'drivers/GopFramebuffer/NativeLegacyDisplay.cpp',
  ROOT/'drivers/GopFramebuffer/NativeLegacyRequest.h',source,
- ROOT/'kits/lmipro/LmiproModePolicy.h',ROOT/'kits/lmipro/LmiproDisplayPolicy.h',ROOT/'kits/lmipro/LmiproDisplayTrace.h',ROOT/'scripts/build-lmipro-display.py',
+ ROOT/'kits/lmipro/LmiproScanoutPolicy.h',ROOT/'kits/lmipro/LmiproModePolicy.h',ROOT/'kits/lmipro/LmiproDisplayPolicy.h',ROOT/'kits/lmipro/LmiproDisplayTrace.h',ROOT/'scripts/build-lmipro-display.py',
  ROOT/'scripts/audit-lmipro-display.py']
 (OUT/'build-report.json').write_text(json.dumps(dict(
  source_sha256={str(p.relative_to(ROOT)):sha(p) for p in sources},
@@ -221,6 +221,6 @@ sources=[ROOT/'drivers/GopFramebuffer/NativeLegacyDisplay.cpp',
  bindings={n:hex(v) for n,v in bindings.items()},virtual_entries=358,owned_entries=owned,
  inherited_native_entries=native,guarded_backend_leaves=[i for i in pure if i not in (213,337)],
  component_revision=component_revision,
- publication_only=True,frame_transfer_enabled=False,gpu_enabled=False,
+ publication_only=False,frame_transfer_enabled=True,gpu_enabled=False,cpu_policy_opt_in=True,
  original_instructions_modified=False,driver_initialized=False,display_presented=False),indent=2)+'\n')
 print('Built board-only Legacy init archive; original vtable/imports audited; transfer disabled')

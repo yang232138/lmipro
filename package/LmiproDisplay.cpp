@@ -7,6 +7,9 @@
 #include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOUserClient.h>
+#include <libkern/c++/OSIterator.h>
+#include <machine/machine_routines.h>
+#include "LmiproScanoutPolicy.h"
 #include <libkern/c++/OSMetaClass.h>
 #include <libkern/c++/OSSymbol.h>
 #include <libkern/c++/OSArray.h>
@@ -28,6 +31,38 @@ static volatile unsigned stage,registered,clients,clientType,guardSlot;
 static volatile int result,clientStatus;
 static volatile uint64_t mappedBase,mappedBytes,validationCalls,transferCalls;
 static IOService *activeDisplay,*activeProvider;
+
+static volatile unsigned cpuEnabled,scanoutOwned,handoffBusy,pmStage;
+static volatile int pmStatus,transferStatus,handoffStatus;
+static volatile uint64_t successfulCopies,copiedBytes,failedCopies,retirements,surfaceFrames;
+static unsigned currentFrameSurface;
+static volatile unsigned validationAccepted,validationReason;
+extern "C" uint32_t native_legacy_surface_format(OSObject *);
+extern "C" uint32_t native_legacy_surface_planes(OSObject *);
+extern "C" IOMemoryDescriptor *lmipro_original_surface_descriptor(OSObject *);
+extern "C" __attribute__((noinline)) IOMemoryDescriptor *native_legacy_surface_descriptor(OSObject *surface) {
+    if(!cpuEnabled || !surface || !surface->metaCast("IOSurface") ||
+       !lmiproCPUFormat(native_legacy_surface_format(surface),native_legacy_surface_planes(surface)))return nullptr;
+    return lmipro_original_surface_descriptor(surface);
+}
+static __attribute__((noinline)) bool lmiproNoGPUProducer(void) {
+    OSDictionary *match=IOService::serviceMatching("IOService");if(!match)return false;
+    OSIterator *it=IOService::getMatchingServices(match);match->release();if(!it)return false;
+    unsigned seen=0;bool allowed=true;OSObject *object;
+    while((object=it->getNextObject())) {
+        if(++seen>4096 || object->metaCast("IOAcceleratorES") ||
+           object->metaCast("IOAccelerator") || object->metaCast("IOGPU")) {allowed=false;break;}
+    }
+    if(!it->isValid() || !seen)allowed=false;
+    it->release();return allowed;
+}
+extern "C" __attribute__((noinline)) unsigned lmipro_display_frame_presented(void) {
+    return lmiproKeepPresentedFrame(cpuEnabled,__atomic_load_n(&scanoutOwned,__ATOMIC_ACQUIRE),
+      __atomic_load_n(&successfulCopies,__ATOMIC_ACQUIRE),__atomic_load_n(&copiedBytes,__ATOMIC_ACQUIRE),
+      __atomic_load_n(&failedCopies,__ATOMIC_ACQUIRE),__atomic_load_n(&retirements,__ATOMIC_ACQUIRE),
+      __atomic_load_n(&surfaceFrames,__ATOMIC_ACQUIRE));
+}
+
 
 static LmiproModePolicy modePolicy;
 static IORegistryEntry *modeChosen;
@@ -71,12 +106,17 @@ extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
     return snprintf(out,capacity,
       "Legacy initStage=%u status=%d registered=%u guard=%u\n"
       "mapping=%llx bytes=%llu clientCalls=%u type=%u status=%x\n"
-      "validate=%llu transfers=%llu active=%u; publication-only test\n"
-      "Mode policy stage=%u status=%d scale=1 rotation=0\n%s",
+      "validate=%llu transfers=%llu active=%u; CPU presentation candidate\n"
+      "Mode policy stage=%u status=%d scale=1 rotation=0\n"
+      "CPU enabled=%u owned=%u handoff=%d PM=%u/%x accepted=%u reason=%u\n"
+      "copied=%llu bytes=%llu failed=%llu retired=%llu surfaces=%llu last=%x\n%s",
       stage,result,registered,guardSlot,(unsigned long long)mappedBase,
       (unsigned long long)mappedBytes,clients,clientType,clientStatus,
       (unsigned long long)validationCalls,(unsigned long long)transferCalls,
-      activeDisplay && activeProvider ? 1U:0U,modePolicy.stage,modePolicy.status,methods);
+      activeDisplay && activeProvider ? 1U:0U,modePolicy.stage,modePolicy.status,
+      cpuEnabled,scanoutOwned,handoffStatus,pmStage,pmStatus,validationAccepted,validationReason,
+      (unsigned long long)successfulCopies,(unsigned long long)copiedBytes,
+      (unsigned long long)failedCopies,(unsigned long long)retirements,(unsigned long long)surfaceFrames,transferStatus,methods);
 }
 extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t selector,
     IOExternalMethodArguments *args,unsigned kind,IOReturn status)
@@ -107,17 +147,42 @@ extern "C" bool native_legacy_gop_mapping_observed(IOService *,IOMemoryMap *mapp
 extern "C" void native_legacy_registration_observed(IOService *) {registered=registered+1;}
 extern "C" void native_legacy_client_enter(task_t,uint32_t type) {clients=clients+1;clientType=type;}
 extern "C" void native_legacy_client_observed(IOReturn status,IOUserClient *) {clientStatus=(int)status;}
-extern "C" void native_legacy_pm_observed(unsigned,IOReturn,unsigned long) {}
+extern "C" void native_legacy_pm_observed(unsigned value,IOReturn status,unsigned long) {pmStage=value;pmStatus=(int)status;}
 extern "C" void native_legacy_swap_stage(unsigned) {}
-extern "C" void native_legacy_frame_observed(unsigned,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) {}
+extern "C" void native_legacy_frame_observed(unsigned blank,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) {currentFrameSurface=!blank;}
 extern "C" void native_legacy_frame_colors_observed(const uint32_t *,const uint64_t *,uint64_t) {}
-extern "C" void native_legacy_swap_validation_observed(bool,unsigned,const void *,const void *) {validationCalls=validationCalls+1;}
+extern "C" void native_legacy_swap_validation_observed(bool accepted,unsigned reason,const void *,const void *) {validationCalls=validationCalls+1;validationAccepted=accepted;validationReason=reason;}
 extern "C" void native_legacy_surface_rejected(uint64_t,uint64_t,uint32_t,uint32_t,uint64_t,uint64_t,uint64_t) {}
-// No frame producer or console-ownership transfer is qualified by publication.
-extern "C" bool native_legacy_prepare_scanout(void) {return false;}
-extern "C" void native_legacy_transfer_observed(IOReturn,const void *,uint64_t) {transferCalls=transferCalls+1;}
+// Only a validated original CPU surface reaches this callback. BOOT_PROGRESS
+// is off in this image; the official entry/panic renderer writes only at entry
+// or an actual panic. Release the original video console before any copy.
+extern "C" __attribute__((noinline)) bool native_legacy_prepare_scanout(void) {
+    if(!cpuEnabled)return false;
+    if(__atomic_load_n(&scanoutOwned,__ATOMIC_ACQUIRE))return true;
+    if(ml_at_interrupt_context() || !ml_get_interrupts_enabled())return false;
+    if(!__sync_bool_compare_and_swap(&handoffBusy,0,1))return false;
+    PE_Video video={};uint64_t bytes=0;bool ok=false;
+    handoffStatus=PE_current_console(&video);
+    if(!handoffStatus && lmiproDisplayHandoff(video.v_baseAddr,video.v_width,video.v_height,
+       video.v_depth,video.v_rowBytes,video.v_offset,video.v_rotate,&bytes) &&
+       video.v_display==1 && mappedBase==video.v_baseAddr && mappedBytes==bytes && lmiproNoGPUProducer()) {
+        handoffStatus=PE_initialize_console(&video,kPEReleaseScreen);
+        ok=handoffStatus==0;
+        if(ok)__atomic_store_n(&scanoutOwned,1,__ATOMIC_RELEASE);
+    } else handoffStatus=(int)kIOReturnNotReady;
+    __sync_lock_release(&handoffBusy);return ok;
+}
+extern "C" void native_legacy_transfer_observed(IOReturn status,const void *,uint64_t bytes) {
+    transferCalls=transferCalls+1;transferStatus=(int)status;
+    if(status==kIOReturnSuccess && bytes) {
+        __atomic_fetch_add(&copiedBytes,bytes,__ATOMIC_RELEASE);
+        __atomic_fetch_add(&successfulCopies,1,__ATOMIC_RELEASE);
+        if(currentFrameSurface)__atomic_fetch_add(&surfaceFrames,1,__ATOMIC_RELEASE);
+    } else __atomic_fetch_add(&failedCopies,1,__ATOMIC_RELEASE);
+    currentFrameSurface=0;
+}
 extern "C" void native_legacy_copy_timing_observed(uint64_t,uint64_t) {}
-extern "C" void native_legacy_retirement_observed(IOService *) {}
+extern "C" void native_legacy_retirement_observed(IOService *) {__atomic_fetch_add(&retirements,1,__ATOMIC_RELEASE);}
 extern "C" bool native_legacy_gpu_offer(void *,IOMemoryDescriptor *,uint64_t,uint32_t,uint32_t) {return false;}
 extern "C" void native_legacy_gpu_fallback_observed(int) {}
 extern "C" void native_legacy_vsync_observed(unsigned,unsigned) {}
@@ -132,6 +197,7 @@ extern "C" void native_legacy_display_late_probe(void)
     gLmiproDisplayTraceEnabled=trace==1;
     unsigned ui=0;PE_parse_boot_argn("lmipro-ui-watch",&ui,sizeof(ui));
     lmipro_ui_trace_enable(ui);
+    unsigned cpu=0;PE_parse_boot_argn("lmipro-display-cpu",&cpu,sizeof(cpu));cpuEnabled=cpu==1;
     stage=1;
     result=OSKextLoadKextWithIdentifier("com.apple.iokit.IOMobileGraphicsFamily");
     if(result)panic("LMIPRO DISPLAY family load failed stage=%u status=%d",stage,result);

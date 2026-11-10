@@ -37,9 +37,19 @@ struct IOService {
 static int PE_current_console(PE_Video *out){++consoleCalls;*out=console;return 0;}
 static int PE_parse_boot_argn(const char *name,void *out,int size){assert(!strcmp(name,"lmipro-display-watch")&&size==sizeof(enabled));if(!supplied)return 0;memcpy(out,&enabled,sizeof enabled);return 1;}
 [[noreturn]] static void panic(const char *fmt,...){char out[2048];va_list ap;va_start(ap,fmt);vsnprintf(out,sizeof out,fmt,ap);va_end(ap);throw std::runtime_error(out);}
+#if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
+using kern_return_t=int;
+static void *current_thread();
+static kern_return_t thread_terminate(void *);
+#endif
 #include "../package/LmiproDisplayWatch.h"
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
 static unsigned boardReports=0;
+static bool framePresented=false;
+extern "C" unsigned lmipro_display_frame_presented(){return framePresented;}
+static void *current_thread(){return (void *)1;}
+static kern_return_t thread_terminate(void *t){assert(t==(void *)1);throw std::runtime_error("watch retired");}
+
 extern "C" unsigned lmipro_ui_trace_report(char *out,unsigned capacity) {
   return snprintf(out,capacity,"UI snapshot fixture\n");
 }
@@ -85,6 +95,11 @@ int main(){
   assert(caught&&!liveMatches&&!liveIterators);
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
   assert(boardReports==1);
+  enabled=2;framePresented=false;caught=false;
+  try{lmiproDisplayCheckpoint(600,"1:launchd");}catch(const std::runtime_error &e){caught=true;assert(strstr(e.what(),"LMIPRO DISPLAY CHECKPOINT"));}
+  assert(caught);framePresented=true;caught=false;
+  try{lmiproDisplayCheckpoint(600,"1:launchd");}catch(const std::runtime_error &e){caught=true;assert(!strcmp(e.what(),"watch retired"));}
+  assert(caught);
 #endif
   puts("PASS: disabled path; malformed/overflowing layout; bounded registry counts; allocation/mutation errors; reference balance; bounded strings; no console mutation");
 }

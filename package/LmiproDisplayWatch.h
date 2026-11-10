@@ -4,6 +4,7 @@
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
 extern "C" unsigned lmipro_display_report(char *,unsigned);
 extern "C" unsigned lmipro_ui_trace_report(char *,unsigned);
+extern "C" unsigned lmipro_display_frame_presented(void);
 #endif
 static unsigned lmiproConsoleLayout(const PE_Video &v, uint64_t *bytes)
 {
@@ -76,9 +77,17 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
 {
   unsigned enabled = 0;
   if (!PE_parse_boot_argn("lmipro-display-watch", &enabled, sizeof(enabled)) || !enabled) return;
+#if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
+  if(enabled==2 && lmipro_display_frame_presented()) {
+    // The private observation thread cooperatively exits after real stores and
+    // original swap retirement, so its timed panic cannot overwrite that frame.
+    kern_return_t error=thread_terminate(current_thread());
+    panic("LMIPRO display watch exit unexpectedly returned: %d",error);
+  }
+#endif
   char display[576];
   lmiproFormatDisplaySnapshot(display, sizeof(display));
-  char detail[1024] = {};
+  char detail[1280] = {};
   char ui[1200] = {};
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
   lmipro_display_report(detail,sizeof(detail));

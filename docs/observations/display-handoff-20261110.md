@@ -178,3 +178,51 @@ The hook is removed exactly to reproduce the prior complete sleh.c fixture.
 Existing PID1, Data, UFS/GPT/APFS, Owner Cache, authentication and presentation
 gates are preserved. First qualify the mode result; actual frame transfer and
 graphical startup remain separate, unverified milestones.
+
+## Real CPU presentation candidate after successful mode-word readback
+
+Photo 1794351871644.jpg of run 42902342308 records Mode policy stage=2,
+status=0, scale=1/rotation=0 and UI first BRK valid=0. This qualifies actual
+property readback and no captured SpringBoard BRK during this sample, not an
+instrumented original mode-constructor return or visible desktop.
+SpringBoard PID 27 and backboardd PID 58 remain present. Display methods are
+17/17; validate/transfers remain zero in the explicitly publication-only image.
+
+Connect the already-pinned NativeLegacyDisplay CPU path using its original
+logical-PM, validation, transfer and cpu-present gates. Preserve its exact code
+and all 358 original/native/owned vtable bindings. Its original normal completion
+only runs after a real copy/store barrier; no panel vblank, producer fence,
+synthetic completion or owned test renderer is introduced. The board does not
+enable GPU, early retirement, synthetic vsync, differential copy or any foreign
+display-controller/MMIO backend. The original QuartzCore CPU fallback remains
+responsible for producing and submitting real system frames.
+
+The generic component accepts &BGA compressed surfaces for another board's
+GPU spelling. That is not qualified for this CPU-only image. Route only its
+descriptor getter through a board-owned format gate: require genuine IOSurface,
+plain nonplanar BGRA, then call the exact unchanged original descriptor getter.
+The other original getters and component code remain unchanged. Unsupported
+formats return no descriptor and fail the existing validation path normally.
+
+Before a first copy, require the observed retained physical GOP resource and a
+complete valid IOService census without IOAcceleratorES/IOAccelerator/IOGPU.
+Then use the actual XNU PE_initialize_console(kPEReleaseScreen) contract, which
+disables the video-console writer and progress animation. No raw state-word or
+vtable mutation. BOOT_PROGRESS is not compiled in this image; the existing
+official entry/panic renderer writes only at entry and actual panic.
+The hook refuses interrupt/IRQ-disabled contexts and concurrent first handoff.
+
+Keep original diagnostics. Display-watch mode 2 exits only its own observation
+thread, through public thread_terminate(current_thread()), after a successful
+real surface copy, nonzero byte count, original retirement and zero copy errors.
+A blank-only swap, no frame, incomplete handoff or failed copy retains the
+600-second diagnostic stop. The original thread_terminate implementation forces
+the kernel thread's APC termination itself; thread_terminate_self is not called
+directly. This is not hiding driver errors or declaring a desktop from counters.
+
+Host tests cover canonical real pixel stores with independently padded rows,
+narrow/wide alignment, untouched outside guards and no writes on rejected
+bounds; board format rejection; positive-frame-only diagnostic retirement;
+registry reference/census semantics and actual GOP geometry. Actual panel
+output and original software-renderer submission remain handset-unverified.
+UFS/GPT/APFS, root/Data seed, SystemOS, Owner Cache and auth code are unchanged.
