@@ -14,17 +14,27 @@ static unsigned lmiproConsoleLayout(const PE_Video &v, uint64_t *bytes)
   return 0; // Arithmetic only; does not qualify mapping, format or scanout.
 }
 
-// -1: allocation failed, -2: concurrent registry mutation, 33: capped sample.
+// Query the nonempty matched IOService population, then filter in this iterator.
+// copyExistingServices returns NULL both for an empty result and allocation failure;
+// asking it for the target class directly cannot distinguish those cases.
+// -1: query unavailable, -2: registry mutation, -3: scan limit, 33: count cap.
 // Both caller-owned references are released; returned objects stay iterator owned.
 static __attribute__((noinline)) int lmiproCountDisplayServices(const char *name)
 {
-  OSDictionary *match = IOService::serviceMatching(name);
+  OSDictionary *match = IOService::serviceMatching("IOService");
   if (!match) return -1;
   OSIterator *it = IOService::getMatchingServices(match);
   match->release();
   if (!it) return -1;
   int count = 0;
-  while (count <= 32 && it->getNextObject()) ++count;
+  unsigned seen = 0;
+  while (seen < 4096) {
+    OSObject *object = it->getNextObject();
+    if (!object) break;
+    ++seen;
+    if (object->metaCast(name) && ++count == 33) break;
+  }
+  if (seen == 4096 && it->getNextObject()) count = -3;
   if (!it->isValid()) count = -2;
   it->release();
   return count;
@@ -48,7 +58,7 @@ static __attribute__((noinline)) void lmiproFormatDisplaySnapshot(char *out, siz
     "offset=%llx length=%llx scanBytes=%llx\n"
     "rotate=%u scale=%u display=%llu format=%s\n"
     "published MobileFB=%d LegacyFB=%d IOSurface=%d GOP=%d\n"
-    "counts: -1 alloc failure; -2 invalid sample; 33 capped\n",
+    "counts: -1 query unavailable; -2 invalid; -3 scan limit; 33 capped\n",
     status, layout, (unsigned long long)video.v_baseAddr,
     (unsigned long long)video.v_width, (unsigned long long)video.v_height,
     (unsigned long long)video.v_depth, (unsigned long long)video.v_rowBytes,

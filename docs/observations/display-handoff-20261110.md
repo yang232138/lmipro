@@ -34,3 +34,27 @@ failure, -2 is an invalidated sample, and 33 is a capped count, never absence.
 Next: capture actual geometry and published services from this new artifact,
 then implement only the board display bridge justified by those measurements.
 Source/host checks and a successful build do not establish handset display output.
+
+## Handset result and census correction
+
+Photo 1794286897556.jpg of run 42752208211 confirms base 0x9c000000,
+1080x2400, depth 32, stride 4320, offset/length 0, scan span 0x9e3400,
+rotation 0, scale 1, display 1, and PE pixel format B8G8R8.
+IOSurfaceRoot has one matched instance; launchd and backboardd still exist.
+MobileFB, LegacyFB and GOP returned -1. These are ambiguous, not allocation proof.
+
+Pinned xnu-10063.141.1 iokit/Kernel/IOService.cpp getMatchingServices calls
+copyExistingServices. Its ctx.result starts NULL and remains NULL on no match;
+it constructs a collection iterator only when current is non-NULL. The previous
+observer incorrectly labeled every null iterator as allocation failure. Its host
+fixture always returned an empty iterator on no matches and missed this contract.
+
+Correct the observer to query all matched IOService instances, then filter with
+the public metaCast API. The observed IOSurfaceRoot proves this population is
+nonempty on this baseline. An available complete scan may now return genuine zero.
+Keep null query results as -1 query unavailable; preserve invalidation as -2;
+report scan truncation as -3 (4096 inspected) and count saturation as 33.
+Do not infer absence from an incomplete or unavailable scan. No retry or wait.
+Host tests now include nonempty populations containing zero target instances,
+the exact 4096 boundary, overflow past the scan cap, and reference cleanup.
+New census remains hardware untested until the new hash-qualified image is booted.

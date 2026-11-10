@@ -180,7 +180,7 @@ limits = [
 next_action = [
   "Temporarily boot the hash-qualified display snapshot, record actual PE console geometry and published service counts, then choose the board display bridge.",
 ]
-evidence = [{ kind = "source", reference = "docs/observations/display-handoff-20261110.md", result = "Real userspace services and RAM writes observed on run 42742941670; add opt-in read-only PE console and bounded published-display census before selecting a backend; new observer hardware untested." }]
+evidence = [{ kind = "source", reference = "docs/observations/display-handoff-20261110.md", result = "Real userspace services and RAM writes observed on run 42742941670; add opt-in read-only PE console and bounded published-display census before selecting a backend; Handset records 1080x2400 stride 4320 base 0x9c000000 and one IOSurfaceRoot; null target iterators were ambiguous, so correct census filtering; new census hardware untested." }]
 
 [[area]]
 id = "input"

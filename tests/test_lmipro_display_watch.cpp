@@ -16,15 +16,18 @@ static PE_Video console = {};
 static unsigned enabled=0, consoleCalls=0, liveMatches=0, liveIterators=0;
 static bool supplied=false, allocMatch=true, allocIterator=true, validIterator=true;
 static int entries=0;
+static bool targetMatches=true;
+struct OSObject {void *metaCast(const char *){return targetMatches?this:nullptr;}};
 struct OSDictionary {void release(){assert(liveMatches==1);--liveMatches;}};
 struct OSIterator {
   int left;
-  void *getNextObject(){if(left<=0)return nullptr;--left;return this;}
+  OSObject *getNextObject(){static OSObject object;if(left<=0)return nullptr;--left;return &object;}
   bool isValid(){return validIterator;}
   void release(){assert(liveIterators==1);--liveIterators;}
 };
 struct IOService {
-  static OSDictionary *serviceMatching(const char *) {
+  static OSDictionary *serviceMatching(const char *name) {
+    assert(!strcmp(name,"IOService"));
     static OSDictionary match;if(!allocMatch)return nullptr;++liveMatches;return &match;
   }
   static OSIterator *getMatchingServices(OSDictionary *) {
@@ -52,6 +55,10 @@ int main(){
   assert(lmiproCountDisplayServices("test")==0);
   entries=2;assert(lmiproCountDisplayServices("test")==2);
   entries=1000;assert(lmiproCountDisplayServices("test")==33);
+  targetMatches=false;assert(lmiproCountDisplayServices("absent")==0);
+  entries=4097;assert(lmiproCountDisplayServices("absent")==-3);
+  entries=4096;assert(lmiproCountDisplayServices("absent")==0);
+  targetMatches=true;
   validIterator=false;assert(lmiproCountDisplayServices("test")==-2);validIterator=true;
   allocIterator=false;assert(lmiproCountDisplayServices("test")==-1);allocIterator=true;
   allocMatch=false;assert(lmiproCountDisplayServices("test")==-1);allocMatch=true;
