@@ -9,6 +9,8 @@ using wait_result_t=int;using thread_t=void *;using kern_return_t=int;
 static const int KERN_SUCCESS=0;
 extern "C" {
 volatile int lmipro_data_stage=-2,lmipro_data_status=37,lmipro_data_readonly=-1;
+volatile int lmipro_init_stage=22,lmipro_init_error=0;
+char lmipro_init_path[128]="/sbin/launchd";
 volatile uint32_t native_ram_block_ready=1;
 volatile uint64_t native_ram_block_bytes=33554432,native_ram_block_reads=20,
     native_ram_block_writes=3,native_ram_block_failures=0;
@@ -17,6 +19,7 @@ static volatile int gUfsPublishState=1;
 static volatile unsigned gPublishedWindows=2;
 static unsigned arg=0,slept=0,created=0,released=0;
 static bool supplied=false,failThread=false;
+static unsigned processQueries=0;
 static void (*entry)(void *,wait_result_t);
 static char message[1024];
 static int PE_parse_boot_argn(const char *name,void *out,unsigned n){assert(!strcmp(name,"lmipro-data-watch")&&n==sizeof(arg));if(!supplied)return 0;memcpy(out,&arg,n);return 1;}
@@ -25,6 +28,7 @@ static void IOSleep(unsigned ms){slept=ms;}
 static int kernel_thread_start(void (*f)(void *,wait_result_t),void *,thread_t *out){if(failThread)return 5;entry=f;*out=(void *)1;++created;return 0;}
 static void thread_deallocate(thread_t t){assert(t==(void *)1);++released;}
 #include "../package/LmiproDataWatch.h"
+extern "C" void proc_name(int pid,char *buffer,int size){assert(pid>=1&&pid<=64&&size==17);++processQueries;const char *name=pid==1?"launchd":pid==3?"mount":pid==17?"tzinit":"";snprintf(buffer,(size_t)size,"%s",name);}
 int main(){
   lmiproStartDataWatch();assert(!created);supplied=true;lmiproStartDataWatch();assert(!created);
   for(unsigned invalid:{4U,121U}){arg=invalid;bool caught=false;try{lmiproStartDataWatch();}catch(const std::runtime_error&){caught=true;}assert(caught&&!created);}
@@ -41,5 +45,12 @@ int main(){
   try{entry(nullptr,0);}catch(const std::runtime_error&){caught=true;}
   assert(caught&&strstr(message,"dataStage=4 status=0 readonly=0"));
   assert(lmipro_data_stage==4&&lmipro_data_status==0&&lmipro_data_readonly==0);
-  puts("PASS: default off; bounds/thread errors; snapshot includes successful stage 4; real stages and errno preserved");
+  assert(strstr(message,"initStage=22 execError=0 path=/sbin/launchd"));
+  assert(strstr(message,"1:launchd 3:mount 17:tzinit"));
+  assert(lmipro_init_stage==22&&lmipro_init_error==0);
+  char tiny[8];memset(tiny,'X',sizeof tiny);lmiproSampleProcesses(tiny,sizeof tiny);
+  assert(tiny[7]==0);unsigned queries=processQueries;
+  char one='X';lmiproSampleProcesses(&one,1);assert(one==0&&queries==processQueries);
+  lmiproSampleProcesses(nullptr,0);assert(queries==processQueries);
+  puts("PASS: default off; bounds/thread errors; all Data/init states preserved; bounded read-only process names and output truncation");
 }

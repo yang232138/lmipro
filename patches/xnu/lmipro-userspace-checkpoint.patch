@@ -1,0 +1,68 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8152,6 +8152,13 @@
+ }
+ #endif
+ 
++/* Read-only bring-up state; separate from the successful Data mount state. */
++#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++volatile int lmipro_init_stage = 0;
++volatile int lmipro_init_error = -1;
++char lmipro_init_path[128];
++#endif
++
+ static int
+ load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path, user_addr_t envp)
+ {
+@@ -8166,6 +8173,11 @@
+ 	assert(p);
+ 	assert(scratch_addr);
+ 	assert(path);
++#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++	lmipro_init_stage = 20; /* Preparing the original init exec arguments. */
++	lmipro_init_error = -1;
++	strlcpy(lmipro_init_path, path, sizeof(lmipro_init_path));
++#endif
+ 
+ 	/*
+ 	 * Copy out program name.
+@@ -8235,7 +8247,15 @@
+ 	 */
+ 	set_security_token(p, proc_ucred_unsafe(p));
+ 
+-	return execve(p, &init_exec_args, retval);
++#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++	lmipro_init_stage = 21; /* Original execve entered; no result yet. */
++#endif
++	error = execve(p, &init_exec_args, retval);
++#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++	lmipro_init_error = error;
++	lmipro_init_stage = 22; /* Original execve actually returned. */
++#endif
++	return error;
+ }
+ 
+ static const char * init_programs[] = {
+@@ -8303,6 +8323,7 @@
+ 	if (lmipro_data_error) panic("LMIPRO Data mount failed: error=%d stage=%d readonly=%d",
+ 	    lmipro_data_error, lmipro_data_stage, lmipro_data_readonly);
+ 	boot_progress_stage("LMIPRO writable RAM Data mounted");
++	lmipro_init_stage = 10; /* Data helper returned normally. */
+ #endif
+ #if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
+ 	boot_progress_stage("Data mount enter");
+@@ -8318,8 +8339,14 @@
+ #endif
+ #endif
+ #if CONFIG_MEMORYSTATUS
++#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++	lmipro_init_stage = 11;
++#endif
+ 	(void) memorystatus_init_at_boot_snapshot();
+ #endif /* CONFIG_MEMORYSTATUS */
++#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++	lmipro_init_stage = 12; /* Memory-status initialization passed or not configured. */
++#endif
+ 
+ #if (DEBUG || DEVELOPMENT) && defined(XNU_NATIVE_AIR_INIT) && XNU_NATIVE_AIR_INIT
+ 	int offline_air = 0;

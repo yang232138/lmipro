@@ -4,3 +4,4 @@ skip-root-auth.patch
 lmipro-mount-output.patch
 lmipro-boot-identity.patch
 lmipro-data-mount.patch
+lmipro-userspace-checkpoint.patch
