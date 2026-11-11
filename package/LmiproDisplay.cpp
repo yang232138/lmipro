@@ -31,6 +31,7 @@ extern "C" int proc_selfpid(void);
 extern "C" void proc_selfname(char *,int);
 extern "C" void lmipro_ui_trace_enable(unsigned);
 extern "C" void lmipro_ui_stacks_enable(unsigned);
+extern "C" void lmipro_ui_stack_display_open(int);
 extern "C" volatile int lmipro_data_owner_stage,lmipro_data_owner_status;
 
 static volatile unsigned stage,registered,clients,clientType,guardSlot;
@@ -195,9 +196,13 @@ extern "C" void native_legacy_client_enter(task_t,uint32_t type) {
     char name[17]={};proc_selfname(name,sizeof(name));name[16]=0;
     lmiproClientEvent(0,thread_tid(current_thread()),type,proc_selfpid(),name,0);
 }
-extern "C" void native_legacy_client_observed(IOReturn status,IOUserClient *) {
+extern "C" void native_legacy_client_observed(IOReturn status,IOUserClient *client) {
     clientStatus=(int)status;
     lmiproClientEvent(1,thread_tid(current_thread()),0,0,nullptr,(uint32_t)status);
+    if(uiStacksEnabled && status==kIOReturnSuccess && client) {
+        char name[17]={};proc_selfname(name,sizeof(name));name[16]=0;
+        if(!strcmp(name,"backboardd"))lmipro_ui_stack_display_open(proc_selfpid());
+    }
 }
 extern "C" void native_legacy_pm_observed(unsigned value,IOReturn status,unsigned long) {pmStage=value;pmStatus=(int)status;}
 extern "C" void native_legacy_swap_stage(unsigned) {}

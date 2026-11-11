@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <initializer_list>
 static const char *testName="backboardd";
 static uint64_t testTid=100;
 static unsigned ready=1,captures=0,replyCount=3;
@@ -28,6 +29,14 @@ int main(){
  lmipro_ui_stacks_enable(1);ready=0;lmipro_ui_user_event(1,-47,0,0,0,58);assert(!captures && !gLmiproUIStacksStored);
  ready=1;testName="SpringBoard";lmipro_ui_user_event(1,-47,0,0,0,27);assert(!captures);
  testName="backboardd";lmipro_ui_user_event(2,-47,0,0,0,58);assert(!captures);
+ // Neither time/context readiness nor a failed/unobserved open arms a PID.
+ lmipro_ui_user_event(1,-47,0,0,0,58);assert(!captures && !gLmiproUIStacksStored);
+ lmipro_ui_stack_display_open(0);lmipro_ui_stack_display_open(-1);
+ lmipro_ui_stack_display_open(59);lmipro_ui_user_event(1,-47,0,0,0,58);assert(!captures);
+ lmipro_ui_stack_display_open(58);
+ // Startup calls must not reserve even one slot before useful wait entries.
+ for(int code: {74,372,463,368})for(unsigned i=0;i<12;++i){++testTid;lmipro_ui_user_event(1,code,0,0,0,58);}
+ assert(!captures && !gLmiproUIStacksStored);
  recurse=true;lmipro_ui_user_event(1,-47,0,0,0,58);
  assert(captures==1 && gLmiproUIStacksStored==1 && gLmiproUIStacks[0].count==3 && gLmiproUIStacks[0].state==2);
  lmipro_ui_user_event(1,-47,0,0,0,58);assert(captures==1);
@@ -41,8 +50,11 @@ int main(){
  lmipro_ui_user_event(1,-47,0,0,0,58);assert(captures==4);
  for(unsigned i=0;i<12;++i){++testTid;lmipro_ui_user_event(1,-47,0,0,0,58);}
  assert(gLmiproUIStacksStored==8 && captures==8);
+ // New process generations require their own actual display open.
+ ++testTid;lmipro_ui_user_event(1,-47,0,0,0,60);assert(captures==8);
+ lmipro_ui_stack_display_open(60);assert(gLmiproUIStacksDisplayPid==60);
  char out[1536];lmipro_ui_stack_report(out,sizeof(out));
- assert(strstr(out,"stored=8 cap8 depth8 delay30"));assert(strstr(out,"err14 info2"));
+ assert(strstr(out,"stored=8 cap8 depth8 delay30"));assert(strstr(out,"open pid=60; codes=-47,375"));assert(strstr(out,"err14 info2"));
  assert(strstr(out,"1000 1004 1008"));assert(strstr(out,"state1 n0"));
  char tiny[4]={'X','X','X','X'};lmipro_ui_stack_report(tiny,sizeof(tiny));assert(!tiny[3]);
  gLmiproUIStacksBusy=1;lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"snapshot busy"));

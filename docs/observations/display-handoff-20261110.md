@@ -346,3 +346,24 @@ to both transitive DataWatch and UserTrace consumers. Runtime stack/owner/
 display/storage/kernel code is unchanged. Rerun the complete inherited host
 test group before first kernel build, rather than retrying an unchanged
 completed kernel. Preserve this failed run and do not boot its partial output.
+
+
+2026-11-11 handset photo 1794370888214 (run42947479338): Data owner4/0;
+display registered, validation/transfer/copy0. Current-thread sampling succeeds
+with gate0/errors0/info1 (64-bit, not truncation), but bounded slots are consumed
+by mprotect74 and new-worker thread_selfid372. Exact original cache mapping of
+worker372 yields libsystem_kernel +0x8074 and libsystem_pthread +0x3448/+0xccc,
+slide0x132c0000. No renderer or blocked-wait conclusion follows from these
+entry samples. Lower UI/BRK rows are outside the photo; do not infer their state.
+
+Refine only sample selection: after successful nonnull real backboardd display
+client creation, copy its PID to the observer; require this exact PID plus
+message/event entry -47(mach_msg2)/375(kevent_id), then the unchanged30s/faultable
+context gate, before reserving any slot. Startup372/74/368/463 never consume
+slots (463 is openat). Process restarts must open their own display client.
+Bound8 unique threads/depth8; actual errors, locks and nonwaiting reservations
+preserved. Entry capture does not prove a blocking wait, and successful open
+does not prove display initialization/rendering. Original userspace/dispatcher,
+all return values, CPU presentation, mode/owner fix, UFS/GPT/APFS/seed unchanged.
+Next: symbolicate selected original call chains to identify the first unmet
+render prerequisite. No handset claim until exact new artifact is observed.
