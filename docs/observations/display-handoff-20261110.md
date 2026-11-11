@@ -367,3 +367,25 @@ does not prove display initialization/rendering. Original userspace/dispatcher,
 all return values, CPU presentation, mode/owner fix, UFS/GPT/APFS/seed unchanged.
 Next: symbolicate selected original call chains to identify the first unmet
 render prerequisite. No handset claim until exact new artifact is observed.
+
+
+2026-11-11 photo1794373543564, run42960268314: no frame; owner4/0, display
+stage8/status0, stack enabled1/stored0/openPID0/contextChecks0/gate1. The new
+successful-open prerequisite short-circuits before context checks, so gate1
+does NOT prove disabled sampling. Only MobileGestalt97 opened the display.
+Backboardd235 gen5 reflects five observed PIDs, not a proven exit cause; no
+SpringBoard BRK recorded. Sampling after-open was circular for a pre-open
+failure. Remove only that prerequisite; retain -47/375,30s/faultable guards,
+unique8/depth8 and errors. Open PID remains informational.
+
+Observe committed exits of exact SpringBoard/backboardd only at the existing
+proc_prepareexit boot_progress_exit location, after exit_with_reason commits
+p_xstat/reason, ends transition and drops proc lock. Original hook/behavior
+unchanged; dedicated LMIPRO_USER_TRACE per-file flag is0 in reference,1 final;
+mode stamp invalidates kern_exit.o too. Callback bounded nonwaiting CAS and
+kernel scalar/name copies only; first/last per actor and exact raw wait status,
+namespace/subcode, drops remain explicit; no unwind/user reads/alloc there.
+This captures normal/noncritical exits without enabling BOOT_PROGRESS writer.
+No assumption that optional display NotFound or mkdir ENOENT is fatal.
+Observe120s rather than600. No original userspace, exit policy, display method,
+storage, RAM seed, ownership, signature or CPU presentation change.

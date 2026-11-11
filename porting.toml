@@ -338,7 +338,7 @@ configuration = [
 procedure = [
   "Integrate the firmware log exporter (QR code) from the log-capture guide, and photograph the panel for each bring-up stage.",
 ]
-findings = ["Photo1794370888214 confirms stack API operation but startup74/372 fills samples. Restrict observation to backboardd -47/375 entries after its real successful display open; original execution/results untouched; visible UI remains unobserved.", "Image 5f5cbdfb0350d8a345ce9fc8dc87e70ddeb38acb41642243935ffca0c908b35e produced actual AMFI: No PMGR? at ConfigurationSettings.cpp:235; photograph 1793311356118.jpg.", "The next mode-1 diagnostic reports PASS only after actual ABI, binding, read-value and cleanup checks; this is separate from functional power support."]
+findings = ["Photo1794373543564: enabled sampler blocked by its own successful-display-open prerequisite; remove prerequisite and preserve context guards. Record committed real compositor exits with exact scalar wait status/reason, independent of disabled boot-progress writer. Observe120 seconds; no visible UI verified.", "Photo1794370888214 confirms stack API operation but startup74/372 fills samples. Restrict observation to backboardd -47/375 entries after its real successful display open; original execution/results untouched; visible UI remains unobserved.", "Image 5f5cbdfb0350d8a345ce9fc8dc87e70ddeb38acb41642243935ffca0c908b35e produced actual AMFI: No PMGR? at ConfigurationSettings.cpp:235; photograph 1793311356118.jpg.", "The next mode-1 diagnostic reports PASS only after actual ABI, binding, read-value and cleanup checks; this is separate from functional power support."]
 completion = [
   "Every claimed milestone has a reproducible command, a matching revision and an accessible result.",
 ]
