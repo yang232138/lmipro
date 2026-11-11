@@ -87,7 +87,7 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
 #endif
   char display[576];
   lmiproFormatDisplaySnapshot(display, sizeof(display));
-  char detail[1280] = {};
+  char detail[2560] = {};
   char ui[1200] = {};
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
   lmipro_display_report(detail,sizeof(detail));

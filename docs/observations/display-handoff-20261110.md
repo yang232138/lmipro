@@ -226,3 +226,35 @@ bounds; board format rejection; positive-frame-only diagnostic retirement;
 registry reference/census semantics and actual GOP geometry. Actual panel
 output and original software-renderer submission remain handset-unverified.
 UFS/GPT/APFS, root/Data seed, SystemOS, Owner Cache and auth code are unchanged.
+
+
+## CPU handset sample: no frame submission; complete the missing evidence
+
+Photo 1794357116801.jpg matches the new CPU-candidate diagnostic wording:
+initStage8/status0/registered1, actual retained 10368000-byte mapping,
+mode stage2/status0, CPU enabled1 and PM4/0. Validate/transfers/copied/bytes/
+failed/retired/surfaces are all zero; owned0. Handoff status0 is merely its
+initial value, not a successfully attempted release. No frame arrived to reach
+validation or ownership transfer. SpringBoard27/backboardd58 generation1 remain
+present and no first SpringBoard BRK was captured. This does not prove all
+threads are healthy. The exact boot hash was not read from the handset.
+
+Display dispatcher reports17/17 calls and zero drops, but the old format prints
+only the first4 of15 used selectors. Last type0/status0 from five opens cannot
+describe the other four. This missing evidence blocks causal attribution of
+the pre-submission stall; do not reinterpret optional first errors as causal.
+
+Increase snapshot to first16 of96 bounded selectors, with exact call/return/
+status. Preserve first/last/error fields and expose successful original scalar
+replies for dimensions8 and pitch28. MIG supplies kernel scalar arrays; copy
+only successful return words, max3. Never inspect structureOutput or userspace
+pointers. Record first8 actual client opens, paired by copied current-thread ID,
+including original caller/type/status. Nested ambiguous or unmatched events
+remain explicitly incomplete and counted; no task/thread pointers retained,
+no allocation, transition waits or blocking locks. Tests exercise interleaved
+threads, real errors, unmatched/nested loss, caps and tiny buffers.
+
+This candidate changes observation capacity only. Original dispatcher source,
+return codes, userland, all358 vtable slots, canonical PM/validation/CPU/copy/
+retirement, mode policy and storage/auth/Owner Cache remain unchanged. No
+optional error is suppressed. No UI success is inferred from process names.

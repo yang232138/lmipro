@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // LMIPRO board startup for the pinned original Legacy GOP backend.
 // First qualification: genuine init/start/publication and retained GOP mapping.
-// CPU/GPU transfer and synthetic refresh are not enabled by this board wrapper.
+// Original CPU presentation is enabled explicitly; GPU and synthetic refresh stay off.
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/IODeviceTreeSupport.h>
@@ -16,6 +16,7 @@
 #include <libkern/c++/OSData.h>
 #include <pexpert/pexpert.h>
 #include <mach/kmod.h>
+#include <kern/thread.h>
 #include "LmiproDisplayPolicy.h"
 #include "LmiproModePolicy.h"
 #include "LmiproDisplayTrace.h"
@@ -101,22 +102,23 @@ static __attribute__((noinline)) bool lmiproConfigureDisplayMode(const PE_Video 
 
 extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
 {
-    char methods[640]={};
+    char methods[1200]={},opens[640]={};
     lmiproFormatDisplayMethods(methods,sizeof(methods));
+    lmiproFormatClients(opens,sizeof(opens));
     return snprintf(out,capacity,
       "Legacy initStage=%u status=%d registered=%u guard=%u\n"
       "mapping=%llx bytes=%llu clientCalls=%u type=%u status=%x\n"
       "validate=%llu transfers=%llu active=%u; CPU presentation candidate\n"
       "Mode policy stage=%u status=%d scale=1 rotation=0\n"
       "CPU enabled=%u owned=%u handoff=%d PM=%u/%x accepted=%u reason=%u\n"
-      "copied=%llu bytes=%llu failed=%llu retired=%llu surfaces=%llu last=%x\n%s",
+      "copied=%llu bytes=%llu failed=%llu retired=%llu surfaces=%llu last=%x\n%s%s",
       stage,result,registered,guardSlot,(unsigned long long)mappedBase,
       (unsigned long long)mappedBytes,clients,clientType,clientStatus,
       (unsigned long long)validationCalls,(unsigned long long)transferCalls,
       activeDisplay && activeProvider ? 1U:0U,modePolicy.stage,modePolicy.status,
       cpuEnabled,scanoutOwned,handoffStatus,pmStage,pmStatus,validationAccepted,validationReason,
       (unsigned long long)successfulCopies,(unsigned long long)copiedBytes,
-      (unsigned long long)failedCopies,(unsigned long long)retirements,(unsigned long long)surfaceFrames,transferStatus,methods);
+      (unsigned long long)failedCopies,(unsigned long long)retirements,(unsigned long long)surfaceFrames,transferStatus,methods,opens);
 }
 extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t selector,
     IOExternalMethodArguments *args,unsigned kind,IOReturn status)
@@ -130,8 +132,16 @@ extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t select
         unsigned count=args->scalarInputCount<3?args->scalarInputCount:3;
         for(unsigned i=0;i<count;++i)values[i]=args->scalarInput[i];
     }
+    unsigned outputCount=0;
+    // MIG supplies kernel scalar storage. Read only successful replies, at most
+    // three words; never touch structureOutput or any user address/descriptor.
+    if(kind==1 && status==kIOReturnSuccess && args && args->scalarOutput) {
+        outputCount=args->scalarOutputCount;
+        unsigned count=outputCount<3?outputCount:3;
+        for(unsigned i=0;i<count;++i)values[i]=args->scalarOutput[i];
+    }
     char name[17]={};proc_selfname(name,sizeof(name));name[16]=0;
-    lmiproRecordDisplayMethod(kind,selector,(uint32_t)status,proc_selfpid(),values[0],values[1],values[2],name);
+    lmiproRecordDisplayMethod(kind,selector,(uint32_t)status,proc_selfpid(),values[0],values[1],values[2],name,outputCount);
 }
 extern "C" __attribute__((noreturn)) void native_legacy_backend_guard(unsigned slot,void *,void *caller)
 {
@@ -145,8 +155,15 @@ extern "C" bool native_legacy_gop_mapping_observed(IOService *,IOMemoryMap *mapp
     mappedBase=mapping->getPhysicalAddress();mappedBytes=mapping->getLength();return true;
 }
 extern "C" void native_legacy_registration_observed(IOService *) {registered=registered+1;}
-extern "C" void native_legacy_client_enter(task_t,uint32_t type) {clients=clients+1;clientType=type;}
-extern "C" void native_legacy_client_observed(IOReturn status,IOUserClient *) {clientStatus=(int)status;}
+extern "C" void native_legacy_client_enter(task_t,uint32_t type) {
+    clients=clients+1;clientType=type;
+    char name[17]={};proc_selfname(name,sizeof(name));name[16]=0;
+    lmiproClientEvent(0,thread_tid(current_thread()),type,proc_selfpid(),name,0);
+}
+extern "C" void native_legacy_client_observed(IOReturn status,IOUserClient *) {
+    clientStatus=(int)status;
+    lmiproClientEvent(1,thread_tid(current_thread()),0,0,nullptr,(uint32_t)status);
+}
 extern "C" void native_legacy_pm_observed(unsigned value,IOReturn status,unsigned long) {pmStage=value;pmStatus=(int)status;}
 extern "C" void native_legacy_swap_stage(unsigned) {}
 extern "C" void native_legacy_frame_observed(unsigned blank,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) {currentFrameSurface=!blank;}
