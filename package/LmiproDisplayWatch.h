@@ -4,6 +4,7 @@
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
 extern "C" unsigned lmipro_display_report(char *,unsigned);
 extern "C" unsigned lmipro_ui_trace_report(char *,unsigned);
+extern "C" unsigned lmipro_ui_stack_report(char *,unsigned);
 extern "C" unsigned lmipro_display_frame_presented(void);
 #endif
 static unsigned lmiproConsoleLayout(const PE_Video &v, uint64_t *bytes)
@@ -89,12 +90,14 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
   lmiproFormatDisplaySnapshot(display, sizeof(display));
   char detail[2560] = {};
   char ui[1600] = {};
+  char stacks[1536] = {};
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
   lmipro_display_report(detail,sizeof(detail));
   lmipro_ui_trace_report(ui,sizeof(ui));
+  lmipro_ui_stack_report(stacks,sizeof(stacks));
 #endif
-  panic("LMIPRO DISPLAY CHECKPOINT timeout=%u\n%s%s%s"
+  panic("LMIPRO DISPLAY CHECKPOINT timeout=%u\n%s%s%s%s"
     "process sample pid<=64: %s\n"
     "Diagnostic stop; display not initialized by this observer",
-    seconds, display, detail, ui, processes);
+    seconds, display, detail, stacks, ui, processes);
 }

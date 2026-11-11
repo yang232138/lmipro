@@ -7,6 +7,8 @@ static unsigned nameCopies=0;
 extern "C" void proc_selfname(char *out,int size){++nameCopies;snprintf(out,(size_t)size,"%s",testName);}
 static void *current_thread(){return (void *)1;}
 static uint64_t thread_tid(void *){return 77;}
+extern "C" unsigned lmipro_ui_stack_ready(void){return 0;}
+extern "C" unsigned lmipro_ui_stack_capture(uintptr_t *,unsigned,int *,unsigned *){assert(false);return 0;}
 #include "../package/LmiproUITrace.h"
 int main(){
     lmipro_ui_user_event(1,31,0x100,2,3,26);assert(!nameCopies&&!gLmiproUIActors[0].entries);

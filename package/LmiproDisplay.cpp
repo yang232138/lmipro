@@ -17,6 +17,9 @@
 #include <pexpert/pexpert.h>
 #include <mach/kmod.h>
 #include <kern/thread.h>
+#include <kern/backtrace.h>
+#include <kern/sched_prim.h>
+#include <sys/errno.h>
 #include "LmiproDisplayPolicy.h"
 #include "LmiproModePolicy.h"
 #include "LmiproDisplayTrace.h"
@@ -27,12 +30,39 @@ extern "C" kern_return_t OSKextLoadKextWithIdentifier(const char *);
 extern "C" int proc_selfpid(void);
 extern "C" void proc_selfname(char *,int);
 extern "C" void lmipro_ui_trace_enable(unsigned);
+extern "C" void lmipro_ui_stacks_enable(unsigned);
 extern "C" volatile int lmipro_data_owner_stage,lmipro_data_owner_status;
 
 static volatile unsigned stage,registered,clients,clientType,guardSlot;
 static volatile int result,clientStatus;
 static volatile uint64_t mappedBase,mappedBytes,validationCalls,transferCalls;
 static IOService *activeDisplay,*activeProvider;
+
+static unsigned uiStacksEnabled;
+static volatile unsigned uiStackGate=1;
+static volatile uint64_t uiStackChecks;
+static uint64_t uiStacksStarted;
+extern "C" __attribute__((noinline)) unsigned lmipro_ui_stack_ready(void) {
+    __atomic_fetch_add(&uiStackChecks,1,__ATOMIC_RELAXED);
+    if(!uiStacksEnabled){uiStackGate=1;return 0;}
+    if(ml_at_interrupt_context()){uiStackGate=2;return 0;}
+    if(!ml_get_interrupts_enabled()){uiStackGate=3;return 0;}
+    if(!preemption_enabled()){uiStackGate=4;return 0;}
+    uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time()-uiStacksStarted,&ns);
+    if(ns<UINT64_C(30000000000)){uiStackGate=5;return 0;}
+    uiStackGate=0;return 1;
+}
+extern "C" __attribute__((noinline)) unsigned lmipro_ui_stack_capture(uintptr_t *frames,unsigned capacity,int *error,unsigned *flags) {
+    if(!frames || !error || !flags || !capacity || capacity>8)return 0;
+    *error=0;*flags=0;
+    if(!lmipro_ui_stack_ready()){*error=EDEADLK;return 0;}
+    // Exact pinned XNU current-thread API, using its default validated copyin.
+    // No foreign task, manually followed user pointer or private object layout.
+    struct backtrace_user_info info={};
+    unsigned count=backtrace_user(frames,capacity,nullptr,&info);
+    *error=info.btui_error;*flags=(unsigned)info.btui_info;return count;
+}
+
 
 static volatile unsigned cpuEnabled,scanoutOwned,handoffBusy,pmStage;
 static volatile int pmStatus,transferStatus,handoffStatus;
@@ -112,6 +142,7 @@ extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
       "validate=%llu transfers=%llu active=%u; CPU presentation candidate\n"
       "Mode policy stage=%u status=%d scale=1 rotation=0\n"
       "Data owner stage=%d status=%d\n"
+      "UI stack context gate=%u checks=%llu (0 ready,1 off,2 irq,3 irqOff,4 preempt,5 warm)\n"
       "CPU enabled=%u owned=%u handoff=%d PM=%u/%x accepted=%u reason=%u\n"
       "copied=%llu bytes=%llu failed=%llu retired=%llu surfaces=%llu last=%x\n%s%s",
       stage,result,registered,guardSlot,(unsigned long long)mappedBase,
@@ -119,6 +150,7 @@ extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
       (unsigned long long)validationCalls,(unsigned long long)transferCalls,
       activeDisplay && activeProvider ? 1U:0U,modePolicy.stage,modePolicy.status,
       lmipro_data_owner_stage,lmipro_data_owner_status,
+      uiStackGate,(unsigned long long)__atomic_load_n(&uiStackChecks,__ATOMIC_RELAXED),
       cpuEnabled,scanoutOwned,handoffStatus,pmStage,pmStatus,validationAccepted,validationReason,
       (unsigned long long)successfulCopies,(unsigned long long)copiedBytes,
       (unsigned long long)failedCopies,(unsigned long long)retirements,(unsigned long long)surfaceFrames,transferStatus,methods,opens);
@@ -217,6 +249,8 @@ extern "C" void native_legacy_display_late_probe(void)
     gLmiproDisplayTraceEnabled=trace==1;
     unsigned ui=0;PE_parse_boot_argn("lmipro-ui-watch",&ui,sizeof(ui));
     lmipro_ui_trace_enable(ui);
+    unsigned stacks=0;PE_parse_boot_argn("lmipro-ui-stacks",&stacks,sizeof(stacks));
+    uiStacksEnabled=stacks==1;uiStacksStarted=mach_absolute_time();lmipro_ui_stacks_enable(stacks);
     unsigned cpu=0;PE_parse_boot_argn("lmipro-display-cpu",&cpu,sizeof(cpu));cpuEnabled=cpu==1;
     stage=1;
     result=OSKextLoadKextWithIdentifier("com.apple.iokit.IOMobileGraphicsFamily");

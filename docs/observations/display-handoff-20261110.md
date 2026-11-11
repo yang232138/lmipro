@@ -299,3 +299,41 @@ across process generations. Copy existing scalar code/errno/PC/thread ID only;
 no user path dereference, syscall replacement, exception suppression or auth
 change. Preserve all existing display/CPU/mode/UI observations. This verified
 owner defect is fixed independently; causal effect on the new BRK awaits phone.
+
+
+## Owner fix passed on handset; bounded original compositor entry stacks
+
+Photo1794362862950.jpg: owner stage4/status0, SpringBoard27 generation1 and
+backboardd58 generation1 after600s, no first BRK captured. All6 client opens
+returned0; methods21/21, zero dispatch drops, all15 selectors visible. Real
+dimensions438/960 hex, no validation/copy/retirement. First SpringBoard
+mkdirat475 errno2 is not proven fatal: Foundation may retry intermediate
+directory construction. Do not hide it or infer ENOSPC/permissions as the
+remaining cause. This sample qualifies provisioning and no captured recurrence,
+not a desktop or permanent crash resolution.
+
+Read the existing exact-cache CPU-render analysis before adding anything. The
+11 original render/gate/copy-submission functions match their previously
+qualified SHA256 on the exact cache. CPU scanout is a consumer of original
+frames; it does not prove the software compositor constructed/submitted one.
+Do not copy foreign GPU/HID code or force render/readiness predicates.
+
+Add explicit lmipro-ui-stacks=1 (default off). After30s, take one current-thread
+entry sample for each of at most8 real backboardd thread IDs, depth8. The pinned
+backtrace_user API uses its standard validated copyin and kernel saved user
+registers. Require interrupts enabled, preemption enabled, non-interrupt
+context before capture. No foreign task, private layout, manual user-pointer
+walk, code breakpoint, debug-register change, exception suppression or user
+instruction modification. Reserve only copied numeric PID/TID under a single
+nonwaiting CAS and release it before the faultable API. Do not hold UI trace
+lock; a reserved slot prevents recursion for the same thread. Failed or
+uncommitted samples remain explicit; errors/info/truncation are preserved.
+Print entry-sample chains, not inferred wait states. Context gate/check count
+explains absent samples. All prior diagnostics, owner fix, storage/auth,
+canonical CPU/PM/mode and actual frame retirement remain unchanged.
+
+Host tests cover disabled/warm-up skip, exact actor/entry selection, recursion,
+both observation locks released during capture, duplicate IDs, cap8/depth8,
+partial/error/API-overflow results, lost publication and tiny buffers. Kernel
+proof requires actual edges to the original backtrace_user, new header/object
+hashes and exact build, followed by qualified temporary boot only.

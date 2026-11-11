@@ -1,6 +1,7 @@
 // Read-only activity of the real compositor and desktop. No task pointers kept.
 #pragma once
 #include <stdint.h>
+#include "LmiproUIStacks.h"
 extern "C" void proc_selfname(char *, int);
 struct LmiproUIEvent {int code;uint64_t pc,a,b,tid;};
 struct LmiproUIActor {
@@ -48,7 +49,10 @@ extern "C" __attribute__((noinline)) void lmipro_ui_user_event(unsigned kind,int
     // it performs no proc_find, allocation or reference/transition wait.
     char name[17]={};proc_selfname(name,sizeof(name));name[16]=0;
     for(unsigned i=0;i<2;++i)if(!strcmp(name,gLmiproUINames[i])) {
-        lmiproRecordUI(i,pid,kind,code,pc,a,b,thread_tid(current_thread()));return;
+        uint64_t tid=thread_tid(current_thread());
+        lmiproRecordUI(i,pid,kind,code,pc,a,b,tid);
+        if(i==1 && kind==1)lmiproSampleUIStack(pid,tid,code);
+        return;
     }
 }
 static unsigned gLmiproUIFaultValid=0;

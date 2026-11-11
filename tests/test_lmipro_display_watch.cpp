@@ -50,6 +50,9 @@ extern "C" unsigned lmipro_display_frame_presented(){return framePresented;}
 static void *current_thread(){return (void *)1;}
 static kern_return_t thread_terminate(void *t){assert(t==(void *)1);throw std::runtime_error("watch retired");}
 
+extern "C" unsigned lmipro_ui_stack_report(char *out,unsigned capacity) {
+  return snprintf(out,capacity,"UI entry stacks fixture\n");
+}
 extern "C" unsigned lmipro_ui_trace_report(char *out,unsigned capacity) {
   return snprintf(out,capacity,"UI snapshot fixture\n");
 }
