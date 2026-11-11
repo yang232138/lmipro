@@ -337,3 +337,12 @@ both observation locks released during capture, duplicate IDs, cap8/depth8,
 partial/error/API-overflow results, lost publication and tiny buffers. Kernel
 proof requires actual edges to the original backtrace_user, new header/object
 hashes and exact build, followed by qualified temporary boot only.
+
+
+Host fixture correction: run42946419534 stopped before any kernel build at
+test_lmipro_data_watch link: stack_ready/capture were undefined through the
+existing UserTrace -> UITrace include. Add disabled/asserting fixture stubs
+to both transitive DataWatch and UserTrace consumers. Runtime stack/owner/
+display/storage/kernel code is unchanged. Rerun the complete inherited host
+test group before first kernel build, rather than retrying an unchanged
+completed kernel. Preserve this failed run and do not boot its partial output.

@@ -38,6 +38,8 @@ static void lmiproDisplayCheckpoint(unsigned seconds,const char *processes){asse
 extern "C" void proc_selfname(char *out,int size){snprintf(out,(size_t)size,"unrelated");}
 static void *current_thread(){return (void *)1;}
 static uint64_t thread_tid(void *){return 42;}
+extern "C" unsigned lmipro_ui_stack_ready(void){return 0;}
+extern "C" unsigned lmipro_ui_stack_capture(uintptr_t *,unsigned,int *,unsigned *){assert(false);return 0;}
 #include "../package/LmiproDataWatch.h"
 extern "C" int proc_selfpid(){return tracePid;}
 extern "C" void proc_name(int pid,char *buffer,int size){assert(pid>=1&&pid<=64&&size==17);++processQueries;const char *name=pid==1?"launchd":pid==3?"mount":pid==17?"tzinit":"";snprintf(buffer,(size_t)size,"%s",name);}
