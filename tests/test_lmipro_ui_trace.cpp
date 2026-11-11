@@ -40,7 +40,14 @@ int main(){
     assert(gLmiproUIFaultValid&&gLmiproUIFaultPC==0x1234&&gLmiproUIFaultWords[5]==1);
     regs[24]=999;lmipro_ui_fault_event(0x5678,regs);
     assert(gLmiproUIFaultPC==0x1234&&gLmiproUIFaultWords[5]==1);
-    char fault[1200];lmipro_ui_trace_report(fault,sizeof(fault));
+    char fault[1600];lmipro_ui_trace_report(fault,sizeof(fault));
     assert(strstr(fault,"UI first BRK valid=1 pc=1234 x24=1 x25=438 x26=960"));
+    lmiproRecordUI(0,126,2,136,0x100,13,0,77);assert(!gLmiproUIMkdirErrors[0].valid);
+    lmiproRecordUI(0,126,2,475,0x104,13,UINT64_C(1)<<29,77);
+    assert(gLmiproUIMkdirErrors[0].valid && gLmiproUIMkdirErrors[0].error==13);
+    lmiproRecordUI(0,226,1,136,0,0,0,99);
+    lmiproRecordUI(0,226,2,136,0x108,28,UINT64_C(1)<<29,99);
+    assert(gLmiproUIMkdirErrors[0].pid==126 && gLmiproUIMkdirErrors[0].code==475);
+    lmipro_ui_trace_report(fault,sizeof(fault));assert(strstr(fault,"mkdir first SB=1 pid=126 c=475 errno=13 pc=104"));
     puts("PASS: opt-in exact-name actors, real scalar/thread snapshots, restart separation, bounds, no-wait contention and truncation");
 }

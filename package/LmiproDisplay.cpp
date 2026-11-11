@@ -27,6 +27,7 @@ extern "C" kern_return_t OSKextLoadKextWithIdentifier(const char *);
 extern "C" int proc_selfpid(void);
 extern "C" void proc_selfname(char *,int);
 extern "C" void lmipro_ui_trace_enable(unsigned);
+extern "C" volatile int lmipro_data_owner_stage,lmipro_data_owner_status;
 
 static volatile unsigned stage,registered,clients,clientType,guardSlot;
 static volatile int result,clientStatus;
@@ -110,12 +111,14 @@ extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
       "mapping=%llx bytes=%llu clientCalls=%u type=%u status=%x\n"
       "validate=%llu transfers=%llu active=%u; CPU presentation candidate\n"
       "Mode policy stage=%u status=%d scale=1 rotation=0\n"
+      "Data owner stage=%d status=%d\n"
       "CPU enabled=%u owned=%u handoff=%d PM=%u/%x accepted=%u reason=%u\n"
       "copied=%llu bytes=%llu failed=%llu retired=%llu surfaces=%llu last=%x\n%s%s",
       stage,result,registered,guardSlot,(unsigned long long)mappedBase,
       (unsigned long long)mappedBytes,clients,clientType,clientStatus,
       (unsigned long long)validationCalls,(unsigned long long)transferCalls,
       activeDisplay && activeProvider ? 1U:0U,modePolicy.stage,modePolicy.status,
+      lmipro_data_owner_stage,lmipro_data_owner_status,
       cpuEnabled,scanoutOwned,handoffStatus,pmStage,pmStatus,validationAccepted,validationReason,
       (unsigned long long)successfulCopies,(unsigned long long)copiedBytes,
       (unsigned long long)failedCopies,(unsigned long long)retirements,(unsigned long long)surfaceFrames,transferStatus,methods,opens);

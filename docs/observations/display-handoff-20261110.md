@@ -258,3 +258,44 @@ This candidate changes observation capacity only. Original dispatcher source,
 return codes, userland, all358 vtable slots, canonical PM/validation/CPU/copy/
 retirement, mode policy and storage/auth/Owner Cache remain unchanged. No
 optional error is suppressed. No UI success is inferred from process names.
+
+
+## Real cache-directory failure and exact RAM Data owner defect
+
+Photo 1794359445179.jpg: successful original dimensions438/960 (hex), only
+MobileGestalt helper PID97 opened a type0 client, display methods2/2 and no
+swaps. SpringBoard PID224 generation16 with captured BRK1b29386b4. Syscall
+328 PC1d9eaef74 and syscall220 PC1d9eaa244 independently give cache slide
+0xe724000. Original PC1a42146b4 lies in BaseBoardUI. Unchanged code at
+1a42144d4 calls original createDirectoryAtPath:withIntermediateDirectories:
+attributes:error:, branches on failure to format Couldn't create directory at
+%@ with error %@, logs BSUIMappedImageCache.m line222 and reaches original BRK.
+Nil path at1a42144ac also joins that same failure. Do not infer errno/path
+from this BRK alone, blame dot-pitch, or remove the assertion.
+
+Read-only original code/cache data .11/.33/.01 were extracted from the already
+hashed SystemOS window. Dyld v2 slide delta mask0x00ffff0000000000/value-add0
+was read from the actual data cache before pointer decoding. The actual
+Objective-C selector for the failed call was decoded from its stub/selref.
+
+Independently inspected the unchanged exact32MiB RAM seed through packed input
+hash2434ed1fdfc09f518fd6b18e6ef77ea94aff5090ed98a8d29018dc013cb42c13 and
+logical hash8e9ff98f62a4dfc5f8e82ef30f435cfe035ab9830fac59210f8f6a67a5ef097c.
+mobile and Library/Caches are501:501; newly mkdir-created mobile/tmp, Documents
+and Containers are0:501 mode0755. The provisioning script used sudo mkdir -p
+without owner correction. A uid501 caller cannot create a child there.
+
+Add a patch after the existing complete series. Only after typed RAM seed
+identity, actual APFS/device and writable mount verification, require root
+context and each fixed path's vnode to be a directory on that exact mount.
+Allow only0/501:501 and original0755; change uid0 to501, preserve mode, reread
+all attributes. Unexpected metadata/mount/type, lookup/getattr/setattr or
+readback failure propagates and prevents successful Data stage4. Record owner
+stage/status in existing display diagnostics. No generic chmod/chown, no
+recursive ownership, no seed identity rewrite, no userdata or SystemOS writes.
+
+Keep first actual SpringBoard/backboardd mkdir136 or mkdirat475 BSD carry error
+across process generations. Copy existing scalar code/errno/PC/thread ID only;
+no user path dereference, syscall replacement, exception suppression or auth
+change. Preserve all existing display/CPU/mode/UI observations. This verified
+owner defect is fixed independently; causal effect on the new BRK awaits phone.

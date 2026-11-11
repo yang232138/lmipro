@@ -1,0 +1,76 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8096,6 +8096,65 @@
+ uint8_t lmipro_data_seed_sha256[32];
+ char lmipro_data_device_path[64];
+ 
++/* Provision only the three root-created directories in the exact RAM seed.
++ * The caller has already qualified seed identity, device, APFS and writable
++ * mount. Preserve modes and all existing errors; never touch SystemOS/disk. */
++volatile int lmipro_data_owner_stage = -1;
++volatile int lmipro_data_owner_status = -1;
++__attribute__((noinline)) int
++lmipro_data_mobile_owners(mount_t data_mount)
++{
++    static const char *const paths[] = {
++        "/private/var/mobile/tmp", "/private/var/mobile/Documents",
++        "/private/var/mobile/Containers"
++    };
++    vfs_context_t ctx = vfs_context_current();
++    int error = 0;
++    lmipro_data_owner_stage = 0;
++    if (!data_mount || kauth_cred_getuid(vfs_context_ucred(ctx)) != 0) {
++        error = EPERM; goto done;
++    }
++    for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
++        vnode_t vp = NULLVP;
++        struct vnode_attr attr;
++        lmipro_data_owner_stage = (int)i + 1;
++        error = vnode_lookup(paths[i], 0, &vp, ctx);
++        if (error) goto done;
++        if (vnode_mount(vp) != data_mount || vnode_vtype(vp) != VDIR) {
++            error = EINVAL; goto put;
++        }
++        VATTR_INIT(&attr);
++        VATTR_WANTED(&attr, va_uid); VATTR_WANTED(&attr, va_gid);
++        VATTR_WANTED(&attr, va_mode);
++        error = vnode_getattr(vp, &attr, ctx);
++        if (error) goto put;
++        if (!VATTR_IS_SUPPORTED(&attr, va_uid) || !VATTR_IS_SUPPORTED(&attr, va_gid) ||
++            !VATTR_IS_SUPPORTED(&attr, va_mode)) { error = ENOTSUP; goto put; }
++        if (attr.va_gid != 501 || (attr.va_mode & 07777) != 0755 ||
++            (attr.va_uid != 0 && attr.va_uid != 501)) { error = EINVAL; goto put; }
++        if (attr.va_uid == 0) {
++            VATTR_INIT(&attr);
++            VATTR_SET(&attr, va_uid, 501); VATTR_SET(&attr, va_gid, 501);
++            error = vnode_setattr(vp, &attr, ctx);
++            if (error) goto put;
++            VATTR_INIT(&attr);
++            VATTR_WANTED(&attr, va_uid); VATTR_WANTED(&attr, va_gid);
++            VATTR_WANTED(&attr, va_mode);
++            error = vnode_getattr(vp, &attr, ctx);
++            if (error) goto put;
++            if (!VATTR_IS(&attr, va_uid, 501) || !VATTR_IS(&attr, va_gid, 501) ||
++                !VATTR_IS_SUPPORTED(&attr, va_mode) || (attr.va_mode & 07777) != 0755) error = EIO;
++        }
++put:
++        vnode_put(vp);
++        if (error) goto done;
++    }
++    lmipro_data_owner_stage = 4;
++done:
++    lmipro_data_owner_status = error;
++    return error;
++}
++
+ static int
+ lmipro_data_prepare(proc_t p, user_addr_t scratch)
+ {
+@@ -8144,6 +8203,7 @@
+ 	lmipro_data_readonly = (vfs_flags(data_mount) & MNT_RDONLY) != 0;
+ 	if (actual != device || (vfs_flags(data_mount) & MNT_RDONLY) ||
+ 	    strcmp(vfs_statfs(data_mount)->f_fstypename, "apfs")) error = EINVAL;
++	if (!error) error = lmipro_data_mobile_owners(data_mount);
+ 	if (!error) lmipro_data_stage = 4;
+ done:
+ 	if (data_root) vnode_put(data_root);

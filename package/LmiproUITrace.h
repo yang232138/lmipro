@@ -12,6 +12,8 @@ static volatile unsigned gLmiproUIEnabled=0;
 static volatile int gLmiproUIBusy=0;
 static volatile uint64_t gLmiproUIDropped=0;
 static LmiproUIActor gLmiproUIActors[2]={};
+struct LmiproUIMkdirError {unsigned valid;int pid,code;uint64_t error,pc,tid;};
+static LmiproUIMkdirError gLmiproUIMkdirErrors[2]={};
 static const char *const gLmiproUINames[2]={"SpringBoard","backboardd"};
 extern "C" void lmipro_ui_trace_enable(unsigned enabled) {gLmiproUIEnabled=enabled==1;}
 
@@ -28,6 +30,9 @@ static void lmiproRecordUI(unsigned index,int pid,unsigned kind,int code,
     if(s.pid!=pid) {
         uint64_t generation=s.generations+1;s={};s.pid=pid;s.generations=generation;
     }
+    if(kind==2 && (code==136 || code==475) && (b & (UINT64_C(1)<<29)) &&
+       !gLmiproUIMkdirErrors[index].valid)
+        gLmiproUIMkdirErrors[index]={1,pid,code,a,pc,tid};
     LmiproUIEvent event={code,pc,a,b,tid};
     if(kind==1){++s.entries;s.entry=event;}
     else if(kind==2){++s.returns;s.returned=event;}
@@ -68,6 +73,7 @@ extern "C" __attribute__((noinline)) unsigned lmipro_ui_trace_report(char *out,u
     if(!__sync_bool_compare_and_swap(&gLmiproUIBusy,0,1))
         return snprintf(out,capacity,"UI activity snapshot busy; unavailable\n");
     LmiproUIActor snapshot[2]={gLmiproUIActors[0],gLmiproUIActors[1]};
+    const LmiproUIMkdirError mkdirErrors[2]={gLmiproUIMkdirErrors[0],gLmiproUIMkdirErrors[1]};
     const unsigned faultValid=gLmiproUIFaultValid;
     const uint64_t faultPC=gLmiproUIFaultPC;
     uint64_t words[10]={};memcpy(words,gLmiproUIFaultWords,sizeof(words));
@@ -98,8 +104,12 @@ extern "C" __attribute__((noinline)) unsigned lmipro_ui_trace_report(char *out,u
     }
     if(used<capacity-1) {
         n=snprintf(out+used,capacity-used,
+          "mkdir first SB=%u pid=%d c=%d errno=%llu pc=%llx\n"
+          "mkdir first BBD=%u pid=%d c=%d errno=%llu pc=%llx\n"
           "UI first BRK valid=%u pc=%llx x24=%llx x25=%llx x26=%llx\n"
-          " x22=%llx x23=%llx x28=%llx x19=%llx\n",faultValid,
+          " x22=%llx x23=%llx x28=%llx x19=%llx\n",
+          mkdirErrors[0].valid,mkdirErrors[0].pid,mkdirErrors[0].code,(unsigned long long)mkdirErrors[0].error,(unsigned long long)mkdirErrors[0].pc,
+          mkdirErrors[1].valid,mkdirErrors[1].pid,mkdirErrors[1].code,(unsigned long long)mkdirErrors[1].error,(unsigned long long)mkdirErrors[1].pc,faultValid,
           (unsigned long long)faultPC,(unsigned long long)words[5],(unsigned long long)words[6],
           (unsigned long long)words[7],(unsigned long long)words[3],(unsigned long long)words[4],
           (unsigned long long)words[9],(unsigned long long)words[0]);
