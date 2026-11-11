@@ -16,6 +16,7 @@ static LmiproUIActor gLmiproUIActors[2]={};
 struct LmiproUIMkdirError {unsigned valid;int pid,code;uint64_t error,pc,tid;};
 static LmiproUIMkdirError gLmiproUIMkdirErrors[2]={};
 static const char *const gLmiproUINames[2]={"SpringBoard","backboardd"};
+#include "LmiproUIExit.h"
 extern "C" void lmipro_ui_trace_enable(unsigned enabled) {gLmiproUIEnabled=enabled==1;}
 
 static void lmiproRecordUI(unsigned index,int pid,unsigned kind,int code,

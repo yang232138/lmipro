@@ -1,0 +1,23 @@
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -1,4 +1,7 @@
+ #include <kern/boot_progress.h>
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++extern void lmipro_ui_exit_event(int, const char *, int, unsigned, uint64_t);
++#endif
+ /*
+  * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
+  *
+@@ -1901,6 +1904,12 @@
+ 	boot_progress_exit(proc_getpid(p),p->p_name,rv,
+ 	    p->p_exit_reason ? p->p_exit_reason->osr_namespace : 0,
+ 	    p->p_exit_reason ? p->p_exit_reason->osr_code : 0);
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++	/* Committed exit, after proc_unlock; no allocation or user-memory reads. */
++	lmipro_ui_exit_event(proc_getpid(p), p->p_name, rv,
++	    p->p_exit_reason ? p->p_exit_reason->osr_namespace : 0,
++	    p->p_exit_reason ? p->p_exit_reason->osr_code : 0);
++#endif
+ 
+ 	if (p->p_crash_behavior != 0 || p == initproc) {
+ 		proc_handle_critical_exit(p, rv);

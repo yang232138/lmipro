@@ -10,7 +10,7 @@ static LmiproUIStack gLmiproUIStacks[8]={};
 static volatile unsigned gLmiproUIStacksEnabled=0;
 static int gLmiproUIStacksDisplayPid=0;
 // Called only after an actual successful backboardd display-client creation.
-// Keep a copied PID, never a user-client/task pointer. A restarted PID must open again.
+// Informational copied PID only; opening the display is not a sampling prerequisite.
 extern "C" __attribute__((noinline)) void lmipro_ui_stack_display_open(int pid) {
     if(pid>0)__atomic_store_n(&gLmiproUIStacksDisplayPid,pid,__ATOMIC_RELEASE);
 }
@@ -20,7 +20,7 @@ static volatile uint64_t gLmiproUIStacksDropped=0;
 extern "C" void lmipro_ui_stacks_enable(unsigned enabled) {gLmiproUIStacksEnabled=enabled==1;}
 static __attribute__((noinline)) void lmiproSampleUIStack(int pid,uint64_t tid,int code) {
     if(!gLmiproUIStacksEnabled || pid<=0 || !tid || (code!=-47 && code!=375))return;
-    if(__atomic_load_n(&gLmiproUIStacksDisplayPid,__ATOMIC_ACQUIRE)!=pid || !lmipro_ui_stack_ready())return;
+    if(!lmipro_ui_stack_ready())return;
     if(!__sync_bool_compare_and_swap(&gLmiproUIStacksBusy,0,1)) {
         __atomic_fetch_add(&gLmiproUIStacksDropped,1,__ATOMIC_RELAXED);return;
     }
@@ -52,7 +52,7 @@ extern "C" __attribute__((noinline)) unsigned lmipro_ui_stack_report(char *out,u
     for(unsigned i=0;i<stored;++i)rows[i]=gLmiproUIStacks[i];
     __sync_lock_release(&gLmiproUIStacksBusy);
     int n=snprintf(out,capacity,"UI wait-entry stacks enabled=%u stored=%u cap8 depth8 delay30 dropped=%llu\n"
-      " after display open pid=%d; codes=-47,375; entry only\n",
+      " observed display open pid=%d; not a gate; codes=-47,375; entry only\n",
       gLmiproUIStacksEnabled,stored,(unsigned long long)gLmiproUIStacksDropped,
       __atomic_load_n(&gLmiproUIStacksDisplayPid,__ATOMIC_ACQUIRE));
     if(n<0)return 0;

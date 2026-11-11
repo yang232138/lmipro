@@ -10,3 +10,4 @@ lmipro-filesig-stage.patch
 lmipro-display-dispatch.patch
 lmipro-ui-fault-registers.patch
 lmipro-data-mobile-owners.patch
+lmipro-ui-exit.patch
