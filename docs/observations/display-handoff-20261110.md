@@ -389,3 +389,11 @@ This captures normal/noncritical exits without enabling BOOT_PROGRESS writer.
 No assumption that optional display NotFound or mkdir ENOENT is fatal.
 Observe120s rather than600. No original userspace, exit policy, display method,
 storage, RAM seed, ownership, signature or CPU presentation change.
+
+
+Run42965138878 stopped before kernel compilation at the display-board host
+variant: new ui_exit_report mock missing. Correct only that fixture. Prior
+local runner mistakenly discarded original compiler definitions, so it tested
+the flag-off variant twice. Run actual complete commands including every -D
+and output variant, then all new sampler/exit tests. Runtime sources/patches
+and120s observation unchanged; no failed run image exists to boot.
