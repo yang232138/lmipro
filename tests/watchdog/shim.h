@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
