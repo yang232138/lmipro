@@ -246,8 +246,16 @@ extern "C" void native_legacy_vsync_observed(unsigned,unsigned) {}
 
 // The normal component-load hook may call early; creation belongs after IOBSD.
 extern "C" void native_legacy_display_probe(void) {}
+// This board hook is called once from bsd_autoconf, after IOKitBSDInit.
+extern "C" int lmipro_ram_watchdog_prepare(void);
+extern "C" const char *lmipro_ram_watchdog_step;
+extern "C" int lmipro_ram_watchdog_detail;
+
 extern "C" void native_legacy_display_late_probe(void)
 {
+    int error = lmipro_ram_watchdog_prepare();
+    if (error) panic("LMIPRO watchdog prepare %s: errno=%d detail=%d",
+                     lmipro_ram_watchdog_step, error, lmipro_ram_watchdog_detail);
     unsigned enabled=0;
     if(!PE_parse_boot_argn("lmipro-display-init",&enabled,sizeof(enabled)) || enabled!=1 || stage)return;
     unsigned trace=0;PE_parse_boot_argn("lmipro-display-calls",&trace,sizeof(trace));

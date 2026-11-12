@@ -208,7 +208,12 @@ cmd+=['-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unnecessary-virt
 run(cmd,cwd=r['directory'])
 
 archive=OUT/'libNativeLegacyDisplay.late.a';archive.unlink(missing_ok=True)
-run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LmiproDisplay.o'])
+watchdog = ROOT / 'build/lmipro-watchdog'
+run([sys.executable, ROOT / 'scripts/build-lmipro-watchdog.py',
+     '--reference', candidate, '--kernelcache', ROOT.parents[3] / 'ipsw/21H461/kernelcache.decompressed',
+     '--output', watchdog])
+run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LmiproDisplay.o',
+     watchdog/'RamWatchdog.late.o',watchdog/'watchdog-bindings.o'])
 sources=[ROOT/'drivers/GopFramebuffer/NativeLegacyDisplay.cpp',
  ROOT/'drivers/GopFramebuffer/NativeLegacyRequest.h',source,
  ROOT/'kits/lmipro/LmiproScanoutPolicy.h',ROOT/'kits/lmipro/LmiproModePolicy.h',ROOT/'kits/lmipro/LmiproDisplayPolicy.h',ROOT/'kits/lmipro/LmiproDisplayTrace.h',ROOT/'scripts/build-lmipro-display.py',
