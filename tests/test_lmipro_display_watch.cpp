@@ -95,12 +95,12 @@ int main(){
   lmiproFormatDisplaySnapshot(nullptr,0);
   enabled=1;bool caught=false;
   try{lmiproDisplayCheckpoint(600,"1:launchd 57:backboardd");}
-  catch(const std::runtime_error &e){caught=true;assert(strstr(e.what(),"LMIPRO DISPLAY CHECKPOINT timeout=600"));assert(strstr(e.what(),"57:backboardd"));}
+  catch(const std::runtime_error &e){caught=true;assert(strstr(e.what(),"LMIPRO UI CHECKPOINT timeout=600"));assert(!strstr(e.what(),"57:backboardd"));assert(strstr(e.what(),"END UI SNAPSHOT"));}
   assert(caught&&!liveMatches&&!liveIterators);
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
   assert(boardReports==1);
   enabled=2;framePresented=false;caught=false;
-  try{lmiproDisplayCheckpoint(600,"1:launchd");}catch(const std::runtime_error &e){caught=true;assert(strstr(e.what(),"LMIPRO DISPLAY CHECKPOINT"));}
+  try{lmiproDisplayCheckpoint(600,"1:launchd");}catch(const std::runtime_error &e){caught=true;assert(strstr(e.what(),"LMIPRO UI CHECKPOINT"));}
   assert(caught);framePresented=true;caught=false;
   try{lmiproDisplayCheckpoint(600,"1:launchd");}catch(const std::runtime_error &e){caught=true;assert(!strcmp(e.what(),"watch retired"));}
   assert(caught);

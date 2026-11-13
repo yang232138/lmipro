@@ -56,8 +56,8 @@ int main(){
  ++testTid;lmipro_ui_user_event(1,-47,0,0,0,60);assert(captures==8);
  lmipro_ui_stack_display_open(60);assert(gLmiproUIStacksDisplayPid==60);
  char out[1536];lmipro_ui_stack_report(out,sizeof(out));
- assert(strstr(out,"stored=8 cap8 depth8 delay30"));assert(strstr(out,"open pid=60; not a gate; codes=-47,375"));assert(strstr(out,"err14 info2"));
- assert(strstr(out,"1000 1004 1008"));assert(strstr(out,"state1 n0"));
+ assert(strstr(out,"stored8 cap8 depth8 focus0"));assert(strstr(out,"open pid60; focused calls all"));assert(strstr(out,"e14 i2"));
+ assert(strstr(out,"1000 1004 1008"));assert(strstr(out,"s1 n0"));
  char tiny[4]={'X','X','X','X'};lmipro_ui_stack_report(tiny,sizeof(tiny));assert(!tiny[3]);
  gLmiproUIStacksBusy=1;lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"snapshot busy"));
  lmipro_ui_stack_report(nullptr,0);
@@ -79,6 +79,30 @@ int main(){
  testSeconds=110;lmipro_ui_user_event(1,-47,0,0,0,58);
  assert(captures==before+2 && !gLmiproUIStacks[0].returned && gLmiproUIStacks[0].seconds==110);
  assert(gLmiproUIStacks[0].samples==3 && gLmiproUIStacksStored==8);
- lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"refresh10 now110"));
+ lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"focus0 now110"));
+ // Focus must be explicit and paired with the process that opened display.
+ lmipro_ui_stack_focus(testTid);lmipro_ui_stack_display_open(59);
+ unsigned focusedBefore=captures;
+ lmipro_ui_user_event(1,305,0,0,0,58);assert(captures==focusedBefore);
+ lmipro_ui_stack_display_open(58);
+ lmipro_ui_user_event(1,305,0,0,0,58);
+ assert(captures==focusedBefore+1 && gLmiproUIStacks[0].code==305 && !gLmiproUIStacks[0].returned);
+ lmipro_ui_user_event(2,305,0,4,0x20000000,58);
+ assert(gLmiproUIStacks[0].returned && gLmiproUIStacks[0].result==4 && gLmiproUIStacks[0].status==0x20000000);
+ // No ten-second blind interval: retain the immediately following pending call.
+ lmipro_ui_user_event(1,515,0,0,0,58);
+ assert(captures==focusedBefore+2 && gLmiproUIStacks[0].code==515 && !gLmiproUIStacks[0].returned);
+ lmipro_ui_user_event(2,305,0,99,0,58);assert(!gLmiproUIStacks[0].returned);
+ lmipro_ui_user_event(2,515,0,0,0,58);assert(gLmiproUIStacks[0].returned && !gLmiproUIStacks[0].status);
+ unsigned irqBefore=captures;
+ lmipro_ui_user_event(4,0,0x12340,0,0,58);
+ lmipro_ui_user_event(4,0,0x12340,0,0,58);
+ assert(gLmiproUIStacks[0].irqCount==2 && gLmiproUIStacks[0].irqSame==2 && captures==irqBefore);
+ lmipro_ui_user_event(4,0,0x12344,0,0,58);
+ assert(gLmiproUIStacks[0].irqCount==3 && gLmiproUIStacks[0].irqSame==1 && gLmiproUIStacks[0].irqPC==0x12344);
+ lmipro_ui_user_event(1,515,0,0,0,58);assert(captures==focusedBefore+3 && !gLmiproUIStacks[0].returned);
+ assert(!gLmiproUIStacks[0].irqCount && !gLmiproUIStacks[0].irqPC);
+ lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"focused calls all") && strstr(out,"c515"));
+ lmipro_ui_stack_focus(0);
  puts("PASS: opt-in/faultable gate; backboardd entry only; no observation lock during capture; per-thread cap/recursion; exact errors and incomplete samples");
 }

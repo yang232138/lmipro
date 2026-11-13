@@ -53,7 +53,8 @@ extern "C" __attribute__((noinline)) void lmipro_ui_user_event(unsigned kind,int
         uint64_t tid=thread_tid(current_thread());
         lmiproRecordUI(i,pid,kind,code,pc,a,b,tid);
         if(i==1 && kind==1)lmiproSampleUIStack(pid,tid,code);
-        if(i==1 && kind==2)lmiproReturnUIStack(pid,tid,code,a);
+        if(i==1 && kind==2)lmiproReturnUIStack(pid,tid,code,a,b);
+        if(i==1 && kind==4)lmiproInterruptUIStack(pid,tid,pc);
         return;
     }
 }

@@ -32,6 +32,7 @@ extern "C" void proc_selfname(char *,int);
 extern "C" void lmipro_ui_trace_enable(unsigned);
 extern "C" void lmipro_ui_stacks_enable(unsigned);
 extern "C" void lmipro_ui_stack_display_open(int);
+extern "C" void lmipro_ui_stack_focus(uint64_t);
 extern "C" volatile int lmipro_data_owner_stage,lmipro_data_owner_status;
 
 static volatile unsigned stage,registered,clients,clientType,guardSlot;
@@ -268,6 +269,8 @@ extern "C" void native_legacy_display_late_probe(void)
     lmipro_ui_trace_enable(ui);
     unsigned stacks=0;PE_parse_boot_argn("lmipro-ui-stacks",&stacks,sizeof(stacks));
     uiStacksEnabled=stacks==1;uiStacksStarted=mach_absolute_time();lmipro_ui_stacks_enable(stacks);
+    uint64_t focus=0;PE_parse_boot_argn("lmipro-ui-focus",&focus,sizeof(focus));
+    lmipro_ui_stack_focus(focus);
     unsigned cpu=0;PE_parse_boot_argn("lmipro-display-cpu",&cpu,sizeof(cpu));cpuEnabled=cpu==1;
     stage=1;
     result=OSKextLoadKextWithIdentifier("com.apple.iokit.IOMobileGraphicsFamily");
