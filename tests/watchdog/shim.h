@@ -98,3 +98,11 @@ extern "C" bool lmipro_original_watchdog_start(IOWatchdog *w,IOService *provider
  IOSimpleLock *lock=&originalLock;memcpy((char*)w+0xa0,&lock,sizeof(lock));*((char*)w+0xa8)=1;
  setField(w,0xb8,0);setField(w,0xc8,now+600ULL*NSEC_PER_SEC);w->registerService();w->enableBackend();return true;
 }
+
+extern "C" {
+volatile int lmipro_init_stage = 22, lmipro_init_error = 0;
+unsigned long cs_native4k_ready_blobs = 51;
+uint64_t cs_native4k_bytes = 2800000000;
+void proc_name(int, char *name, int size) { if (size) name[0] = 0; }
+int proc_selfpid(void) { return 107; }
+}

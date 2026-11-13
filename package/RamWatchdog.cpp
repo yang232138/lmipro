@@ -14,6 +14,11 @@
 
 extern "C" {
 extern kmod_info_t g_kernel_kmod_info;
+extern volatile int lmipro_init_stage, lmipro_init_error;
+extern unsigned long cs_native4k_ready_blobs;
+extern uint64_t cs_native4k_bytes;
+void proc_name(int, char *, int);
+int proc_selfpid(void);
 kern_return_t OSKextLoadKextWithIdentifier(const char *);
 void lmipro_watchdog_static_init(void) __asm__("__GLOBAL__sub_I_RamWatchdog.cpp");
 bool lmipro_original_watchdog_start(IOWatchdog *, IOService *, unsigned, unsigned);
@@ -29,6 +34,9 @@ class RamWatchdog : public IOWatchdog {
     OSDeclareDefaultStructors(RamWatchdog)
     thread_call_t timer = nullptr;
     unsigned armed = 0;
+    uint64_t openAttempts = 0;
+    IOReturn lastOpenResult = 0;
+    int lastOpenPid = 0;
     static void expired(thread_call_param_t parameter, thread_call_param_t) {
         auto *self = static_cast<RamWatchdog *>(parameter);
         if (!__atomic_load_n(&self->armed, __ATOMIC_ACQUIRE)) return;
@@ -48,9 +56,22 @@ class RamWatchdog : public IOWatchdog {
         lmipro_ram_watchdog_state[3] = sequence;
         lmipro_ram_watchdog_state[4] = enabled;
         lmipro_ram_watchdog_state[5] = deadline;
-        if (enabled && (!deadline || now >= deadline))
-            panic("RAM_WATCHDOG software deadline expired: beats=%llu now=%llx deadline=%llx",
-                sequence, now, deadline);
+        if (enabled && (!deadline || now >= deadline)) {
+            int daemonPid = 0;
+            for (int pid = 1; pid <= 256; ++pid) {
+                char name[17] = {};
+                proc_name(pid, name, sizeof(name));
+                if (!strcmp(name, "watchdogd")) { daemonPid = pid; break; }
+            }
+            panic("RAM_WATCHDOG software deadline expired: beats=%llu now=%llx deadline=%llx\n"
+                  "state=%llu clients=%llu opens=%llu last=%x caller=%d watchdogPid=%d\n"
+                  "init=%d execErr=%d CSbytes=%llu blobs=%lu",
+                  sequence, now, deadline, lmipro_ram_watchdog_state[0],
+                  lmipro_ram_watchdog_state[1], self->openAttempts,
+                  self->lastOpenResult, self->lastOpenPid, daemonPid,
+                  lmipro_init_stage, lmipro_init_error, cs_native4k_bytes,
+                  cs_native4k_ready_blobs);
+        }
         if (__atomic_load_n(&self->armed, __ATOMIC_ACQUIRE)) self->schedule();
     }
     void schedule() {
@@ -83,7 +104,10 @@ public:
     }
     IOReturn newUserClient(task_t task, void *security, UInt32 type,
                           OSDictionary *properties, IOUserClient **client) override {
+        __atomic_add_fetch(&openAttempts, 1, __ATOMIC_RELAXED);
+        lastOpenPid = proc_selfpid();
         IOReturn result = IOWatchdog::newUserClient(task, security, type, properties, client);
+        lastOpenResult = result;
         if (result == kIOReturnSuccess && client && *client)
             __atomic_add_fetch(&lmipro_ram_watchdog_state[1], 1, __ATOMIC_RELAXED);
         return result;
