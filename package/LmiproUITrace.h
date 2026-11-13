@@ -56,11 +56,30 @@ extern "C" __attribute__((noinline)) void lmipro_ui_user_event(unsigned kind,int
         return;
     }
 }
+static uint64_t gLmiproWatchdogFaultPC=0,gLmiproWatchdogFaultLR=0;
+static unsigned gLmiproWatchdogFaultValid=0;
+extern "C" void lmipro_watchdog_exit_report(int pid,const char *name,char *out,unsigned capacity) {
+    if(!gLmiproUIEnabled || !name || strcmp(name,"watchdogd") || !out || !capacity)return;
+    if(!__sync_bool_compare_and_swap(&gLmiproUIBusy,0,1))return;
+    uint64_t pc=gLmiproWatchdogFaultPC,lr=gLmiproWatchdogFaultLR;
+    unsigned valid=gLmiproWatchdogFaultValid;
+    __sync_lock_release(&gLmiproUIBusy);
+    snprintf(out,capacity,"watchdogd[%d] exited BRK v=%u pc=%llx lr=%llx",
+             pid,valid,(unsigned long long)pc,(unsigned long long)lr);
+}
 static unsigned gLmiproUIFaultValid=0;
 static uint64_t gLmiproUIFaultPC=0,gLmiproUIFaultWords[10]={};
 extern "C" __attribute__((noinline)) void lmipro_ui_fault_event(uint64_t pc,const uint64_t *regs) {
     if(!gLmiproUIEnabled || !regs)return;
     char name[17]={};proc_selfname(name,sizeof(name));name[16]=0;
+    if(!strcmp(name,"watchdogd")) {
+        if(!__sync_bool_compare_and_swap(&gLmiproUIBusy,0,1))return;
+        gLmiproWatchdogFaultPC=pc;
+        gLmiproWatchdogFaultLR=regs[30];
+        gLmiproWatchdogFaultValid=1;
+        __sync_lock_release(&gLmiproUIBusy);
+        return;
+    }
     if(strcmp(name,"SpringBoard"))return;
     if(!__sync_bool_compare_and_swap(&gLmiproUIBusy,0,1)) {
         __atomic_fetch_add(&gLmiproUIDropped,1,__ATOMIC_RELAXED);return;

@@ -1,14 +1,26 @@
 --- a/bsd/kern/kern_exit.c
 +++ b/bsd/kern/kern_exit.c
-@@ -1,4 +1,7 @@
+@@ -1,4 +1,8 @@
  #include <kern/boot_progress.h>
 +#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
 +extern void lmipro_ui_exit_event(int, const char *, int, unsigned, uint64_t);
++extern void lmipro_watchdog_exit_report(int, const char *, char *, unsigned);
 +#endif
  /*
   * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
   *
-@@ -1901,6 +1904,12 @@
+@@ -1863,6 +1867,10 @@
+ 	} else {
+ 		/* For processes that aren't launchd, just use the process name and pid */
+ 		snprintf(prefix_str_buf, sizeof(prefix_str_buf), "%s[%d] exited", p->p_name, proc_getpid(p));
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++        lmipro_watchdog_exit_report(proc_getpid(p), p->p_name,
++            prefix_str_buf, sizeof(prefix_str_buf));
++#endif
+ 		boot_progress_critical_exit(proc_getpid(p), prefix_str_buf, sizeof(prefix_str_buf));
+ 		prefix_str = prefix_str_buf;
+ 	}
+@@ -1901,6 +1909,12 @@
  	boot_progress_exit(proc_getpid(p),p->p_name,rv,
  	    p->p_exit_reason ? p->p_exit_reason->osr_namespace : 0,
  	    p->p_exit_reason ? p->p_exit_reason->osr_code : 0);

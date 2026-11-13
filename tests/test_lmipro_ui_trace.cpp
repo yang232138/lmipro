@@ -52,4 +52,11 @@ int main(){
     assert(gLmiproUIMkdirErrors[0].pid==126 && gLmiproUIMkdirErrors[0].code==475);
     lmipro_ui_trace_report(fault,sizeof(fault));assert(strstr(fault,"mkdir first SB=1 pid=126 c=475 errno=13 pc=104"));
     puts("PASS: opt-in exact-name actors, real scalar/thread snapshots, restart separation, bounds, no-wait contention and truncation");
+    char wdt[128]="original";testName="watchdogd";
+    uint64_t wdtRegs[31]={};wdtRegs[30]=0x112233;
+    lmipro_ui_fault_event(0x10000ab54,wdtRegs);
+    lmipro_watchdog_exit_report(113,"watchdogd",wdt,sizeof(wdt));
+    assert(strstr(wdt,"pc=10000ab54 lr=112233"));
+    strcpy(wdt,"original");lmipro_watchdog_exit_report(27,"SpringBoard",wdt,sizeof(wdt));
+    assert(!strcmp(wdt,"original"));
 }
