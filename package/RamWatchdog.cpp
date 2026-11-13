@@ -81,6 +81,10 @@ class RamWatchdog : public IOWatchdog {
     }
 public:
     void registerService(IOOptionBits options = 0) override {
+        // watchdogd matches the original hardware class name. Publish the
+        // backend under that name so the daemon opens it and pets the original
+        // deadline instead of timing out against an unmatched service.
+        setName("AppleARMWatchdogTimer");
         // The original start calls this virtual with options=0. Its asynchronous
         // default does not guarantee the MatchedState required by our lookup.
         IOService::registerService((options & ~IOOptionBits(kIOServiceAsynchronous)) | kIOServiceSynchronous);
