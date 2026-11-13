@@ -11,6 +11,8 @@ static bool recurse=false,loseStore=false;
 extern "C" void proc_selfname(char *out,int size){snprintf(out,(size_t)size,"%s",testName);}
 static void *current_thread(){return (void *)1;}
 static uint64_t thread_tid(void *){return testTid;}
+static uint64_t testSeconds=100;
+extern "C" uint64_t lmipro_ui_stack_seconds(void){return testSeconds;}
 extern "C" unsigned lmipro_ui_stack_ready(void){return ready;}
 extern "C" unsigned lmipro_ui_stack_capture(uintptr_t *,unsigned,int *,unsigned *);
 #include "../package/LmiproUITrace.h"
@@ -68,5 +70,15 @@ int main(){
  assert(captures==before+1 && gLmiproUIStacksStored==stored && gLmiproUIStacks[0].postOpen==1);
  lmipro_ui_user_event(1,-47,0,0,0,58);assert(captures==before+1);
  lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"post1"));
+ // A recorded return cannot be supplied by another thread or call.
+ lmipro_ui_user_event(2,375,0,99,0,58);assert(!gLmiproUIStacks[0].returned);
+ ++testTid;lmipro_ui_user_event(2,-47,0,99,0,58);assert(!gLmiproUIStacks[0].returned);
+ --testTid;lmipro_ui_user_event(2,-47,0,7,0,58);assert(gLmiproUIStacks[0].returned && gLmiproUIStacks[0].result==7);
+ lmipro_ui_user_event(2,-47,0,99,0,58);assert(gLmiproUIStacks[0].result==7);
+ testSeconds=109;lmipro_ui_user_event(1,-47,0,0,0,58);assert(captures==before+1);
+ testSeconds=110;lmipro_ui_user_event(1,-47,0,0,0,58);
+ assert(captures==before+2 && !gLmiproUIStacks[0].returned && gLmiproUIStacks[0].seconds==110);
+ assert(gLmiproUIStacks[0].samples==3 && gLmiproUIStacksStored==8);
+ lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"refresh10 now110"));
  puts("PASS: opt-in/faultable gate; backboardd entry only; no observation lock during capture; per-thread cap/recursion; exact errors and incomplete samples");
 }

@@ -2,9 +2,10 @@
 #pragma once
 #include <stdint.h>
 extern "C" unsigned lmipro_ui_stack_ready(void);
+extern "C" uint64_t lmipro_ui_stack_seconds(void);
 extern "C" unsigned lmipro_ui_stack_capture(uintptr_t *,unsigned,int *,unsigned *);
 struct LmiproUIStack {
-    int pid,code,error;uint64_t tid;unsigned state,count,info,postOpen;uintptr_t pc[8];
+    int pid,code,error;uint64_t tid;unsigned state,count,info,postOpen,samples,returned;uint64_t seconds,result;uintptr_t pc[8];
 };
 static LmiproUIStack gLmiproUIStacks[8]={};
 static volatile unsigned gLmiproUIStacksEnabled=0;
@@ -24,12 +25,13 @@ static __attribute__((noinline)) void lmiproSampleUIStack(int pid,uint64_t tid,i
     if(!__sync_bool_compare_and_swap(&gLmiproUIStacksBusy,0,1)) {
         __atomic_fetch_add(&gLmiproUIStacksDropped,1,__ATOMIC_RELAXED);return;
     }
+    const uint64_t now=lmipro_ui_stack_seconds();
     const bool postOpen = __atomic_load_n(&gLmiproUIStacksDisplayPid,__ATOMIC_ACQUIRE)==pid;
     unsigned slot=gLmiproUIStacksStored;
     for(unsigned i=0;i<gLmiproUIStacksStored;++i) {
         const LmiproUIStack &row=gLmiproUIStacks[i];
         if(row.pid!=pid || row.tid!=tid)continue;
-        if(!postOpen || row.postOpen || row.state==1) {
+        if(!postOpen || row.state==1 || (row.postOpen && (now<row.seconds || now-row.seconds<10))) {
             __sync_lock_release(&gLmiproUIStacksBusy);return;
         }
         slot=i;
@@ -39,13 +41,15 @@ static __attribute__((noinline)) void lmiproSampleUIStack(int pid,uint64_t tid,i
         if(gLmiproUIStacksStored==8){__sync_lock_release(&gLmiproUIStacksBusy);return;}
         ++gLmiproUIStacksStored;
     }
-    gLmiproUIStacks[slot]={};gLmiproUIStacks[slot].pid=pid;gLmiproUIStacks[slot].tid=tid;
+    unsigned samples=gLmiproUIStacks[slot].samples+1;
+    gLmiproUIStacks[slot]={};gLmiproUIStacks[slot].samples=samples;
+    gLmiproUIStacks[slot].seconds=now;gLmiproUIStacks[slot].pid=pid;gLmiproUIStacks[slot].tid=tid;
     gLmiproUIStacks[slot].code=code;gLmiproUIStacks[slot].state=1;
     gLmiproUIStacks[slot].postOpen=postOpen;
     __sync_lock_release(&gLmiproUIStacksBusy);
     // Faultable API runs after both observation locks have been released.
     // A state-1 reservation prevents recursion and concurrent refresh of this slot.
-    // An early sample is refreshed once after the same process opens the display.
+    // Refresh eligible entries at most once per 10 s per existing thread after display open.
     uintptr_t frames[8]={};int error=0;unsigned info=0;
     unsigned count=lmipro_ui_stack_capture(frames,8,&error,&info);
     if(!__sync_bool_compare_and_swap(&gLmiproUIStacksBusy,0,1)) {
@@ -56,6 +60,21 @@ static __attribute__((noinline)) void lmiproSampleUIStack(int pid,uint64_t tid,i
     else {s.count=count;for(unsigned i=0;i<count;++i)s.pc[i]=frames[i];s.state=2;}
     __sync_lock_release(&gLmiproUIStacksBusy);
 }
+// Correlate the sampled call's first return by PID, TID and syscall number.
+// This observer changes no syscall result and performs no user-memory access.
+static void lmiproReturnUIStack(int pid,uint64_t tid,int code,uint64_t result) {
+    if(!gLmiproUIStacksEnabled || (code!=-47 && code!=375))return;
+    if(!__sync_bool_compare_and_swap(&gLmiproUIStacksBusy,0,1)) {
+        __atomic_fetch_add(&gLmiproUIStacksDropped,1,__ATOMIC_RELAXED);return;
+    }
+    for(unsigned i=0;i<gLmiproUIStacksStored;++i) {
+        LmiproUIStack &s=gLmiproUIStacks[i];
+        if(s.pid==pid && s.tid==tid && s.code==code && s.state==2 && !s.returned) {
+            s.result=result;s.returned=1;break;
+        }
+    }
+    __sync_lock_release(&gLmiproUIStacksBusy);
+}
 extern "C" __attribute__((noinline)) unsigned lmipro_ui_stack_report(char *out,unsigned capacity) {
     if(!out || !capacity)return 0;
     if(!__sync_bool_compare_and_swap(&gLmiproUIStacksBusy,0,1))
@@ -63,16 +82,17 @@ extern "C" __attribute__((noinline)) unsigned lmipro_ui_stack_report(char *out,u
     LmiproUIStack rows[8]={};unsigned stored=gLmiproUIStacksStored;
     for(unsigned i=0;i<stored;++i)rows[i]=gLmiproUIStacks[i];
     __sync_lock_release(&gLmiproUIStacksBusy);
-    int n=snprintf(out,capacity,"UI wait-entry stacks enabled=%u stored=%u cap8 depth8 delay30 dropped=%llu\n"
+    int n=snprintf(out,capacity,"UI wait-entry stacks enabled=%u stored=%u cap8 depth8 delay30 refresh10 now%llu dropped=%llu\n"
       " observed display open pid=%d; not a gate; codes=-47,375; entry only\n",
-      gLmiproUIStacksEnabled,stored,(unsigned long long)gLmiproUIStacksDropped,
+      gLmiproUIStacksEnabled,stored,(unsigned long long)lmipro_ui_stack_seconds(),(unsigned long long)gLmiproUIStacksDropped,
       __atomic_load_n(&gLmiproUIStacksDisplayPid,__ATOMIC_ACQUIRE));
     if(n<0)return 0;
     unsigned used=(unsigned)n<capacity?(unsigned)n:capacity-1;
     for(unsigned i=0;i<stored && used<capacity-1;++i) {
         const LmiproUIStack &s=rows[i];
-        n=snprintf(out+used,capacity-used,"pid%d tid%llu c%d state%u n%u err%d info%x post%u:",
-          s.pid,(unsigned long long)s.tid,s.code,s.state,s.count,s.error,s.info,s.postOpen);
+        n=snprintf(out+used,capacity-used,"pid%d tid%llu c%d state%u n%u err%d info%x post%u at%llu samples%u ret%u r%llx:",
+          s.pid,(unsigned long long)s.tid,s.code,s.state,s.count,s.error,s.info,s.postOpen,
+          (unsigned long long)s.seconds,s.samples,s.returned,(unsigned long long)s.result);
         if(n<0)break;
         used+=(unsigned)n<capacity-used?(unsigned)n:capacity-used-1;
         for(unsigned j=0;j<s.count && used<capacity-1;++j) {

@@ -102,5 +102,5 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
   panic("LMIPRO DISPLAY CHECKPOINT timeout=%u\n%s%s%s%s%s"
     "process sample pid<=64: %s\n"
     "Diagnostic stop; display not initialized by this observer",
-    seconds, display, detail, exits, stacks, ui, processes);
+    seconds, ui, display, detail, stacks, exits, processes);
 }

@@ -43,6 +43,10 @@ static unsigned uiStacksEnabled;
 static volatile unsigned uiStackGate=1;
 static volatile uint64_t uiStackChecks;
 static uint64_t uiStacksStarted;
+extern "C" uint64_t lmipro_ui_stack_seconds(void) {
+    uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time()-uiStacksStarted,&ns);
+    return ns/UINT64_C(1000000000);
+}
 extern "C" __attribute__((noinline)) unsigned lmipro_ui_stack_ready(void) {
     __atomic_fetch_add(&uiStackChecks,1,__ATOMIC_RELAXED);
     if(!uiStacksEnabled){uiStackGate=1;return 0;}
