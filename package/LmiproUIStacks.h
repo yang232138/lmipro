@@ -4,7 +4,7 @@
 extern "C" unsigned lmipro_ui_stack_ready(void);
 extern "C" unsigned lmipro_ui_stack_capture(uintptr_t *,unsigned,int *,unsigned *);
 struct LmiproUIStack {
-    int pid,code,error;uint64_t tid;unsigned state,count,info;uintptr_t pc[8];
+    int pid,code,error;uint64_t tid;unsigned state,count,info,postOpen;uintptr_t pc[8];
 };
 static LmiproUIStack gLmiproUIStacks[8]={};
 static volatile unsigned gLmiproUIStacksEnabled=0;
@@ -24,16 +24,28 @@ static __attribute__((noinline)) void lmiproSampleUIStack(int pid,uint64_t tid,i
     if(!__sync_bool_compare_and_swap(&gLmiproUIStacksBusy,0,1)) {
         __atomic_fetch_add(&gLmiproUIStacksDropped,1,__ATOMIC_RELAXED);return;
     }
-    for(unsigned i=0;i<gLmiproUIStacksStored;++i)if(gLmiproUIStacks[i].pid==pid && gLmiproUIStacks[i].tid==tid) {
-        __sync_lock_release(&gLmiproUIStacksBusy);return;
+    const bool postOpen = __atomic_load_n(&gLmiproUIStacksDisplayPid,__ATOMIC_ACQUIRE)==pid;
+    unsigned slot=gLmiproUIStacksStored;
+    for(unsigned i=0;i<gLmiproUIStacksStored;++i) {
+        const LmiproUIStack &row=gLmiproUIStacks[i];
+        if(row.pid!=pid || row.tid!=tid)continue;
+        if(!postOpen || row.postOpen || row.state==1) {
+            __sync_lock_release(&gLmiproUIStacksBusy);return;
+        }
+        slot=i;
+        break;
     }
-    if(gLmiproUIStacksStored==8){__sync_lock_release(&gLmiproUIStacksBusy);return;}
-    unsigned slot=gLmiproUIStacksStored++;
+    if(slot==gLmiproUIStacksStored) {
+        if(gLmiproUIStacksStored==8){__sync_lock_release(&gLmiproUIStacksBusy);return;}
+        ++gLmiproUIStacksStored;
+    }
     gLmiproUIStacks[slot]={};gLmiproUIStacks[slot].pid=pid;gLmiproUIStacks[slot].tid=tid;
     gLmiproUIStacks[slot].code=code;gLmiproUIStacks[slot].state=1;
+    gLmiproUIStacks[slot].postOpen=postOpen;
     __sync_lock_release(&gLmiproUIStacksBusy);
     // Faultable API runs after both observation locks have been released.
-    // This reserved slot also prevents recursive samples of the same thread.
+    // A state-1 reservation prevents recursion and concurrent refresh of this slot.
+    // An early sample is refreshed once after the same process opens the display.
     uintptr_t frames[8]={};int error=0;unsigned info=0;
     unsigned count=lmipro_ui_stack_capture(frames,8,&error,&info);
     if(!__sync_bool_compare_and_swap(&gLmiproUIStacksBusy,0,1)) {
@@ -59,8 +71,8 @@ extern "C" __attribute__((noinline)) unsigned lmipro_ui_stack_report(char *out,u
     unsigned used=(unsigned)n<capacity?(unsigned)n:capacity-1;
     for(unsigned i=0;i<stored && used<capacity-1;++i) {
         const LmiproUIStack &s=rows[i];
-        n=snprintf(out+used,capacity-used,"pid%d tid%llu c%d state%u n%u err%d info%x:",
-          s.pid,(unsigned long long)s.tid,s.code,s.state,s.count,s.error,s.info);
+        n=snprintf(out+used,capacity-used,"pid%d tid%llu c%d state%u n%u err%d info%x post%u:",
+          s.pid,(unsigned long long)s.tid,s.code,s.state,s.count,s.error,s.info,s.postOpen);
         if(n<0)break;
         used+=(unsigned)n<capacity-used?(unsigned)n:capacity-used-1;
         for(unsigned j=0;j<s.count && used<capacity-1;++j) {

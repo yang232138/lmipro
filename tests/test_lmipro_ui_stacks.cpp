@@ -59,5 +59,14 @@ int main(){
  char tiny[4]={'X','X','X','X'};lmipro_ui_stack_report(tiny,sizeof(tiny));assert(!tiny[3]);
  gLmiproUIStacksBusy=1;lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"snapshot busy"));
  lmipro_ui_stack_report(nullptr,0);
+ // Refresh a filled early slot once, after this exact process opens display.
+ gLmiproUIStacksBusy=0;loseStore=false;replyCount=3;replyError=0;
+ testTid=gLmiproUIStacks[0].tid;testName="backboardd";
+ unsigned before=captures,stored=gLmiproUIStacksStored;
+ lmipro_ui_stack_display_open(58);
+ lmipro_ui_user_event(1,-47,0,0,0,58);
+ assert(captures==before+1 && gLmiproUIStacksStored==stored && gLmiproUIStacks[0].postOpen==1);
+ lmipro_ui_user_event(1,-47,0,0,0,58);assert(captures==before+1);
+ lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"post1"));
  puts("PASS: opt-in/faultable gate; backboardd entry only; no observation lock during capture; per-thread cap/recursion; exact errors and incomplete samples");
 }
