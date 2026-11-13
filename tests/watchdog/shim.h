@@ -57,7 +57,8 @@ public:
  virtual void free(){delete this;}
  virtual IOReturn newUserClient(task_t,void*,UInt32,OSDictionary*,IOUserClient**){return -1;}
  bool attach(IOService*){return !attachFail;}
- virtual void registerService(IOOptionBits options=0){
+ virtual void setName(const char *name){(void)name;}
+    virtual void registerService(IOOptionBits options=0){
   if(publishFail)return;
   if(options&kIOServiceSynchronous){assert(!(options&kIOServiceAsynchronous));syncRegistrations++;}
   else {asyncRegistrations++;if(deferredMatching){pendingServices.push_back(this);return;}}
