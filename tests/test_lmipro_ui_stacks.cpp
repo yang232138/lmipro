@@ -104,36 +104,44 @@ int main(){
  assert(!gLmiproUIStacks[0].irqCount && !gLmiproUIStacks[0].irqPC);
  lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"focused calls all") && strstr(out,"c515"));
  lmipro_ui_stack_focus(0);
- // Automatic focus binds to the actual opener, not a previous boot's TID.
- lmipro_ui_stack_focus(1);assert(gLmiproUIStacksAutoFocus && !gLmiproUIStacksFocusTid);
- testTid=8001;lmipro_ui_stack_display_open(58);assert(gLmiproUIStacksFocusTid==8001);
- testTid=8002;lmipro_ui_stack_display_open(58);assert(gLmiproUIStacksFocusTid==8001);
- // The selected opener remains observable after ordinary workers filled the cap.
- testTid=8001;unsigned ev=gLmiproUIStacksFocusEvictions;
- before=captures;lmipro_ui_user_event(1,515,0,0,0,58);
- assert(captures==before+1 && gLmiproUIStacksStored==8 && gLmiproUIStacksFocusEvictions==ev+1);
- assert(gLmiproUIStacks[7].tid==8001 && gLmiproUIStacks[7].samples==1);
- lmipro_ui_user_event(2,515,0,7,0x20000000,58);
- assert(gLmiproUIStacks[7].returned && gLmiproUIStacks[7].result==7);
- lmipro_ui_user_event(4,0,0x88880,0,0,58);
- assert(gLmiproUIStacks[7].irqCount==1 && gLmiproUIStacks[7].irqPC==0x88880);
- // Ordinary capacity rejection is explicit even though it does not lose a focused event.
- testTid=8002;unsigned skipped=gLmiproUIStacksCapacitySkips;
- lmipro_ui_user_event(1,-47,0,0,0,58);
- assert(gLmiproUIStacksCapacitySkips==skipped+1 && gLmiproUIStacks[7].tid==8001);
- // A different observed PID selects its own opener; invalid observations do not bind.
- lmipro_ui_stack_display_open(0);assert(gLmiproUIStacksFocusTid==8001);
- testTid=8100;lmipro_ui_stack_display_open(60);assert(gLmiproUIStacksFocusTid==8100);
- lmipro_ui_stack_display_open(60);assert(gLmiproUIStacksFocusTid==8100);
- lmipro_ui_stack_focus(333);testTid=9000;lmipro_ui_stack_display_open(58);
- assert(!gLmiproUIStacksAutoFocus && gLmiproUIStacksFocusTid==333);
- // Never overwrite another thread's in-flight reservation or wait for its lock.
- lmipro_ui_stack_focus(1);testTid=8200;lmipro_ui_stack_display_open(58);
- for(auto &row:gLmiproUIStacks)row.state=1;
- uint64_t drops=gLmiproUIStacksDropped;before=captures;skipped=gLmiproUIStacksCapacitySkips;
- lmipro_ui_user_event(1,515,0,0,0,58);
- assert(captures==before && gLmiproUIStacksStored==8 && gLmiproUIStacksDropped==drops+1);
- assert(gLmiproUIStacksCapacitySkips==skipped+1);
- lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"auto1 ev1"));
- puts("PASS: opt-in/faultable gate; backboardd entry only; no observation lock during capture; per-thread cap/recursion; exact errors and incomplete samples");
+  // Automatic focus retains every display opener (up to four), because the first
+  // opener can exit immediately: t336 sampled bsdthread_ctl, a thread lifecycle
+  // call, with a three-frame stack.
+  lmipro_ui_stack_focus(1);assert(gLmiproUIStacksAutoFocus && !gLmiproUIStacksFocusCount);
+  testTid=8001;lmipro_ui_stack_display_open(58);
+  assert(gLmiproUIStacksFocusCount==1 && gLmiproUIStacksFocusTids[0]==8001);
+  testTid=8002;lmipro_ui_stack_display_open(58);
+  assert(gLmiproUIStacksFocusCount==2 && gLmiproUIStacksFocusTids[1]==8002);
+  // Both openers are focused; an unrelated thread stays ordinary and is not sampled
+  // for a non -47/375 code before the display is open.
+  testTid=8003;before=captures;lmipro_ui_user_event(1,305,0,0,0,58);
+  assert(captures==before && gLmiproUIStacksFocusCount==2);
+  // A focused opener still gets a slot when ordinary workers already filled the cap.
+  testTid=8001;unsigned ev=gLmiproUIStacksFocusEvictions;
+  before=captures;lmipro_ui_user_event(1,515,0,0,0,58);
+  assert(captures==before+1 && gLmiproUIStacksStored==8 && gLmiproUIStacksFocusEvictions==ev+1);
+  assert(gLmiproUIStacks[7].tid==8001 && gLmiproUIStacks[7].samples==1);
+  lmipro_ui_user_event(2,515,0,7,0x20000000,58);
+  assert(gLmiproUIStacks[7].returned && gLmiproUIStacks[7].result==7);
+  lmipro_ui_user_event(4,0,0x88880,0,0,58);
+  assert(gLmiproUIStacks[7].irqCount==1 && gLmiproUIStacks[7].irqPC==0x88880);
+  // Invalid observations never bind a TID.
+  lmipro_ui_stack_display_open(0);assert(gLmiproUIStacksFocusCount==2);
+  // A different observed PID still records its own opener.
+  testTid=8100;lmipro_ui_stack_display_open(60);
+  assert(gLmiproUIStacksFocusCount==3 && gLmiproUIStacksFocusTids[2]==8100);
+  // An explicit focus overrides the automatic mode and keeps exactly one TID.
+  lmipro_ui_stack_focus(333);testTid=9000;lmipro_ui_stack_display_open(58);
+  assert(!gLmiproUIStacksAutoFocus && gLmiproUIStacksFocusCount==1 && gLmiproUIStacksFocusTids[0]==333);
+  // Returning to automatic mode clears the candidates again.
+  lmipro_ui_stack_focus(1);testTid=8200;lmipro_ui_stack_display_open(58);
+  assert(gLmiproUIStacksFocusCount==1 && gLmiproUIStacksFocusTids[0]==8200);
+  // Never overwrite another thread's in-flight reservation or wait for its lock.
+  for(auto &row:gLmiproUIStacks)row.state=1;
+  uint64_t drops=gLmiproUIStacksDropped;before=captures;skipped=gLmiproUIStacksCapacitySkips;
+  lmipro_ui_user_event(1,515,0,0,0,58);
+  assert(captures==before && gLmiproUIStacksStored==8 && gLmiproUIStacksDropped==drops+1);
+  assert(gLmiproUIStacksCapacitySkips==skipped+1);
+  lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"auto1 ev1"));
+
 }
