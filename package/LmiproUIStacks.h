@@ -11,17 +11,32 @@ static LmiproUIStack gLmiproUIStacks[8]={};
 static volatile unsigned gLmiproUIStacksEnabled=0;
 static int gLmiproUIStacksDisplayPid=0;
 static uint64_t gLmiproUIStacksFocusTid=0;
+static unsigned gLmiproUIStacksAutoFocus=0,gLmiproUIStacksFocusEvictions=0,gLmiproUIStacksCapacitySkips=0;
+static int gLmiproUIStacksAutoPid=0;
 extern "C" void lmipro_ui_stack_focus(uint64_t tid) {
-    __atomic_store_n(&gLmiproUIStacksFocusTid,tid,__ATOMIC_RELEASE);
+    // 0: ordinary sampling; 1: follow the first successful display opener; >1: explicit TID.
+    __atomic_store_n(&gLmiproUIStacksAutoPid,0,__ATOMIC_RELEASE);
+    __atomic_store_n(&gLmiproUIStacksAutoFocus,tid==1,__ATOMIC_RELEASE);
+    __atomic_store_n(&gLmiproUIStacksFocusTid,tid==1?0:tid,__ATOMIC_RELEASE);
 }
 static bool lmiproFocusedUIStack(int pid,uint64_t tid) {
     return tid && tid==__atomic_load_n(&gLmiproUIStacksFocusTid,__ATOMIC_ACQUIRE) &&
         pid==__atomic_load_n(&gLmiproUIStacksDisplayPid,__ATOMIC_ACQUIRE);
 }
 // Called only after an actual successful backboardd display-client creation.
-// Informational copied PID only; opening the display is not a sampling prerequisite.
+// Copy IDs only; opening the display is not a prerequisite for ordinary sampling.
 extern "C" __attribute__((noinline)) void lmipro_ui_stack_display_open(int pid) {
-    if(pid>0)__atomic_store_n(&gLmiproUIStacksDisplayPid,pid,__ATOMIC_RELEASE);
+    if(pid<=0)return;
+    if(__atomic_load_n(&gLmiproUIStacksAutoFocus,__ATOMIC_ACQUIRE)) {
+        int previous=__atomic_load_n(&gLmiproUIStacksAutoPid,__ATOMIC_ACQUIRE);
+        if(previous!=pid && __atomic_compare_exchange_n(&gLmiproUIStacksAutoPid,&previous,pid,
+                false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE)) {
+            // This callback runs on the user thread after its actual successful
+            // backboardd display-client creation; keep only its copied ID.
+            __atomic_store_n(&gLmiproUIStacksFocusTid,thread_tid(current_thread()),__ATOMIC_RELEASE);
+        }
+    }
+    __atomic_store_n(&gLmiproUIStacksDisplayPid,pid,__ATOMIC_RELEASE);
 }
 static volatile int gLmiproUIStacksBusy=0;
 static unsigned gLmiproUIStacksStored=0;
@@ -48,10 +63,20 @@ static __attribute__((noinline)) void lmiproSampleUIStack(int pid,uint64_t tid,i
         break;
     }
     if(slot==gLmiproUIStacksStored) {
-        if(gLmiproUIStacksStored==8){__sync_lock_release(&gLmiproUIStacksBusy);return;}
-        ++gLmiproUIStacksStored;
+        if(gLmiproUIStacksStored==8) {
+            // Keep the bound on storage. A selected producer may need a slot
+            // after ordinary workers filled it; never replace an in-flight capture.
+            if(focused)for(unsigned i=8;i>0;--i)if(gLmiproUIStacks[i-1].state!=1) {
+                slot=i-1;++gLmiproUIStacksFocusEvictions;break;
+            }
+            if(slot==gLmiproUIStacksStored) {
+                ++gLmiproUIStacksCapacitySkips;
+                if(focused)__atomic_fetch_add(&gLmiproUIStacksDropped,1,__ATOMIC_RELAXED);
+                __sync_lock_release(&gLmiproUIStacksBusy);return;
+            }
+        } else ++gLmiproUIStacksStored;
     }
-    unsigned samples=gLmiproUIStacks[slot].samples+1;
+    unsigned samples=(gLmiproUIStacks[slot].pid==pid && gLmiproUIStacks[slot].tid==tid)?gLmiproUIStacks[slot].samples+1:1;
     gLmiproUIStacks[slot]={};gLmiproUIStacks[slot].samples=samples;
     gLmiproUIStacks[slot].seconds=now;gLmiproUIStacks[slot].pid=pid;gLmiproUIStacks[slot].tid=tid;
     gLmiproUIStacks[slot].code=code;gLmiproUIStacks[slot].state=1;
@@ -106,11 +131,13 @@ extern "C" __attribute__((noinline)) unsigned lmipro_ui_stack_report(char *out,u
     if(!__sync_bool_compare_and_swap(&gLmiproUIStacksBusy,0,1))
         return snprintf(out,capacity,"UI stacks snapshot busy; unavailable\n");
     LmiproUIStack rows[8]={};unsigned stored=gLmiproUIStacksStored;
+    unsigned evictions=gLmiproUIStacksFocusEvictions,capacitySkips=gLmiproUIStacksCapacitySkips;
     for(unsigned i=0;i<stored;++i)rows[i]=gLmiproUIStacks[i];
     __sync_lock_release(&gLmiproUIStacksBusy);
-    int n=snprintf(out,capacity,"UI stacks on%u stored%u cap8 depth8 focus%llu now%llu drop%llu\n"
+    int n=snprintf(out,capacity,"UI stacks on%u stored%u cap8 depth8 focus%llu auto%u ev%u capSkip%u now%llu drop%llu\n"
       "open pid%d; focused calls all, others -47/375 every10; entry only\n",
       gLmiproUIStacksEnabled,stored,(unsigned long long)__atomic_load_n(&gLmiproUIStacksFocusTid,__ATOMIC_ACQUIRE),
+      __atomic_load_n(&gLmiproUIStacksAutoFocus,__ATOMIC_ACQUIRE),evictions,capacitySkips,
       (unsigned long long)lmipro_ui_stack_seconds(),(unsigned long long)gLmiproUIStacksDropped,
       __atomic_load_n(&gLmiproUIStacksDisplayPid,__ATOMIC_ACQUIRE));
     if(n<0)return 0;
