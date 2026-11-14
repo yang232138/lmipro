@@ -10,30 +10,48 @@ struct LmiproUIStack {
 static LmiproUIStack gLmiproUIStacks[8]={};
 static volatile unsigned gLmiproUIStacksEnabled=0;
 static int gLmiproUIStacksDisplayPid=0;
-static uint64_t gLmiproUIStacksFocusTid=0;
+static uint64_t gLmiproUIStacksFocusTids[4]={};
+static unsigned gLmiproUIStacksFocusCount=0;
 static unsigned gLmiproUIStacksAutoFocus=0,gLmiproUIStacksFocusEvictions=0,gLmiproUIStacksCapacitySkips=0;
 static int gLmiproUIStacksAutoPid=0;
 extern "C" void lmipro_ui_stack_focus(uint64_t tid) {
-    // 0: ordinary sampling; 1: follow the first successful display opener; >1: explicit TID.
+    // 0: ordinary sampling; 1: follow every successful display opener; >1: explicit TID.
     __atomic_store_n(&gLmiproUIStacksAutoPid,0,__ATOMIC_RELEASE);
     __atomic_store_n(&gLmiproUIStacksAutoFocus,tid==1,__ATOMIC_RELEASE);
-    __atomic_store_n(&gLmiproUIStacksFocusTid,tid==1?0:tid,__ATOMIC_RELEASE);
+    for(unsigned i=0;i<4;++i)__atomic_store_n(&gLmiproUIStacksFocusTids[i],tid==1?0:tid,__ATOMIC_RELEASE);
+    __atomic_store_n(&gLmiproUIStacksFocusCount,tid==1?0:1,__ATOMIC_RELEASE);
 }
 static bool lmiproFocusedUIStack(int pid,uint64_t tid) {
-    return tid && tid==__atomic_load_n(&gLmiproUIStacksFocusTid,__ATOMIC_ACQUIRE) &&
-        pid==__atomic_load_n(&gLmiproUIStacksDisplayPid,__ATOMIC_ACQUIRE);
+    if(!tid || pid!=__atomic_load_n(&gLmiproUIStacksDisplayPid,__ATOMIC_ACQUIRE))return false;
+    const unsigned count=__atomic_load_n(&gLmiproUIStacksFocusCount,__ATOMIC_ACQUIRE);
+    for(unsigned i=0;i<count && i<4;++i)
+        if(tid==__atomic_load_n(&gLmiproUIStacksFocusTids[i],__ATOMIC_ACQUIRE))return true;
+    return false;
 }
 // Called only after an actual successful backboardd display-client creation.
 // Copy IDs only; opening the display is not a prerequisite for ordinary sampling.
+// Every opener is retained (up to four): the first opener can exit immediately
+// (t336 sampled bsdthread_ctl, a lifecycle call, with a three-frame stack).
 extern "C" __attribute__((noinline)) void lmipro_ui_stack_display_open(int pid) {
     if(pid<=0)return;
     if(__atomic_load_n(&gLmiproUIStacksAutoFocus,__ATOMIC_ACQUIRE)) {
-        int previous=__atomic_load_n(&gLmiproUIStacksAutoPid,__ATOMIC_ACQUIRE);
-        if(previous!=pid && __atomic_compare_exchange_n(&gLmiproUIStacksAutoPid,&previous,pid,
-                false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE)) {
-            // This callback runs on the user thread after its actual successful
-            // backboardd display-client creation; keep only its copied ID.
-            __atomic_store_n(&gLmiproUIStacksFocusTid,thread_tid(current_thread()),__ATOMIC_RELEASE);
+        const uint64_t tid=thread_tid(current_thread());
+        const unsigned count=__atomic_load_n(&gLmiproUIStacksFocusCount,__ATOMIC_ACQUIRE);
+        bool known=false;
+        for(unsigned i=0;i<count && i<4;++i)
+            if(tid==__atomic_load_n(&gLmiproUIStacksFocusTids[i],__ATOMIC_ACQUIRE)){known=true;break;}
+        if(!known && tid) {
+            if(count<4) {
+                __atomic_store_n(&gLmiproUIStacksFocusTids[count],tid,__ATOMIC_RELEASE);
+                __atomic_store_n(&gLmiproUIStacksFocusCount,count+1,__ATOMIC_RELEASE);
+            } else {
+                // Keep the four most recent openers; the oldest is usually the
+                // one that already exited.
+                for(unsigned i=0;i<3;++i)
+                    __atomic_store_n(&gLmiproUIStacksFocusTids[i],
+                        __atomic_load_n(&gLmiproUIStacksFocusTids[i+1],__ATOMIC_ACQUIRE),__ATOMIC_RELEASE);
+                __atomic_store_n(&gLmiproUIStacksFocusTids[3],tid,__ATOMIC_RELEASE);
+            }
         }
     }
     __atomic_store_n(&gLmiproUIStacksDisplayPid,pid,__ATOMIC_RELEASE);
@@ -134,9 +152,11 @@ extern "C" __attribute__((noinline)) unsigned lmipro_ui_stack_report(char *out,u
     unsigned evictions=gLmiproUIStacksFocusEvictions,capacitySkips=gLmiproUIStacksCapacitySkips;
     for(unsigned i=0;i<stored;++i)rows[i]=gLmiproUIStacks[i];
     __sync_lock_release(&gLmiproUIStacksBusy);
-    int n=snprintf(out,capacity,"UI stacks on%u stored%u cap8 depth8 focus%llu auto%u ev%u capSkip%u now%llu drop%llu\n"
+    int n=snprintf(out,capacity,"UI stacks on%u stored%u cap8 depth8 focus%llu+%u auto%u ev%u capSkip%u now%llu drop%llu\n"
       "open pid%d; focused calls all, others -47/375 every10; entry only\n",
-      gLmiproUIStacksEnabled,stored,(unsigned long long)__atomic_load_n(&gLmiproUIStacksFocusTid,__ATOMIC_ACQUIRE),
+      gLmiproUIStacksEnabled,stored,
+      (unsigned long long)__atomic_load_n(&gLmiproUIStacksFocusTids[0],__ATOMIC_ACQUIRE),
+      __atomic_load_n(&gLmiproUIStacksFocusCount,__ATOMIC_ACQUIRE),
       __atomic_load_n(&gLmiproUIStacksAutoFocus,__ATOMIC_ACQUIRE),evictions,capacitySkips,
       (unsigned long long)lmipro_ui_stack_seconds(),(unsigned long long)gLmiproUIStacksDropped,
       __atomic_load_n(&gLmiproUIStacksDisplayPid,__ATOMIC_ACQUIRE));
