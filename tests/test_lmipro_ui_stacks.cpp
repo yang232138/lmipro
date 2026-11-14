@@ -138,7 +138,7 @@ int main(){
   assert(gLmiproUIStacksFocusCount==1 && gLmiproUIStacksFocusTids[0]==8200);
   // Never overwrite another thread's in-flight reservation or wait for its lock.
   for(auto &row:gLmiproUIStacks)row.state=1;
-  uint64_t drops=gLmiproUIStacksDropped;before=captures;skipped=gLmiproUIStacksCapacitySkips;
+  uint64_t drops=gLmiproUIStacksDropped;before=captures;unsigned skipped=gLmiproUIStacksCapacitySkips;
   lmipro_ui_user_event(1,515,0,0,0,58);
   assert(captures==before && gLmiproUIStacksStored==8 && gLmiproUIStacksDropped==drops+1);
   assert(gLmiproUIStacksCapacitySkips==skipped+1);
