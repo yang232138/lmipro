@@ -38,6 +38,10 @@ extern "C" volatile int lmipro_data_owner_stage,lmipro_data_owner_status;
 static volatile unsigned stage,registered,clients,clientType,guardSlot;
 static volatile int result,clientStatus;
 static volatile uint64_t mappedBase,mappedBytes,validationCalls,transferCalls;
+// Virtual address of the mapped GOP range. mappedBase keeps the physical address
+// for reporting; the MMU has no linear mapping for it, so pixel stores must use
+// this instead (a physical pointer faults with a level 3 translation fault).
+static volatile uintptr_t mappedVirtual;
 static IOService *activeDisplay,*activeProvider;
 
 static unsigned uiStacksEnabled;
@@ -193,7 +197,8 @@ extern "C" bool native_legacy_gop_mapping_observed(IOService *,IOMemoryMap *mapp
 {
     if(!mapping || width!=1080 || height!=2400 || !mapping->getVirtualAddress() ||
        mapping->getPhysicalAddress()!=0x9c000000ULL || mapping->getLength()!=10368000)return false;
-    mappedBase=mapping->getPhysicalAddress();mappedBytes=mapping->getLength();return true;
+    mappedBase=mapping->getPhysicalAddress();mappedBytes=mapping->getLength();
+    mappedVirtual=(uintptr_t)mapping->getVirtualAddress();return true;
 }
 extern "C" void native_legacy_registration_observed(IOService *) {registered=registered+1;}
 extern "C" void native_legacy_client_enter(task_t,uint32_t type) {
@@ -328,6 +333,32 @@ extern "C" void native_legacy_display_late_probe(void)
                 stage=7;result=(int)kIOReturnNotReady;
                 if(display->start(nub)) {
                     activeDisplay=display;activeProvider=nub;stage=8;result=0;lmiproModeFinish(true);
+                    // CPU presentation probe (lmipro-display-probe=1): paint the
+                    // mapped GOP memory with three known bands so CPU stores to
+                    // panel output is observable for this temporary boot. No Legacy
+                    // swap submission, no scanout ownership change and no panic
+                    // (a panic repaint would cover the pattern).
+                    unsigned probe=0;
+                    if(PE_parse_boot_argn("lmipro-display-probe",&probe,sizeof(probe)) && probe==1 &&
+                       mappedVirtual && mappedBytes>=10368000) {
+                        volatile uint32_t *pixels=(volatile uint32_t *)mappedVirtual;
+                        for(uint32_t y=0;y<2400;y++) {
+                            uint32_t color=(y<800)    ? 0xff0000ffU   // red (BGR order)
+                                          :(y<1600)   ? 0xff00ff00U   // green
+                                                      : 0xffff0000U;  // blue
+                            for(uint32_t x=0;x<1080;x++) pixels[(uint64_t)y*1080+x]=color;
+                        }
+                        // Clean the written pixels to the point of coherency: a display
+                        // controller reads memory, not our caches, so without this the
+                        // panel can keep showing the old console content.
+                        {
+                            uintptr_t begin=(uintptr_t)(mappedVirtual)&~(uintptr_t)63;
+                            uintptr_t end=(uintptr_t)(mappedVirtual)+10368000;
+                            for(uintptr_t at=begin;at<end;at+=64)
+                                __asm__ volatile("dc cvac, %0" :: "r"(at) : "memory");
+                            __asm__ volatile("dsb sy" ::: "memory");
+                        }
+                    }
                     // These initial references own the active services until reboot.
                     ranges->release();memory->release();dt->release();return;
                 }
