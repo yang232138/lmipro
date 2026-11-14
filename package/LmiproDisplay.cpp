@@ -314,6 +314,19 @@ extern "C" void native_legacy_display_late_probe(void)
        display->metaCast("IOMobileFramebufferLegacy") && display->metaCast("IOMobileFramebuffer") &&
        display->init() && nub->init() && ranges->setObject(memory)) {
         stage=5;nub->setDeviceMemory(ranges);nub->setName("NativeGOPFramebuffer");
+        // backboardd 探测显示父节点时读取 canvas-width/canvas-height：post-open
+        // 采样记录了 IORegistryEntryGetParentEntry 之后依次查询这两个属性。这里
+        // 发布已在上面校验过的实际 GOP 几何（PE_current_console 读数），不是编造
+        // 的面板参数；两个属性都只在本板 provider 上新增，不覆盖既有属性。
+        {
+            uint32_t canvasWidth=(uint32_t)video.v_width;
+            uint32_t canvasHeight=(uint32_t)video.v_height;
+            OSData *canvasWidthData=OSData::withBytes(&canvasWidth,sizeof(canvasWidth));
+            OSData *canvasHeightData=OSData::withBytes(&canvasHeight,sizeof(canvasHeight));
+            if(canvasWidthData)nub->setProperty("canvas-width",canvasWidthData);
+            if(canvasHeightData)nub->setProperty("canvas-height",canvasHeightData);
+            OSSafeReleaseNULL(canvasWidthData);OSSafeReleaseNULL(canvasHeightData);
+        }
         nubAttached=nub->attach(home);if(nubAttached)nubStarted=nub->start(home);
         if(nubStarted) {
             const char type[]="display-subsystem";
