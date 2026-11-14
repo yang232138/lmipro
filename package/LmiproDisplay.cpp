@@ -328,6 +328,32 @@ extern "C" void native_legacy_display_late_probe(void)
                 stage=7;result=(int)kIOReturnNotReady;
                 if(display->start(nub)) {
                     activeDisplay=display;activeProvider=nub;stage=8;result=0;lmiproModeFinish(true);
+                    // CPU presentation probe (lmipro-display-probe=1): paint the
+                    // mapped GOP memory with three known bands so CPU stores to
+                    // panel output is observable for this temporary boot. No Legacy
+                    // swap submission, no scanout ownership change and no panic
+                    // (a panic repaint would cover the pattern).
+                    unsigned probe=0;
+                    if(PE_parse_boot_argn("lmipro-display-probe",&probe,sizeof(probe)) && probe==1 &&
+                       mappedBase && mappedBytes>=10368000) {
+                        volatile uint32_t *pixels=(volatile uint32_t *)(uintptr_t)mappedBase;
+                        for(uint32_t y=0;y<2400;y++) {
+                            uint32_t color=(y<800)    ? 0xff0000ffU   // red (BGR order)
+                                          :(y<1600)   ? 0xff00ff00U   // green
+                                                      : 0xffff0000U;  // blue
+                            for(uint32_t x=0;x<1080;x++) pixels[(uint64_t)y*1080+x]=color;
+                        }
+                        // Clean the written pixels to the point of coherency: a display
+                        // controller reads memory, not our caches, so without this the
+                        // panel can keep showing the old console content.
+                        {
+                            uintptr_t begin=(uintptr_t)(mappedBase)&~(uintptr_t)63;
+                            uintptr_t end=(uintptr_t)(mappedBase)+10368000;
+                            for(uintptr_t at=begin;at<end;at+=64)
+                                __asm__ volatile("dc cvac, %0" :: "r"(at) : "memory");
+                            __asm__ volatile("dsb sy" ::: "memory");
+                        }
+                    }
                     // These initial references own the active services until reboot.
                     ranges->release();memory->release();dt->release();return;
                 }
