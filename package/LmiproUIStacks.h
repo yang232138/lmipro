@@ -152,11 +152,10 @@ extern "C" __attribute__((noinline)) unsigned lmipro_ui_stack_report(char *out,u
     unsigned evictions=gLmiproUIStacksFocusEvictions,capacitySkips=gLmiproUIStacksCapacitySkips;
     for(unsigned i=0;i<stored;++i)rows[i]=gLmiproUIStacks[i];
     __sync_lock_release(&gLmiproUIStacksBusy);
-    int n=snprintf(out,capacity,"UI stacks on%u stored%u cap8 depth8 focus%llu+%u auto%u ev%u capSkip%u now%llu drop%llu\n"
+    int n=snprintf(out,capacity,"UI stacks on%u stored%u cap8 depth8 focus%llu auto%u ev%u capSkip%u now%llu drop%llu\n"
       "open pid%d; focused calls all, others -47/375 every10; entry only\n",
       gLmiproUIStacksEnabled,stored,
       (unsigned long long)__atomic_load_n(&gLmiproUIStacksFocusTids[0],__ATOMIC_ACQUIRE),
-      __atomic_load_n(&gLmiproUIStacksFocusCount,__ATOMIC_ACQUIRE),
       __atomic_load_n(&gLmiproUIStacksAutoFocus,__ATOMIC_ACQUIRE),evictions,capacitySkips,
       (unsigned long long)lmipro_ui_stack_seconds(),(unsigned long long)gLmiproUIStacksDropped,
       __atomic_load_n(&gLmiproUIStacksDisplayPid,__ATOMIC_ACQUIRE));
