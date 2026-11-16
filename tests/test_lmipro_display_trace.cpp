@@ -2,6 +2,10 @@
 #include <stdio.h>
 #include <string.h>
 #include "../package/LmiproDisplayTrace.h"
+
+// The kernel defines this ring in sleh.c; host tests need their own copy.
+extern "C" volatile uint64_t lmipro_user_faults[8][5] = {};
+extern "C" volatile unsigned lmipro_user_fault_count = 0;
 int main()
 {
     lmiproRecordDisplayMethod(0,6,0,58,1,2,3);
