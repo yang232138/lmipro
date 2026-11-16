@@ -4,7 +4,7 @@
 #include "../package/LmiproDisplayTrace.h"
 
 // The kernel defines this ring in sleh.c; host tests need their own copy.
-extern "C" volatile uint64_t lmipro_user_faults[8][5] = {};
+extern "C" volatile uint64_t lmipro_user_faults[8][6] = {};
 extern "C" volatile unsigned lmipro_user_fault_count = 0;
 int main()
 {
