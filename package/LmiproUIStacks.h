@@ -4,8 +4,8 @@
 extern "C" unsigned lmipro_ui_stack_ready(void);
 extern "C" uint64_t lmipro_ui_stack_seconds(void);
 extern "C" unsigned lmipro_ui_stack_capture(uintptr_t *,unsigned,int *,unsigned *);
-extern "C" volatile uint64_t lmipro_user_faults[8][5];
-extern "C" volatile unsigned lmipro_user_fault_count;
+extern "C" volatile uint64_t lmipro_user_faults[8][5] __attribute__((weak));
+extern "C" volatile unsigned lmipro_user_fault_count __attribute__((weak));
 struct LmiproUIStack {
     int pid,code,error;uint64_t tid;unsigned state,count,info,postOpen,samples,returned;uint64_t seconds,result,status,irqPC,irqCount,irqSame;uintptr_t pc[8];
 };
