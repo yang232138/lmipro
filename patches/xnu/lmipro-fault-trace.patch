@@ -1,20 +1,31 @@
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
-@@ -1542,6 +1542,19 @@
+@@ -67,6 +67,11 @@
+ #include <sys/code_signing.h>
+ #include <kperf/kperf.h>
+ 
++/* LMIPRO user fault ring: printf output is overwritten by the 600 s diagnostic
++ * panic, so the first aborts are recorded here and printed by that page. */
++volatile uint64_t lmipro_user_faults[8][5];
++volatile unsigned lmipro_user_fault_count;
++
+ #include <kern/policy_internal.h>
+ 
+ #if defined(KASAN) && KASAN
+@@ -1541,7 +1546,18 @@
+ static void
  handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr,
      fault_status_t fault_code, vm_prot_t fault_type, expected_fault_handler_t expected_fault_handler)
  {
-+	/* LMIPRO fault trace: the current blocker is a userspace abort loop
-+	 * (SpringBoard reports ec=20 with pc == far). Print the first few so the
-+	 * faulting address can be identified without a symbol server. */
 +	{
-+		static unsigned lmipro_fault_logs;
-+		if (lmipro_fault_logs < 8) {
-+			printf("LMIPRO USERFAULT esr=%x far=%llx pc=%llx tid=%llu\n",
-+			    (unsigned)esr, (unsigned long long)fault_addr,
-+			    (unsigned long long)get_saved_state_pc(state),
-+			    (unsigned long long)thread_tid(current_thread()));
-+			lmipro_fault_logs++;
++		unsigned idx = lmipro_user_fault_count;
++		if (idx < 8) {
++			lmipro_user_faults[idx][0] = (uint64_t)esr;
++			lmipro_user_faults[idx][1] = (uint64_t)fault_addr;
++			lmipro_user_faults[idx][2] = (uint64_t)get_saved_state_pc(state);
++			lmipro_user_faults[idx][3] = (uint64_t)thread_tid(current_thread());
++			lmipro_user_faults[idx][4] = (uint64_t)fault_code;
++			lmipro_user_fault_count = idx + 1;
 +		}
 +	}
  	exception_type_t           exc      = EXC_BAD_ACCESS;
