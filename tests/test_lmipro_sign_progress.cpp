@@ -13,6 +13,10 @@ static bool advance=true;
 static std::vector<unsigned> sleeps;
 static void IOSleep(unsigned ms){sleeps.push_back(ms);if(advance){cs_native4k_full_blocks+=64;cs_native4k_bytes+=1048576;cs_native4k_ready_blobs++;cs_native4k_read_ticks+=100;cs_native4k_hash_ticks+=50;}}
 #include "../package/LmiproSignProgress.h"
+
+// The kernel defines this ring in sleh.c; host tests need their own copy.
+extern "C" volatile uint64_t lmipro_user_faults[8][5] = {};
+extern "C" volatile unsigned lmipro_user_fault_count = 0;
 int main(){
   char out[448];lmiproWaitSignProgress(out,sizeof out);
   assert((sleeps==std::vector<unsigned>{30000,570000}));
