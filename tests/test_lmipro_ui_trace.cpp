@@ -11,6 +11,10 @@ extern "C" unsigned lmipro_ui_stack_ready(void){return 0;}
 extern "C" uint64_t lmipro_ui_stack_seconds(void){return 0;}
 extern "C" unsigned lmipro_ui_stack_capture(uintptr_t *,unsigned,int *,unsigned *){assert(false);return 0;}
 #include "../package/LmiproUITrace.h"
+
+// The kernel defines this ring in sleh.c; host tests need their own copy.
+extern "C" volatile uint64_t lmipro_user_faults[8][5] = {};
+extern "C" volatile unsigned lmipro_user_fault_count = 0;
 int main(){
     lmipro_ui_user_event(1,31,0x100,2,3,26);assert(!nameCopies&&!gLmiproUIActors[0].entries);
     lmipro_ui_trace_enable(2);assert(!gLmiproUIEnabled);
