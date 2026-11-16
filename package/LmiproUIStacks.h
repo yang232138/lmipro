@@ -4,7 +4,7 @@
 extern "C" unsigned lmipro_ui_stack_ready(void);
 extern "C" uint64_t lmipro_ui_stack_seconds(void);
 extern "C" unsigned lmipro_ui_stack_capture(uintptr_t *,unsigned,int *,unsigned *);
-extern "C" volatile uint64_t lmipro_user_faults[8][6];
+extern "C" volatile uint64_t lmipro_user_faults[8][7];
 extern "C" volatile unsigned lmipro_user_fault_count;
 extern "C" char lmipro_user_fault_name[8][17];
 struct LmiproUIStack {
@@ -183,13 +183,14 @@ extern "C" __attribute__((noinline)) unsigned lmipro_ui_stack_report(char *out,u
         if (fc > 4) fc = 4;
         for (unsigned i = 0; i < fc && used < capacity - 1; ++i) {
             n = snprintf(out + used, capacity - used,
-                "FAULT%u esr=%llx far=%llx pc=%llx tid=%llu fsc=%llx pid=%u name=%s\n",
+                "FAULT%u esr=%llx far=%llx pc=%llx tid=%llu fsc=%llx pid=%u name=%s ret=%llx\n",
                 i, (unsigned long long)lmipro_user_faults[i][0],
                 (unsigned long long)lmipro_user_faults[i][1],
                 (unsigned long long)lmipro_user_faults[i][2],
                 (unsigned long long)lmipro_user_faults[i][3],
                 (unsigned long long)lmipro_user_faults[i][4],
-                (unsigned)lmipro_user_faults[i][5], lmipro_user_fault_name[i]);
+                (unsigned)lmipro_user_faults[i][5], lmipro_user_fault_name[i],
+                (unsigned long long)lmipro_user_faults[i][6]);
             if (n < 0) break;
             used += (unsigned)n < capacity - used ? (unsigned)n : capacity - used - 1;
         }
