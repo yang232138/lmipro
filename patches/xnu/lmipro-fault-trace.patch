@@ -1,8 +1,10 @@
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
-@@ -1547,7 +1547,22 @@
+@@ -1547,7 +1547,29 @@
 +extern volatile uint64_t lmipro_user_faults[8][6];
 +extern volatile unsigned lmipro_user_fault_count;
++extern unsigned long cs_validate_page_bad_hash;
++extern unsigned long cs_validate_page_no_hash;
 +
  static void
  handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr,
@@ -16,29 +18,19 @@
 +			lmipro_user_faults[idx][2] = (uint64_t)get_saved_state_pc(state);
 +			lmipro_user_faults[idx][3] = (uint64_t)thread_tid(current_thread());
 +			lmipro_user_faults[idx][4] = (uint64_t)fault_code;
-+			lmipro_user_faults[idx][5] = (uint64_t)~0ULL;
++			/* Signature-failure counters at the moment of the fault: a rising
++			 * bad_hash means the page contents were rejected, no_hash means the
++			 * file carries no signature for it at all. */
++			lmipro_user_faults[idx][5] =
++			    ((uint64_t)cs_validate_page_bad_hash << 32) |
++			    (uint64_t)cs_validate_page_no_hash;
 +			lmipro_user_fault_count = idx + 1;
 +		}
 +	}
  	exception_type_t           exc      = EXC_BAD_ACCESS;
  	mach_exception_data_type_t codes[2];
  	mach_msg_type_number_t     numcodes = 2;
-@@ -1595,6 +1610,14 @@
- 		if (__improbable(result == KERN_FAILURE)) {
- 			panic("vm_fault() KERN_FAILURE from user fault on thread %p", thread);
- 		}
-+		/* LMIPRO: the page-in failed. Keep the code so the diagnostic page can
-+		 * tell an invalid address from a rejected or unreadable page. */
-+		{
-+			unsigned idx = lmipro_user_fault_count;
-+			if (idx > 0 && idx <= 8) {
-+				lmipro_user_faults[idx - 1][5] = (uint64_t)result;
-+			}
-+		}
- 
- 		codes[0] = result;
- 	} else if (is_alignment_fault(fault_code)) {
-@@ -2400,0 +2422,6 @@
+@@ -2400,0 +2413,6 @@
 +
 +/* LMIPRO user fault ring: printf is overwritten by the 600 s diagnostic panic,
 + * so the first aborts are recorded here and printed by that page. */
