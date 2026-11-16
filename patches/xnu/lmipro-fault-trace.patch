@@ -1,7 +1,7 @@
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
 @@ -1547,7 +1547,29 @@
-+extern volatile uint64_t lmipro_user_faults[8][6];
++extern volatile uint64_t lmipro_user_faults[8][7];
 +extern volatile unsigned lmipro_user_fault_count;
 +extern char lmipro_user_fault_name[8][17];
 +extern int proc_selfpid(void);
@@ -19,10 +19,10 @@
 +			lmipro_user_faults[idx][2] = (uint64_t)get_saved_state_pc(state);
 +			lmipro_user_faults[idx][3] = (uint64_t)thread_tid(current_thread());
 +			lmipro_user_faults[idx][4] = (uint64_t)fault_code;
-+			/* Read the identity here, while this thread is the faulting one:
-+			 * current_proc() is the same accessor csm_code_signing_violation
-+			 * already uses below, so pid/name belong to this exact event. */
++			/* same event: current_proc() is the accessor used below by
++			 * csm_code_signing_violation, so pid/name are this fault's. */
 +			lmipro_user_faults[idx][5] = (uint64_t)proc_selfpid();
++			lmipro_user_faults[idx][6] = (uint64_t)~0ULL;
 +			proc_selfname(lmipro_user_fault_name[idx], 17);
 +			lmipro_user_fault_count = idx + 1;
 +		}
@@ -30,11 +30,26 @@
  	exception_type_t           exc      = EXC_BAD_ACCESS;
  	mach_exception_data_type_t codes[2];
  	mach_msg_type_number_t     numcodes = 2;
-@@ -2400,0 +2427,7 @@
+@@ -1595,6 +1617,14 @@
+ 		if (__improbable(result == KERN_FAILURE)) {
+ 			panic("vm_fault() KERN_FAILURE from user fault on thread %p", thread);
+ 		}
++		/* The page-in failed. Keep its code next to the event it belongs to:
++		 * KERN_INVALID_ADDRESS and KERN_MEMORY_FAILURE need different fixes. */
++		{
++			unsigned idx = lmipro_user_fault_count;
++			if (idx > 0 && idx <= 8) {
++				lmipro_user_faults[idx - 1][6] = (uint64_t)result;
++			}
++		}
+ 
+ 		codes[0] = result;
+ 	} else if (is_alignment_fault(fault_code)) {
+@@ -2400,0 +2437,7 @@
 +
 +/* LMIPRO user fault ring: printf is overwritten by the 600 s diagnostic panic,
 + * so the first aborts are recorded here and printed by that page. */
-+volatile uint64_t lmipro_user_faults[8][6];
++volatile uint64_t lmipro_user_faults[8][7];
 +volatile unsigned lmipro_user_fault_count;
 +char lmipro_user_fault_name[8][17];
 +
