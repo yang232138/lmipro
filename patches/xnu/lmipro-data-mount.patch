@@ -65,8 +65,8 @@
 +	lmipro_data_readonly = (vfs_flags(data_mount) & MNT_RDONLY) != 0;
 +	if (actual != device || (vfs_flags(data_mount) & MNT_RDONLY) ||
 +	    strcmp(vfs_statfs(data_mount)->f_fstypename, "apfs")) error = EINVAL;
++	if (!error) lmipro_data_stage = 4;
 +	if (!error) {
-+		lmipro_data_stage = 4;
 +		/* Disable the two wallpaper extensions by their launchd labels: each
 +		 * faults on a userspace pointer every boot and stops the compositor before
 +		 * its first swap. launchd's disabled list is a small XML plist. */
