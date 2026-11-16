@@ -3,8 +3,9 @@
 @@ -1547,7 +1547,29 @@
 +extern volatile uint64_t lmipro_user_faults[8][6];
 +extern volatile unsigned lmipro_user_fault_count;
-+extern unsigned long cs_validate_page_bad_hash;
-+extern unsigned long cs_validate_page_no_hash;
++extern char lmipro_user_fault_name[8][17];
++extern int proc_selfpid(void);
++extern void proc_selfname(char *, int);
 +
  static void
  handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr,
@@ -18,22 +19,22 @@
 +			lmipro_user_faults[idx][2] = (uint64_t)get_saved_state_pc(state);
 +			lmipro_user_faults[idx][3] = (uint64_t)thread_tid(current_thread());
 +			lmipro_user_faults[idx][4] = (uint64_t)fault_code;
-+			/* Signature-failure counters at the moment of the fault: a rising
-+			 * bad_hash means the page contents were rejected, no_hash means the
-+			 * file carries no signature for it at all. */
-+			lmipro_user_faults[idx][5] =
-+			    ((uint64_t)cs_validate_page_bad_hash << 32) |
-+			    (uint64_t)cs_validate_page_no_hash;
++			/* Read the identity here, while this thread is the faulting one:
++			 * current_proc() is the same accessor csm_code_signing_violation
++			 * already uses below, so pid/name belong to this exact event. */
++			lmipro_user_faults[idx][5] = (uint64_t)proc_selfpid();
++			proc_selfname(lmipro_user_fault_name[idx], 17);
 +			lmipro_user_fault_count = idx + 1;
 +		}
 +	}
  	exception_type_t           exc      = EXC_BAD_ACCESS;
  	mach_exception_data_type_t codes[2];
  	mach_msg_type_number_t     numcodes = 2;
-@@ -2400,0 +2413,6 @@
+@@ -2400,0 +2427,7 @@
 +
 +/* LMIPRO user fault ring: printf is overwritten by the 600 s diagnostic panic,
 + * so the first aborts are recorded here and printed by that page. */
 +volatile uint64_t lmipro_user_faults[8][6];
 +volatile unsigned lmipro_user_fault_count;
++char lmipro_user_fault_name[8][17];
 +
