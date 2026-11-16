@@ -1,18 +1,6 @@
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
-@@ -67,6 +67,11 @@
- #include <sys/code_signing.h>
- #include <kperf/kperf.h>
- 
-+/* LMIPRO user fault ring: printf output is overwritten by the 600 s diagnostic
-+ * panic, so the first aborts are recorded here and printed by that page. */
-+volatile uint64_t lmipro_user_faults[8][5];
-+volatile unsigned lmipro_user_fault_count;
-+
- #include <kern/policy_internal.h>
- 
- #if defined(KASAN) && KASAN
-@@ -1541,7 +1546,18 @@
+@@ -1547,7 +1547,18 @@
  static void
  handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr,
      fault_status_t fault_code, vm_prot_t fault_type, expected_fault_handler_t expected_fault_handler)
@@ -31,3 +19,10 @@
  	exception_type_t           exc      = EXC_BAD_ACCESS;
  	mach_exception_data_type_t codes[2];
  	mach_msg_type_number_t     numcodes = 2;
+@@ -2400,0 +2413,6 @@
++
++/* LMIPRO user fault ring: printf is overwritten by the 600 s diagnostic panic,
++ * so the first aborts are recorded here and printed by that page. */
++volatile uint64_t lmipro_user_faults[8][5];
++volatile unsigned lmipro_user_fault_count;
++
