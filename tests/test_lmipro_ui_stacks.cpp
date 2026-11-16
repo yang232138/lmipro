@@ -2,6 +2,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+// The header references this ring; the kernel defines it in sleh.c.
+volatile uint64_t lmipro_user_faults[8][5] = {};
+volatile unsigned lmipro_user_fault_count = 0;
 #include <initializer_list>
 static const char *testName="backboardd";
 static uint64_t testTid=100;
