@@ -1,0 +1,22 @@
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1536,6 +1536,19 @@
+ handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr,
+     fault_status_t fault_code, vm_prot_t fault_type, expected_fault_handler_t expected_fault_handler)
+ {
++	/* LMIPRO fault trace: the current blocker is a userspace abort loop
++	 * (SpringBoard reports ec=20 with pc == far). Print the first few so the
++	 * faulting address can be identified without a symbol server. */
++	{
++		static unsigned lmipro_fault_logs;
++		if (lmipro_fault_logs < 8) {
++			printf("LMIPRO USERFAULT esr=%x far=%llx pc=%llx tid=%llu\n",
++			    (unsigned)esr, (unsigned long long)fault_addr,
++			    (unsigned long long)get_saved_state_pc(state),
++			    (unsigned long long)thread_tid(current_thread()));
++			lmipro_fault_logs++;
++		}
++	}
+ 	exception_type_t           exc      = EXC_BAD_ACCESS;
+ 	mach_exception_data_type_t codes[2];
+ 	mach_msg_type_number_t     numcodes = 2;
