@@ -5,6 +5,10 @@
 static volatile unsigned gLmiproUIEnabled=0;
 static const char *const gLmiproUINames[2]={"SpringBoard","backboardd"};
 #include "../package/LmiproUIExit.h"
+
+// The kernel defines this ring in sleh.c; host tests need their own copy.
+extern "C" volatile uint64_t lmipro_user_faults[8][5] = {};
+extern "C" volatile unsigned lmipro_user_fault_count = 0;
 int main(){
  lmipro_ui_exit_event(58,"backboardd",0x1e00,0,0);assert(!gLmiproUIExitCounts[1]);
  gLmiproUIEnabled=1;
