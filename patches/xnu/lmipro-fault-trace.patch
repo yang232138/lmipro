@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
-@@ -1536,6 +1536,19 @@
+@@ -1542,6 +1542,19 @@
  handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr,
      fault_status_t fault_code, vm_prot_t fault_type, expected_fault_handler_t expected_fault_handler)
  {
