@@ -139,7 +139,7 @@ static __attribute__((noinline)) bool lmiproConfigureDisplayMode(const PE_Video 
 
 extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
 {
-    char methods[1200]={},opens[640]={};
+    char methods[1400]={},opens[640]={};
     lmiproFormatDisplayMethods(methods,sizeof(methods));
     lmiproFormatClients(opens,sizeof(opens));
     return snprintf(out,capacity,
@@ -182,7 +182,16 @@ extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t select
         for(unsigned i=0;i<count;++i)values[i]=args->scalarOutput[i];
     }
     char name[17]={};proc_selfname(name,sizeof(name));name[16]=0;
-    lmiproRecordDisplayMethod(kind,selector,(uint32_t)status,proc_selfpid(),values[0],values[1],values[2],name,outputCount);
+    uint32_t inScalars=0,inStructBytes=0,outScalars=0,outStructBytes=0;
+    if(kind==0 && args) {
+        inScalars=args->scalarInputCount;
+        inStructBytes=uint32_t(args->structureInputSize);
+    } else if(kind==1 && args) {
+        outScalars=args->scalarOutputCount;
+        outStructBytes=uint32_t(args->structureOutputSize);
+    }
+    lmiproRecordDisplayMethod(kind,selector,(uint32_t)status,proc_selfpid(),values[0],values[1],values[2],name,outputCount,
+        inScalars,inStructBytes,outScalars,outStructBytes);
 }
 extern "C" __attribute__((noreturn)) void native_legacy_backend_guard(unsigned slot,void *,void *caller)
 {

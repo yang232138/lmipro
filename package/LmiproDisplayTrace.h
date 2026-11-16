@@ -12,6 +12,9 @@ struct LmiproDisplaySelector {
     uint32_t status;
     uint64_t output[3];
     unsigned outputCount;
+    // Latest request shape and caller, copied in the same guarded update as the counts.
+    uint32_t inScalars,inStructBytes,outScalars,outStructBytes;
+    int pid;
 };
 static volatile unsigned gLmiproDisplayTraceEnabled=0;
 static volatile int gLmiproDisplayTraceBusy=0;
@@ -22,7 +25,8 @@ static LmiproDisplayMethod gLmiproDisplayLastIn={},gLmiproDisplayLastOut={},gLmi
 static LmiproDisplaySelector gLmiproDisplaySelectors[96]={};
 
 static void lmiproRecordDisplayMethod(unsigned kind,uint32_t selector,uint32_t status,
-    int pid,uint64_t a,uint64_t b,uint64_t c,const char *name=nullptr,unsigned outputCount=0)
+    int pid,uint64_t a,uint64_t b,uint64_t c,const char *name=nullptr,unsigned outputCount=0,
+    uint32_t inScalars=0,uint32_t inStructBytes=0,uint32_t outScalars=0,uint32_t outStructBytes=0)
 {
     if(!gLmiproDisplayTraceEnabled || kind>1)return;
     if(!__sync_bool_compare_and_swap(&gLmiproDisplayTraceBusy,0,1)) {
@@ -32,7 +36,12 @@ static void lmiproRecordDisplayMethod(unsigned kind,uint32_t selector,uint32_t s
     if(name)for(unsigned i=0;i<16 && name[i];++i)event.name[i]=name[i];
     if(kind==0) {
         ++gLmiproDisplayEntered;gLmiproDisplayLastIn=event;
-        if(selector<96)++gLmiproDisplaySelectors[selector].entered;
+        if(selector<96) {
+            ++gLmiproDisplaySelectors[selector].entered;
+            gLmiproDisplaySelectors[selector].inScalars=inScalars;
+            gLmiproDisplaySelectors[selector].inStructBytes=inStructBytes;
+            gLmiproDisplaySelectors[selector].pid=pid;
+        }
     } else {
         ++gLmiproDisplayReturned;gLmiproDisplayLastOut=event;
         if(status && !gLmiproDisplayErrorValid) {
@@ -45,6 +54,9 @@ static void lmiproRecordDisplayMethod(unsigned kind,uint32_t selector,uint32_t s
             gLmiproDisplaySelectors[selector].output[0]=a;
             gLmiproDisplaySelectors[selector].output[1]=b;
             gLmiproDisplaySelectors[selector].output[2]=c;
+            gLmiproDisplaySelectors[selector].outScalars=outScalars;
+            gLmiproDisplaySelectors[selector].outStructBytes=outStructBytes;
+            gLmiproDisplaySelectors[selector].pid=pid;
         }
     }
     __sync_lock_release(&gLmiproDisplayTraceBusy);
@@ -60,6 +72,7 @@ static unsigned lmiproFormatDisplayMethods(char *out,unsigned capacity)
     const unsigned valid=gLmiproDisplayErrorValid;
     LmiproDisplaySelector rows[16]={};unsigned selectors[16]={},shown=0,unique=0;
     const LmiproDisplaySelector dimensions=gLmiproDisplaySelectors[8],pitch=gLmiproDisplaySelectors[28];
+    const LmiproDisplaySelector sel5=gLmiproDisplaySelectors[5],sel17=gLmiproDisplaySelectors[17];
     for(unsigned i=0;i<96;++i) {
         if(!gLmiproDisplaySelectors[i].entered && !gLmiproDisplaySelectors[i].returned)continue;
         ++unique;
@@ -72,12 +85,19 @@ static unsigned lmiproFormatDisplayMethods(char *out,unsigned capacity)
       "last out sel=%u pid=%d name=%s status=%x\n"
       "first error valid=%u sel=%u status=%x; expected errors possible\n"
       "scalar replies: 8 n=%u %llx/%llx; 28 n=%u %llx\n"
+      "sel5 in=%u/%u out=%u/%u pid=%d st=%x ent=%llu ret=%llu\n"
+      "sel17 in=%u/%u out=%u/%u pid=%d st=%x ent=%llu ret=%llu\n"
       "selectors shown=%u of %u (cap16): ",
       (unsigned long long)entered,(unsigned long long)returned,(unsigned long long)gLmiproDisplayTraceDropped,
       in.selector,in.pid,in.name,(unsigned long long)in.scalar[0],(unsigned long long)in.scalar[1],(unsigned long long)in.scalar[2],
       back.selector,back.pid,back.name,back.status,valid,err.selector,err.status,
       dimensions.outputCount,(unsigned long long)dimensions.output[0],(unsigned long long)dimensions.output[1],
-      pitch.outputCount,(unsigned long long)pitch.output[0],shown,unique);
+      pitch.outputCount,(unsigned long long)pitch.output[0],
+      sel5.inScalars,sel5.inStructBytes,sel5.outScalars,sel5.outStructBytes,sel5.pid,sel5.status,
+      (unsigned long long)sel5.entered,(unsigned long long)sel5.returned,
+      sel17.inScalars,sel17.inStructBytes,sel17.outScalars,sel17.outStructBytes,sel17.pid,sel17.status,
+      (unsigned long long)sel17.entered,(unsigned long long)sel17.returned,
+      shown,unique);
     if(n<0)return 0;
     unsigned used=(unsigned)n<capacity?(unsigned)n:capacity-1;
     for(unsigned i=0;i<shown && used<capacity-1;++i) {
