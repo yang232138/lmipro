@@ -1,6 +1,9 @@
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
-@@ -1547,7 +1547,18 @@
+@@ -1547,7 +1547,21 @@
++extern volatile uint64_t lmipro_user_faults[8][5];
++extern volatile unsigned lmipro_user_fault_count;
++
  static void
  handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr,
      fault_status_t fault_code, vm_prot_t fault_type, expected_fault_handler_t expected_fault_handler)
@@ -19,7 +22,7 @@
  	exception_type_t           exc      = EXC_BAD_ACCESS;
  	mach_exception_data_type_t codes[2];
  	mach_msg_type_number_t     numcodes = 2;
-@@ -2400,0 +2413,6 @@
+@@ -2400,0 +2414,6 @@
 +
 +/* LMIPRO user fault ring: printf is overwritten by the 600 s diagnostic panic,
 + * so the first aborts are recorded here and printed by that page. */
