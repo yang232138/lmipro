@@ -42,6 +42,10 @@ extern "C" unsigned lmipro_ui_stack_ready(void){return 0;}
 extern "C" uint64_t lmipro_ui_stack_seconds(void){return 0;}
 extern "C" unsigned lmipro_ui_stack_capture(uintptr_t *,unsigned,int *,unsigned *){assert(false);return 0;}
 #include "../package/LmiproDataWatch.h"
+
+// The kernel defines this ring in sleh.c; host tests need their own copy.
+extern "C" volatile uint64_t lmipro_user_faults[8][5] = {};
+extern "C" volatile unsigned lmipro_user_fault_count = 0;
 extern "C" int proc_selfpid(){return tracePid;}
 extern "C" void proc_name(int pid,char *buffer,int size){assert(pid>=1&&pid<=64&&size==17);++processQueries;const char *name=pid==1?"launchd":pid==3?"mount":pid==17?"tzinit":"";snprintf(buffer,(size_t)size,"%s",name);}
 int main(){
