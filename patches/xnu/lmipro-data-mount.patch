@@ -17,7 +17,52 @@
 +uint8_t lmipro_data_seed_sha256[32];
 +char lmipro_data_device_path[64];
 +
++
++/* Write launchd's disabled list, a small XML plist. The two wallpaper
++ * extensions fault on a userspace pointer every boot and stop the compositor
++ * before its first swap; disabling them by their launchd labels (not the short
++ * process names) is what alioth's sheng-lite does. */
 +static int
++lmipro_write_launchd_disabled(proc_t p, user_addr_t scratch, const char *policy)
++{
++	const char *directory = "/private/var/db/com.apple.xpc.launchd";
++	const char *path = "/private/var/db/com.apple.xpc.launchd/disabled.plist";
++	int error = 0, fd = -1;
++	int32_t result = 0;
++	struct mkdir_args md = { .path = scratch, .mode = 0755 };
++	if ((error = copyout(directory, scratch, strlen(directory) + 1))) goto done;
++	error = mkdir(p, &md, &result);
++	if (error && error != EEXIST) goto done;
++	error = 0;
++	if ((error = copyout(path, scratch, strlen(path) + 1))) goto done;
++	struct open_args op = { .path = scratch,
++	    .flags = O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, .mode = 0644 };
++	if ((error = open(p, &op, &result))) goto done;
++	fd = result;
++	for (size_t sent = 0, total = strlen(policy); sent < total; ) {
++		size_t piece = total - sent < 0x1f0 ? total - sent : 0x1f0;
++		if ((error = copyout(policy + sent, scratch + 0x200, piece))) goto done;
++		struct write_args wr = { .fd = fd, .cbuf = scratch + 0x200, .nbyte = piece };
++		user_ssize_t written = 0;
++		if ((error = write(p, &wr, &written))) goto done;
++		if (written != (user_ssize_t)piece) { error = EIO; goto done; }
++		sent += piece;
++	}
++	struct fchown_args owner = { .fd = fd, .uid = 0, .gid = 0 };
++	if ((error = fchown(p, &owner, &result))) goto done;
++	struct fchmod_args mode = { .fd = fd, .mode = 0644 };
++	if ((error = fchmod(p, &mode, &result))) goto done;
++	struct fsync_args sync = { .fd = fd };
++	error = fsync(p, &sync);
++done:
++	if (fd >= 0) {
++		struct close_args cl = { .fd = fd };
++		close(p, &cl, &result);
++	}
++	return error;
++}
++
+++static int
 +lmipro_data_prepare(proc_t p, user_addr_t scratch)
 +{
 +	uint64_t base = 0, size = 0;
@@ -65,7 +110,20 @@
 +	lmipro_data_readonly = (vfs_flags(data_mount) & MNT_RDONLY) != 0;
 +	if (actual != device || (vfs_flags(data_mount) & MNT_RDONLY) ||
 +	    strcmp(vfs_statfs(data_mount)->f_fstypename, "apfs")) error = EINVAL;
-+	if (!error) lmipro_data_stage = 4;
++	if (!error) {
++		lmipro_data_stage = 4;
++		/* The wallpaper extensions are disabled by their launchd labels. */
++		static const char lite_policy[] =
++		    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
++		    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
++		    "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
++		    "<plist version=\"1.0\"><dict>\n"
++		    "<key>com.apple.NanoUniverse.AegirProxyApp.AegirPoster</key><true/>\n"
++		    "<key>com.apple.WatchFacesWallpaperSupport.KaleidoscopePoster</key><true/>\n"
++		    "</dict></plist>\n";
++		int policy_error = lmipro_write_launchd_disabled(p, scratch, lite_policy);
++		if (policy_error) lmipro_data_status = policy_error;
++	}
 +done:
 +	if (data_root) vnode_put(data_root);
 +	lmipro_data_status = error;
