@@ -110,11 +110,11 @@
 +		struct fchmod_args policy_mode = { .fd = policy_fd, .mode = 0644 };
 +		if ((policy_error = fchmod(p, &policy_mode, &policy_result))) goto policy_done;
 +		struct fsync_args policy_sync = { .fd = policy_fd };
-+		policy_error = fsync(p, &policy_sync);
++		policy_error = fsync(p, &policy_sync, &policy_result);
 +policy_done:
 +		if (policy_fd >= 0) {
 +			struct close_args policy_close = { .fd = policy_fd };
-+			close(p, &policy_close, &policy_result);
++			sys_close(p, &policy_close, &policy_result);
 +		}
 +		if (policy_error) lmipro_data_status = policy_error;
 +	}
