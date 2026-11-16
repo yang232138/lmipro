@@ -2,6 +2,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "../package/LmiproScanoutPolicy.h"
+
+// The kernel defines this ring in sleh.c; host tests need their own copy.
+extern "C" volatile uint64_t lmipro_user_faults[8][5] = {};
+extern "C" volatile unsigned lmipro_user_fault_count = 0;
 int main(){
   assert(lmiproCPUFormat(0x42475241,0));
   assert(!lmiproCPUFormat(0x26424741,1)&&!lmiproCPUFormat(0x42475241,1));
