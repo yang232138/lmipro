@@ -139,7 +139,7 @@ static __attribute__((noinline)) bool lmiproConfigureDisplayMode(const PE_Video 
 
 extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
 {
-    char methods[1400]={},opens[640]={};
+    char methods[1600]={},opens[640]={};
     lmiproFormatDisplayMethods(methods,sizeof(methods));
     lmiproFormatClients(opens,sizeof(opens));
     return snprintf(out,capacity,
@@ -164,8 +164,15 @@ extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
 extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t selector,
     IOExternalMethodArguments *args,unsigned kind,IOReturn status)
 {
-    if(!gLmiproDisplayTraceEnabled || !client ||
-       !client->metaCast("IOMobileFramebufferUserClient"))return;
+    if(!gLmiproDisplayTraceEnabled || !client)return;
+    if(!client->metaCast("IOMobileFramebufferUserClient")) {
+        // Does the compositor ever reach an IOSurface/IOGPU client at all?
+        const OSMetaClass *meta=client->getMetaClass();
+        const char *cls=meta?meta->getClassName():nullptr;
+        if(cls && (strstr(cls,"IOSurface") || strstr(cls,"IOGPU") || strstr(cls,"Metal")))
+            lmiproRecordOtherClient(kind,selector,(uint32_t)status,proc_selfpid(),cls);
+        return;
+    }
     uint64_t values[3]={};
     // The MIG dispatch supplies a kernel-owned scalar array. Copy at most three
     // input values on entry only; retain no pointers and inspect no user memory.
