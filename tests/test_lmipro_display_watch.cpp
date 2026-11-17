@@ -105,6 +105,12 @@ int main(){
   assert(caught&&!liveMatches&&!liveIterators);
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
   assert(boardReports==1);
+  try{lmiproDisplayCheckpoint(600,"1:launchd");}
+  catch(const std::runtime_error &e){
+    const char *text=e.what();
+    assert(strstr(text,"BBcall/v1 fixture") < strstr(text,"UI entry stacks fixture"));
+    assert(strstr(text,"UI entry stacks fixture") < strstr(text,"board snapshot fixture"));
+  }
   enabled=2;framePresented=false;caught=false;
   try{lmiproDisplayCheckpoint(600,"1:launchd");}catch(const std::runtime_error &e){caught=true;assert(strstr(e.what(),"LMIPRO UI CHECKPOINT"));}
   assert(caught);framePresented=true;caught=false;

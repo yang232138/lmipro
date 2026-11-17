@@ -20,6 +20,14 @@ Gfx/v1 observes actual dispatch entry/return and final or early IOServiceOpen ou
 
 The target IOSurface creation path calls IOConnectCallMethod selector 0 at 0x1a85f6988; s0=entry/return/success counters distinguish actual allocation requests from unrelated activity. Successful allocation alone is not proof of rendered pixels.
 
-All API replies and dispatch behavior remain unchanged. No user buffers, surface pixels or structure replies are read. Reports use bounded nonwaiting snapshots, with process groups separately accounted. The existing display caller capture remains available. First errors are candidates until their caller branch and downstream rendering gate are verified.
+All API replies and dispatch behavior remain unchanged. Gfx/v1 reads no structure replies. Reports use bounded nonwaiting snapshots, with process groups separately accounted. First errors are candidates until their caller branch and downstream rendering gate are verified.
+
+## Physical Gfx/v1 checkpoint and next discriminator
+
+Run 44190686547 / device 538849b7b84639c176ed45746f4c42cc0cf02997 / boot f30e8f78a1a2779b5ad956bd38aec0d3dc5d49eff5198d30ecb5c516c37f094e reached the intentional 600-second checkpoint. The photo shows S0 open 1/0, dispatch 1/1, success 1, last selector 13/status 0, and no selector 0. S1 is empty. S2 has 12/12 successful dispatches including 11/11/11 selector-0 events. All GPU rows and graphics drops are zero. No validate, transfer, copy, retirement or surface-frame event occurred. The other-process identity and exact user-client class were absent in v1; these events are not evidence of completed lock-screen pixels.
+
+Target IOSurface 0x1a85fa1d8 selects method 13; 0x1a85fa1f4 calls IOConnectCallMethod with 40-byte output. It checks uint16 at output+0x22 against 1 at 0x1a85fa1fc..204. A bad reply can close and zero the connection at 0x1a85fa21c..224. Successful dispatch alone does not qualify this branch.
+
+Gfx/v2 records bounded PID/name/class identity, explicit closes, reply byte count and this version field only for successful exact IOSurfaceRootUserClient method 13 with a 40-byte in-band kernel reply and no output descriptor or variable data. XNU xnu-10063.141.1 iokit/Kernel/IOUserClient.cpp is_io_connect_method supplies MIG inband_output as args.structureOutput and represents OOL output separately. No user pointers, descriptors, surface contents, original return values or renderer decisions are changed. Missing or malformed output remains explicitly unavailable. Reports put graphics and compact user-entry stacks first because v1's repeated counters pushed the stacks off the physical screen. These stacks remain entry samples, not proof of a blocked task or a successful software-renderer invocation.
 
 Next: bind the new checkpoint to the boot SHA, symbolicate the captured original callers, and correlate actual IOSurface creation/rendering with SwapBegin/End. Implement only the first proven required missing interface, then verify pixels and original swap retirement. A software-route rejection requires a concrete call/dependency trace; absence of swap calls is insufficient.

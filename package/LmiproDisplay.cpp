@@ -154,8 +154,8 @@ extern "C" __attribute__((noinline)) void lmipro_fb_open_probe(IOService *obj,un
     if(!gLmiproDisplayTraceEnabled || !obj || phase>4)return;
     char name[17]={};proc_selfname(name,sizeof(name));
     int family=lmiproGraphicsFamily(obj);
-    if(family>=0 && (phase==1 || phase==3))
-        lmiproGraphicsEvent(unsigned(family),lmiproGraphicsProcess(name),2,UINT32_MAX,
+    if(family>=0 && (phase==1 || phase==3 || phase==4))
+        lmiproGraphicsEvent(unsigned(family),lmiproGraphicsProcess(name),phase==4?4:2,UINT32_MAX,
             uint32_t(status),proc_selfpid(),0,0);
     if(strcmp(name,"backboardd"))return;
     if(!obj->metaCast(phase==4?"IOMobileFramebufferUserClient":"IOMobileFramebufferLegacy")) {
@@ -225,6 +225,21 @@ extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t select
         lmiproGraphicsEvent(unsigned(family),lmiproGraphicsProcess(name),kind,selector,
             uint32_t(status),proc_selfpid(),args?args->scalarInputCount:0,
             args?uint32_t(args->structureInputSize):0);
+        if(kind==1) {
+            const char *className=client->getMetaClass()->getClassName();
+            // IOUserClient.cpp's is_io_connect_method supplies MIG in-band kernel
+            // storage here. Never read an OOL descriptor or variable output.
+            // Target 21H461 init requests exactly 40 bytes; offset 34 is its
+            // uint16 version check. Reading this field does not qualify pixels.
+            const uint8_t *root=nullptr;
+            if(!family && selector==13 && !status && args &&
+               !strcmp(className,"IOSurfaceRootUserClient") &&
+               !args->structureOutputDescriptor && !args->structureVariableOutputData &&
+               args->structureOutput && args->structureOutputSize==40)
+                root=static_cast<const uint8_t *>(args->structureOutput);
+            lmiproGraphicsReply(unsigned(family),lmiproGraphicsProcess(name),proc_selfpid(),name,
+                className,selector,uint32_t(status),args?uint32_t(args->structureOutputSize):0,root);
+        }
         return;
     }
     if(!client->metaCast("IOMobileFramebufferUserClient"))return;

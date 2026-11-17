@@ -21,11 +21,26 @@ int main() {
     char out[900];lmiproFormatGraphics(out,sizeof(out));assert(strstr(out,"unavailable"));
     lmiproGraphicsBusy=0;
     lmiproFormatGraphics(out,sizeof(out));
-    assert(strstr(out,"S0 o0/0 m1/3 ok1 s0=0/0/0 last8/e00002bc first6/e00002c7 p58 in1/80"));
+    assert(strstr(out,"S0 o0/0 c0 m1/3 ok1 s0=0/0/0 last8/e00002bc"));
+    assert(strstr(out,"first6/e00002c7 p58 in1/80"));
     assert(strstr(out,"G1 o1/1"));
     lmiproGraphicsEvent(0,1,0,0,0,27,1,128);
     lmiproGraphicsEvent(0,1,1,0,0,27,1,128);
     assert(lmiproGraphicsRows[1].selector0Entered==1 && lmiproGraphicsRows[1].selector0Returned==1 && lmiproGraphicsRows[1].selector0Success==1);
+    uint8_t root[40]={};root[34]=1;root[35]=2;
+    lmiproGraphicsReply(0,0,58,"backboardd","IOSurfaceRootUserClient",13,0,40,root);
+    assert(r.rootReplies==1 && r.rootInline==1 && r.rootVersion==513 && r.lastPid==58);
+    assert(!strcmp(r.lastClass,"IOSurfaceRootUserClient"));
+    // A wrong-sized or unavailable reply must never be treated as a version.
+    lmiproGraphicsReply(0,0,58,"backboardd","IOSurfaceRootUserClient",13,0,39,(const uint8_t *)1);
+    assert(r.rootReplies==2 && !r.rootInline && !r.rootVersion);
+    lmiproGraphicsReply(0,0,58,"backboardd","IOSurfaceRootUserClient",13,0,40,nullptr);
+    assert(r.rootReplies==3 && !r.rootInline);
+    lmiproGraphicsReply(0,0,58,"backboardd","IOSurfaceRootUserClient",13,0xe00002c7,40,root);
+    assert(r.rootReplies==3);
+    lmiproGraphicsReply(0,2,81,"other process name longer than limit","IOSurfaceRootUserClientLongerThanThirtyOneBytes",0,0,1,nullptr);
+    assert(lmiproGraphicsRows[2].lastName[16]==0 && lmiproGraphicsRows[2].lastClass[31]==0);
+    lmiproGraphicsEvent(0,0,4,UINT32_MAX,0,58,0,0);assert(r.closes==1 && !r.opens);
     char tiny[8];memset(tiny,0x5a,sizeof(tiny));lmiproFormatGraphics(tiny+1,4);
     assert(tiny[0]==0x5a && tiny[4]==0 && tiny[5]==0x5a);
     assert(!lmiproFormatGraphics(nullptr,0));

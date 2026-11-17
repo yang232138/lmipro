@@ -166,10 +166,10 @@ extern "C" __attribute__((noinline)) unsigned lmipro_ui_stack_report(char *out,u
     unsigned used=(unsigned)n<capacity?(unsigned)n:capacity-1;
     for(unsigned i=0;i<stored && used<capacity-1;++i) {
         const LmiproUIStack &s=rows[i];
-        n=snprintf(out+used,capacity-used,"p%d t%llu c%d s%u n%u e%d i%x post%u at%llu #%u R%u/%llx psr%llx Q%llu/%llu@%llx:",
+        n=snprintf(out+used,capacity-used,"p%d t%llu c%d s%u n%u e%d i%x post%u at%llu R%u/%llx Q%llu@%llx:",
           s.pid,(unsigned long long)s.tid,s.code,s.state,s.count,s.error,s.info,s.postOpen,
-          (unsigned long long)s.seconds,s.samples,s.returned,(unsigned long long)s.result,(unsigned long long)s.status,
-          (unsigned long long)s.irqCount,(unsigned long long)s.irqSame,(unsigned long long)s.irqPC);
+          (unsigned long long)s.seconds,s.returned,(unsigned long long)s.result,
+          (unsigned long long)s.irqCount,(unsigned long long)s.irqPC);
         if(n<0)break;
         used+=(unsigned)n<capacity-used?(unsigned)n:capacity-used-1;
         for(unsigned j=0;j<s.count && used<capacity-1;++j) {
