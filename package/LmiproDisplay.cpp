@@ -23,6 +23,16 @@
 #include "LmiproDisplayPolicy.h"
 #include "LmiproModePolicy.h"
 #include "LmiproDisplayTrace.h"
+#include "LmiproGraphicsTrace.h"
+static int lmiproGraphicsFamily(OSObject *o) {
+ const char *n=o->getMetaClass()->getClassName();
+ if(!strncmp(n,"IOSurface",9) || !strncmp(n,"IOCoreSurface",13))return 0;
+ if(!strncmp(n,"IOGPU",5) || !strncmp(n,"AGX",3) || !strncmp(n,"IOAccel",7))return 1;
+ return -1;
+}
+static unsigned lmiproGraphicsProcess(const char *n) {
+ return !strcmp(n,"backboardd")?0:!strcmp(n,"SpringBoard")?1:2;
+}
 extern "C" kmod_info_t g_kernel_kmod_info;
 extern "C" void lmipro_display_static_init(void) __asm__("__GLOBAL__sub_I_NativeLegacyDisplay.cpp");
 extern "C" IOService *native_legacy_display_allocate(void);
@@ -143,6 +153,10 @@ extern "C" __attribute__((noinline)) void lmipro_fb_open_probe(IOService *obj,un
 {
     if(!gLmiproDisplayTraceEnabled || !obj || phase>4)return;
     char name[17]={};proc_selfname(name,sizeof(name));
+    int family=lmiproGraphicsFamily(obj);
+    if(family>=0 && (phase==1 || phase==3))
+        lmiproGraphicsEvent(unsigned(family),lmiproGraphicsProcess(name),2,UINT32_MAX,
+            uint32_t(status),proc_selfpid(),0,0);
     if(strcmp(name,"backboardd"))return;
     if(!obj->metaCast(phase==4?"IOMobileFramebufferUserClient":"IOMobileFramebufferLegacy")) {
         if(phase==0)__atomic_fetch_add(&otherOpen,1,__ATOMIC_RELAXED);
@@ -185,7 +199,10 @@ extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
 }
 extern "C" unsigned lmipro_display_callers_report(char *out,unsigned capacity)
 {
-    return lmiproFormatDisplayCallers(out,capacity);
+    char callers[768]={},graphics[900]={};
+    lmiproFormatGraphics(graphics,sizeof(graphics));
+    lmiproFormatDisplayCallers(callers,sizeof(callers));
+    return snprintf(out,capacity,"%s%s",graphics,callers);
 }
 static unsigned lmiproCaptureDisplayFrames(uintptr_t *frames,unsigned capacity,int *error,unsigned *flags)
 {
@@ -201,8 +218,16 @@ static unsigned lmiproCaptureDisplayFrames(uintptr_t *frames,unsigned capacity,i
 extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t selector,
     IOExternalMethodArguments *args,unsigned kind,IOReturn status)
 {
-    if(!gLmiproDisplayTraceEnabled || !client ||
-       !client->metaCast("IOMobileFramebufferUserClient"))return;
+    if(!gLmiproDisplayTraceEnabled || !client)return;
+    int family=lmiproGraphicsFamily(client);
+    if(family>=0) {
+        char process[17]={};proc_selfname(process,sizeof(process));process[16]=0;
+        lmiproGraphicsEvent(unsigned(family),lmiproGraphicsProcess(process),kind,selector,
+            uint32_t(status),proc_selfpid(),args?args->scalarInputCount:0,
+            args?uint32_t(args->structureInputSize):0);
+        return;
+    }
+    if(!client->metaCast("IOMobileFramebufferUserClient"))return;
     uint64_t values[3]={};
     // The MIG dispatch supplies a kernel-owned scalar array. Copy at most three
     // input values on entry only; retain no pointers and inspect no user memory.

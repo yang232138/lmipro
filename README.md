@@ -3,15 +3,12 @@
 Board repository for Redmi K30 Pro / K30 Pro Zoom Edition (`lmi` / `lmipro`,
 Qualcomm SM8250), using the pinned iPadOS 17.7.11 / 21H461 source/ABI profile.
 
-Temporary boot reaches XNU and its real panic screen. Enabling the upstream
-DT panic-region option passed the console-creation checkpoint. The latest
-observed failure is `AMFI: No PMGR?` at `ConfigurationSettings.cpp:235`.
-See [the observation](docs/observations/amfi-no-pmgr-20261030.md) and
-the authoritative [porting record](porting.toml).
-
-The next integration is an opt-in, ABI-gated original PMGR object lifecycle
-test. See [its source, build inputs and limits](docs/pmgr-abi.md). Real clock,
-regulator, CPU-power and suspend/resume backends are not implemented here.
+The current sole milestone is a real lock screen from the original iOS/iPadOS
+17.7.11 user processes on the physical panel. Full GPU acceleration, camera,
+audio and performance work is deferred. The qualified hardware baseline reaches
+the 600-second diagnostic checkpoint with SpringBoard/backboardd activity and a
+successful Legacy framebuffer open; no real UI frame has been demonstrated.
+See [the current evidence and next action](docs/observations/first-frame-20261118.md).
 
 From the pinned UniXNU checkout:
 

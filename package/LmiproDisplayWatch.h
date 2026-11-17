@@ -94,7 +94,7 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
   char ui[1600] = {};
   char stacks[1536] = {};
   char exits[576] = {};
-  char callers[768] = {};
+  char callers[1668] = {};
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
   lmipro_display_report(detail,sizeof(detail));
   lmipro_display_callers_report(callers,sizeof(callers));
