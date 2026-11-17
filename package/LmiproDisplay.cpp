@@ -219,10 +219,10 @@ extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t select
     IOExternalMethodArguments *args,unsigned kind,IOReturn status)
 {
     if(!gLmiproDisplayTraceEnabled || !client)return;
+    char name[17]={};proc_selfname(name,sizeof(name));name[16]=0;
     int family=lmiproGraphicsFamily(client);
     if(family>=0) {
-        char process[17]={};proc_selfname(process,sizeof(process));process[16]=0;
-        lmiproGraphicsEvent(unsigned(family),lmiproGraphicsProcess(process),kind,selector,
+        lmiproGraphicsEvent(unsigned(family),lmiproGraphicsProcess(name),kind,selector,
             uint32_t(status),proc_selfpid(),args?args->scalarInputCount:0,
             args?uint32_t(args->structureInputSize):0);
         return;
@@ -243,7 +243,6 @@ extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t select
         unsigned count=outputCount<3?outputCount:3;
         for(unsigned i=0;i<count;++i)values[i]=args->scalarOutput[i];
     }
-    char name[17]={};proc_selfname(name,sizeof(name));name[16]=0;
     uint32_t inScalars=0,inStructBytes=0,outScalars=0,outStructBytes=0;
     if(kind==0 && args) {
         inScalars=args->scalarInputCount;
