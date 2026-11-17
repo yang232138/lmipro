@@ -64,5 +64,34 @@ int main()
     assert(gLmiproClientStored==8 && gLmiproClientDropped);
     for(unsigned i=40;i<58;++i)lmiproRecordDisplayMethod(0,i,0,58,0,0,0);
     lmiproFormatDisplayMethods(full,sizeof(full));assert(strstr(full,"shown=16 of"));
+    unsigned captures=0;
+    auto capture=[&](uintptr_t *pc,unsigned cap,int *err,unsigned *flags)->unsigned {
+        assert(cap==8);
+        ++captures;
+        // Re-entry cannot reserve the already in-flight call.
+        lmiproCaptureDisplayCaller(27,1,58,100,"backboardd",
+            [](uintptr_t *,unsigned,int *,unsigned *)->unsigned {assert(false);return 0;});
+        pc[0]=0x1b63d73c4;pc[1]=0x1234;*err=0;*flags=1;return 2;
+    };
+    gLmiproDisplayTraceEnabled=0;
+    lmiproCaptureDisplayCaller(27,1,58,100,"backboardd",capture);
+    gLmiproDisplayTraceEnabled=1;
+    lmiproCaptureDisplayCaller(5,0,58,100,"backboardd",capture);
+    lmiproCaptureDisplayCaller(27,1,97,100,"MobileGestaltHel",capture);
+    assert(captures==0);
+    lmiproCaptureDisplayCaller(27,0xe00002c7,58,100,"backboardd",capture);
+    lmiproCaptureDisplayCaller(27,0,58,101,"backboardd",capture);
+    assert(captures==1 && gLmiproDisplayCallers[1].tid==100);
+    lmiproFormatDisplayCallers(full,sizeof(full));
+    assert(strstr(full,"sel27 p58 t100 ste00002c7 state2 e0 f1 n2: 1b63d73c4 1234"));
+    lmiproCaptureDisplayCaller(50,1,58,100,"backboardd",
+        [](uintptr_t *,unsigned,int *err,unsigned *)->unsigned {*err=35;return 0;});
+    assert(gLmiproDisplayCallers[2].error==35 && gLmiproDisplayCallers[2].count==0);
+    lmiproCaptureDisplayCaller(57,1,58,100,"backboardd",
+        [](uintptr_t *,unsigned,int *,unsigned *)->unsigned {return 9;});
+    assert(gLmiproDisplayCallers[0].state==3 && !gLmiproDisplayCallers[0].count);
+    char guarded[8];memset(guarded,0x5a,sizeof(guarded));
+    lmiproFormatDisplayCallers(guarded+1,4);
+    assert(guarded[0]==0x5a && guarded[5]==0x5a && guarded[4]==0);
     puts("PASS: disabled path; unmatched entry; exact first/last error; selector bounds; nonwaiting drops; capped snapshot and termination");
 }

@@ -183,6 +183,21 @@ extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
       (unsigned long long)successfulCopies,(unsigned long long)copiedBytes,
       (unsigned long long)failedCopies,(unsigned long long)retirements,(unsigned long long)surfaceFrames,transferStatus,methods,opens);
 }
+extern "C" unsigned lmipro_display_callers_report(char *out,unsigned capacity)
+{
+    return lmiproFormatDisplayCallers(out,capacity);
+}
+static unsigned lmiproCaptureDisplayFrames(uintptr_t *frames,unsigned capacity,int *error,unsigned *flags)
+{
+    // This hook is after ipcExit. Do not fault from interrupt or nonpreemptible contexts.
+    if(ml_at_interrupt_context() || !ml_get_interrupts_enabled() || !preemption_enabled()) {
+        *error=EDEADLK; return 0;
+    }
+    struct backtrace_user_info info={};
+    unsigned count=backtrace_user(frames,capacity,nullptr,&info);
+    *error=info.btui_error; *flags=(unsigned)info.btui_info;
+    return count;
+}
 extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t selector,
     IOExternalMethodArguments *args,unsigned kind,IOReturn status)
 {
@@ -214,6 +229,8 @@ extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t select
     }
     lmiproRecordDisplayMethod(kind,selector,(uint32_t)status,proc_selfpid(),values[0],values[1],values[2],name,outputCount,
         inScalars,inStructBytes,outScalars,outStructBytes);
+    if(kind==1)lmiproCaptureDisplayCaller(selector,(unsigned)status,proc_selfpid(),
+        thread_tid(current_thread()),name,lmiproCaptureDisplayFrames);
 }
 extern "C" __attribute__((noreturn)) void native_legacy_backend_guard(unsigned slot,void *,void *caller)
 {

@@ -160,3 +160,68 @@ static unsigned lmiproFormatClients(char *out,unsigned capacity) {
     }
     if(used<capacity-1){out[used++]='\n';out[used]=0;}return used;
 }
+
+// Capture at most one completed backboardd call per selected initialization API.
+// Reservation and publication are guarded. The faultable capture runs unlocked.
+struct LmiproDisplayCaller {
+    unsigned state, selector, status, count, flags;
+    int pid, error;
+    uint64_t tid;
+    uintptr_t frames[8];
+};
+static LmiproDisplayCaller gLmiproDisplayCallers[3] = {};
+static volatile int gLmiproDisplayCallerBusy = 0;
+template <typename Capture>
+static void lmiproCaptureDisplayCaller(unsigned selector, unsigned status, int pid,
+    uint64_t tid, const char *name, Capture capture)
+{
+    if (!gLmiproDisplayTraceEnabled || !name || strcmp(name, "backboardd")) return;
+    unsigned slot;
+    if (selector == 57) slot = 0;
+    else if (selector == 27) slot = 1;
+    else if (selector == 50) slot = 2;
+    else return;
+    if (!__sync_bool_compare_and_swap(&gLmiproDisplayCallerBusy, 0, 1)) return;
+    if (gLmiproDisplayCallers[slot].state) {
+        __sync_lock_release(&gLmiproDisplayCallerBusy);
+        return;
+    }
+    gLmiproDisplayCallers[slot].state = 1;
+    __sync_lock_release(&gLmiproDisplayCallerBusy);
+    LmiproDisplayCaller row = {};
+    row.state = 2; row.selector = selector; row.status = status;
+    row.pid = pid; row.tid = tid;
+    row.count = capture(row.frames, 8, &row.error, &row.flags);
+    if (row.count > 8) { row.count = 0; row.state = 3; }
+    // Only this reservation's owner writes its row. Publish last.
+    unsigned state = row.state;
+    LmiproDisplayCaller &dest = gLmiproDisplayCallers[slot];
+    dest.selector=row.selector; dest.status=row.status; dest.count=row.count;
+    dest.flags=row.flags; dest.pid=row.pid; dest.error=row.error; dest.tid=row.tid;
+    for(unsigned i=0;i<8;++i)dest.frames[i]=row.frames[i];
+    __atomic_store_n(&gLmiproDisplayCallers[slot].state, state, __ATOMIC_RELEASE);
+}
+static unsigned lmiproFormatDisplayCallers(char *out, unsigned capacity)
+{
+    if (!out || !capacity) return 0;
+    int n = snprintf(out, capacity, "BBcall/v1 first returns, frames are runtime PCs\n");
+    if (n < 0) return 0;
+    unsigned used = (unsigned)n < capacity ? (unsigned)n : capacity - 1;
+    for (unsigned i = 0; i < 3 && used < capacity - 1; ++i) {
+        // Published rows are immutable after the release store.
+        const unsigned state = __atomic_load_n(&gLmiproDisplayCallers[i].state, __ATOMIC_ACQUIRE);
+        if (state < 2) continue;
+        const LmiproDisplayCaller &r = gLmiproDisplayCallers[i];
+        n = snprintf(out + used, capacity - used, "sel%u p%d t%llu st%x state%u e%d f%x n%u:",
+            r.selector, r.pid, (unsigned long long)r.tid, r.status, state, r.error, r.flags, r.count);
+        if (n < 0) break;
+        used += (unsigned)n < capacity - used ? (unsigned)n : capacity - used - 1;
+        for (unsigned j = 0; j < r.count && used < capacity - 1; ++j) {
+            n = snprintf(out + used, capacity - used, " %llx", (unsigned long long)r.frames[j]);
+            if (n < 0) break;
+            used += (unsigned)n < capacity - used ? (unsigned)n : capacity - used - 1;
+        }
+        if (used < capacity - 1) { out[used++] = '\n'; out[used] = 0; }
+    }
+    return used;
+}

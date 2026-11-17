@@ -3,6 +3,7 @@
 // No mapping, framebuffer stores, service creation or display/power operations.
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
 extern "C" unsigned lmipro_display_report(char *,unsigned);
+extern "C" unsigned lmipro_display_callers_report(char *,unsigned);
 extern "C" unsigned lmipro_ui_trace_report(char *,unsigned);
 extern "C" unsigned lmipro_ui_stack_report(char *,unsigned);
 extern "C" unsigned lmipro_ui_exit_report(char *,unsigned);
@@ -93,12 +94,14 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
   char ui[1600] = {};
   char stacks[1536] = {};
   char exits[576] = {};
+  char callers[768] = {};
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
   lmipro_display_report(detail,sizeof(detail));
+  lmipro_display_callers_report(callers,sizeof(callers));
   lmipro_ui_trace_report(ui,sizeof(ui));
   lmipro_ui_stack_report(stacks,sizeof(stacks));
   lmipro_ui_exit_report(exits,sizeof(exits));
 #endif
-  panic("LMIPRO UI CHECKPOINT timeout=%u\n%s%.0s%.1200s%s%.0s%.0sEND UI SNAPSHOT",
-    seconds, ui, display, detail, stacks, exits, processes);
+  panic("LMIPRO UI CHECKPOINT timeout=%u\n%s%.0s%.1200s%s%s%.0s%.0sEND UI SNAPSHOT",
+    seconds, ui, display, detail, callers, stacks, exits, processes);
 }

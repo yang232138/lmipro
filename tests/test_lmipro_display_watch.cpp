@@ -50,6 +50,7 @@ extern "C" volatile unsigned lmipro_user_fault_count = 0;
 extern "C" char lmipro_user_fault_name[8][17] = {};
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
 static unsigned boardReports=0;
+extern "C" unsigned lmipro_display_callers_report(char *out,unsigned n){return snprintf(out,n,"BBcall/v1 fixture\n");}
 static bool framePresented=false;
 extern "C" unsigned lmipro_display_frame_presented(){return framePresented;}
 static void *current_thread(){return (void *)1;}
