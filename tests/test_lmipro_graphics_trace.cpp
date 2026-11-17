@@ -31,6 +31,7 @@ int main() {
     lmiproGraphicsReply(0,0,58,"backboardd","IOSurfaceRootUserClient",13,0,40,root);
     assert(r.rootReplies==1 && r.rootInline==1 && r.rootVersion==513 && r.lastPid==58);
     assert(!strcmp(r.lastClass,"IOSurfaceRootUserClient"));
+    assert(r.lastSelector==13 && !r.lastStatus);
     // A wrong-sized or unavailable reply must never be treated as a version.
     lmiproGraphicsReply(0,0,58,"backboardd","IOSurfaceRootUserClient",13,0,39,(const uint8_t *)1);
     assert(r.rootReplies==2 && !r.rootInline && !r.rootVersion);

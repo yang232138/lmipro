@@ -131,6 +131,7 @@ int main(){
   assert(gLmiproUIStacks[7].returned && gLmiproUIStacks[7].result==7);
   lmipro_ui_user_event(4,0,0x88880,0,0,58);
   assert(gLmiproUIStacks[7].irqCount==1 && gLmiproUIStacks[7].irqPC==0x88880);
+  lmipro_ui_stack_report(out,sizeof(out));assert(strstr(out,"Q1/1@88880"));
   // Invalid observations never bind a TID.
   lmipro_ui_stack_display_open(0);assert(gLmiproUIStacksFocusCount==2);
   // A different observed PID still records its own opener.

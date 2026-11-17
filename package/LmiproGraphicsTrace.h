@@ -44,6 +44,9 @@ static void lmiproGraphicsReply(unsigned family,unsigned process,int pid,const c
         __atomic_fetch_add(&lmiproGraphicsDropped,1,__ATOMIC_RELAXED);return;
     }
     auto &r=lmiproGraphicsRows[family*3+process];r.lastPid=pid;
+    // Keep the identity and its own reply together even if another process
+    // reaches the counters between the two nonwaiting observations.
+    r.lastSelector=selector;r.lastStatus=status;
     unsigned i=0;for(;i<16 && name && name[i];++i)r.lastName[i]=name[i];r.lastName[i]=0;
     i=0;for(;i<31 && className && className[i];++i)r.lastClass[i]=className[i];r.lastClass[i]=0;
     if(!family && selector==13 && !status) {
