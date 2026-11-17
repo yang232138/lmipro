@@ -182,11 +182,11 @@ static void lmiproCaptureDisplayCaller(unsigned selector, unsigned status, int p
     else if (selector == 50) slot = 2;
     else return;
     if (!__sync_bool_compare_and_swap(&gLmiproDisplayCallerBusy, 0, 1)) return;
-    if (gLmiproDisplayCallers[slot].state) {
+    if (__atomic_load_n(&gLmiproDisplayCallers[slot].state, __ATOMIC_ACQUIRE)) {
         __sync_lock_release(&gLmiproDisplayCallerBusy);
         return;
     }
-    gLmiproDisplayCallers[slot].state = 1;
+    __atomic_store_n(&gLmiproDisplayCallers[slot].state, 1, __ATOMIC_RELEASE);
     __sync_lock_release(&gLmiproDisplayCallerBusy);
     LmiproDisplayCaller row = {};
     row.state = 2; row.selector = selector; row.status = status;
