@@ -1,9 +1,8 @@
 // Read-only evidence from actual IOUserClient dispatch; no fabricated replies.
 #pragma once
 #include <stdint.h>
-#include <stdio.h>
 struct LmiproGraphicsRow {
-    uint64_t entered,returned,success,opens,openErrors;
+    uint64_t entered,returned,success,opens,openErrors,selector0Entered,selector0Returned,selector0Success;
     uint32_t lastSelector,lastStatus,firstSelector,firstStatus,inScalars,inBytes;
     int firstPid;
 };
@@ -18,9 +17,10 @@ static void lmiproGraphicsEvent(unsigned family,unsigned process,unsigned phase,
         __atomic_fetch_add(&lmiproGraphicsDropped,1,__ATOMIC_RELAXED);return;
     }
     auto &r=lmiproGraphicsRows[family*3+process];
-    if(phase==0)++r.entered;
+    if(phase==0) {++r.entered;if(!family && !selector)++r.selector0Entered;}
     else if(phase==1) {
         ++r.returned;if(!status)++r.success;
+        if(!family && !selector){++r.selector0Returned;if(!status)++r.selector0Success;}
         r.lastSelector=selector;r.lastStatus=status;
     } else {++r.opens;if(status)++r.openErrors;}
     if(status && !r.firstStatus) {
@@ -42,9 +42,10 @@ static unsigned lmiproFormatGraphics(char *out,unsigned capacity) {
     unsigned used=(unsigned)n<capacity?(unsigned)n:capacity-1;
     for(unsigned i=0;i<6 && used<capacity-1;++i) {
         const auto &r=rows[i];
-        n=snprintf(out+used,capacity-used,"%c%u o%llu/%llu m%llu/%llu ok%llu last%u/%x first%u/%x p%d in%u/%u\n",
+        n=snprintf(out+used,capacity-used,"%c%u o%llu/%llu m%llu/%llu ok%llu s0=%llu/%llu/%llu last%u/%x first%u/%x p%d in%u/%u\n",
           i<3?'S':'G',i%3,(unsigned long long)r.opens,(unsigned long long)r.openErrors,
           (unsigned long long)r.entered,(unsigned long long)r.returned,(unsigned long long)r.success,
+          (unsigned long long)r.selector0Entered,(unsigned long long)r.selector0Returned,(unsigned long long)r.selector0Success,
           r.lastSelector,r.lastStatus,r.firstSelector,r.firstStatus,r.firstPid,r.inScalars,r.inBytes);
         if(n<0)break;
         used+=(unsigned)n<capacity-used?(unsigned)n:capacity-used-1;

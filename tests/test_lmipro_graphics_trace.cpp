@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 #include "../package/LmiproGraphicsTrace.h"
 int main() {
@@ -20,8 +21,11 @@ int main() {
     char out[900];lmiproFormatGraphics(out,sizeof(out));assert(strstr(out,"unavailable"));
     lmiproGraphicsBusy=0;
     lmiproFormatGraphics(out,sizeof(out));
-    assert(strstr(out,"S0 o0/0 m1/3 ok1 last8/e00002bc first6/e00002c7 p58 in1/80"));
+    assert(strstr(out,"S0 o0/0 m1/3 ok1 s0=0/0/0 last8/e00002bc first6/e00002c7 p58 in1/80"));
     assert(strstr(out,"G1 o1/1"));
+    lmiproGraphicsEvent(0,1,0,0,0,27,1,128);
+    lmiproGraphicsEvent(0,1,1,0,0,27,1,128);
+    assert(lmiproGraphicsRows[1].selector0Entered==1 && lmiproGraphicsRows[1].selector0Returned==1 && lmiproGraphicsRows[1].selector0Success==1);
     char tiny[8];memset(tiny,0x5a,sizeof(tiny));lmiproFormatGraphics(tiny+1,4);
     assert(tiny[0]==0x5a && tiny[4]==0 && tiny[5]==0x5a);
     assert(!lmiproFormatGraphics(nullptr,0));

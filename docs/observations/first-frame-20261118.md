@@ -18,6 +18,8 @@ The pinned GOP backend already has a bounded single-layer BGRA CPU copy and orig
 
 Gfx/v1 observes actual dispatch entry/return and final or early IOServiceOpen outcomes for IOSurface/IOCoreSurface and IOGPU/AGX/IOAccel class prefixes. S/G identify surface/GPU; suffix 0 backboardd, 1 SpringBoard, 2 other processes. It retains first error, last reply, actual successes, input shape, completed opens/errors and contention drops. Open errors use selector UINT32_MAX. Zero dispatch calls alone does not prove no GPU client was created. Matching failure before IOServiceOpen and per-task implicit close are outside this probe.
 
+The target IOSurface creation path calls IOConnectCallMethod selector 0 at 0x1a85f6988; s0=entry/return/success counters distinguish actual allocation requests from unrelated activity. Successful allocation alone is not proof of rendered pixels.
+
 All API replies and dispatch behavior remain unchanged. No user buffers, surface pixels or structure replies are read. Reports use bounded nonwaiting snapshots, with process groups separately accounted. The existing display caller capture remains available. First errors are candidates until their caller branch and downstream rendering gate are verified.
 
 Next: bind the new checkpoint to the boot SHA, symbolicate the captured original callers, and correlate actual IOSurface creation/rendering with SwapBegin/End. Implement only the first proven required missing interface, then verify pixels and original swap retirement. A software-route rejection requires a concrete call/dependency trace; absence of swap calls is insufficient.
