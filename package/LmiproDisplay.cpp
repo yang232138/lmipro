@@ -169,7 +169,7 @@ extern "C" void lmipro_display_method_event(IOUserClient *client,uint32_t select
         // Does the compositor ever reach an IOSurface/IOGPU client at all?
         const OSMetaClass *meta=client->getMetaClass();
         const char *cls=meta?meta->getClassName():nullptr;
-        if(cls && (strstr(cls,"IOSurface") || strstr(cls,"IOGPU") || strstr(cls,"Metal")))
+        if(cls && (strncmp(cls,"IOSurface",9)==0 || strncmp(cls,"IOGPU",5)==0 || strncmp(cls,"AGX",3)==0))
             lmiproRecordOtherClient(kind,selector,(uint32_t)status,proc_selfpid(),cls);
         return;
     }
