@@ -28,7 +28,7 @@ static uint64_t gLmiproOtherCalls=0;
 static uint32_t gLmiproOtherSelector=0,gLmiproOtherStatus=0;
 static int gLmiproOtherPid=0;
 static char gLmiproOtherName[17]={};
-static void lmiproRecordOtherClient(unsigned kind,uint32_t selector,uint32_t status,int pid,const char *name)
+static __attribute__((unused)) void lmiproRecordOtherClient(unsigned kind,uint32_t selector,uint32_t status,int pid,const char *name)
 {
     if(!gLmiproDisplayTraceEnabled || kind!=1)return;
     if(!__sync_bool_compare_and_swap(&gLmiproDisplayTraceBusy,0,1))return;
