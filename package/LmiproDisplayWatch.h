@@ -99,6 +99,6 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
   lmipro_ui_stack_report(stacks,sizeof(stacks));
   lmipro_ui_exit_report(exits,sizeof(exits));
 #endif
-  panic("LMIPRO UI CHECKPOINT timeout=%u\n%s%.0s%.0s%s%.0s%.0sEND UI SNAPSHOT",
+  panic("LMIPRO UI CHECKPOINT timeout=%u\n%s%.0s%.1200s%s%.0s%.0sEND UI SNAPSHOT",
     seconds, ui, display, detail, stacks, exits, processes);
 }
