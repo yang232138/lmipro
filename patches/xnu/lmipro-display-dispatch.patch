@@ -1,6 +1,80 @@
 --- a/iokit/Kernel/IOUserClient.cpp
 +++ b/iokit/Kernel/IOUserClient.cpp
-@@ -6422,10 +6422,19 @@
+@@ -4324,6 +4324,12 @@
+ #endif /* defined(XNU_TARGET_OS_OSX) */
+ }
+ 
++#if (DEVELOPMENT || DEBUG) && defined(XNU_NATIVE_LEGACY_DISPLAY) && XNU_NATIVE_LEGACY_DISPLAY
++extern "C" void lmipro_fb_open_probe(IOService *, unsigned, IOReturn);
++#define LMIPRO_FB_EVENT(obj, phase, rc) lmipro_fb_open_probe(obj, phase, rc)
++#else
++#define LMIPRO_FB_EVENT(obj, phase, rc) ((void)0)
++#endif
+ /* Routine io_service_open_ndr */
+ kern_return_t
+ is_io_service_open_extended(
+@@ -4343,22 +4349,27 @@
+ 	bool           disallowAccess = false;
+ 
+ 	CHECK( IOService, _service, service );
++	LMIPRO_FB_EVENT(service, 0, 0);
+ 
+ 	if (!owningTask) {
++		LMIPRO_FB_EVENT(service, 1, kIOReturnBadArgument);
+ 		return kIOReturnBadArgument;
+ 	}
+ 	assert(owningTask == current_task());
+ 	if (owningTask != current_task()) {
++		LMIPRO_FB_EVENT(service, 1, kIOReturnBadArgument);
+ 		return kIOReturnBadArgument;
+ 	}
+ 
+ #if CONFIG_MACF
+ 	if (mac_iokit_check_open_service(kauth_cred_get(), service, connect_type) != 0) {
++		LMIPRO_FB_EVENT(service, 1, kIOReturnNotPermitted);
+ 		return kIOReturnNotPermitted;
+ 	}
+ #endif
+ 	do{
+ 		if (properties) {
++			LMIPRO_FB_EVENT(service, 1, kIOReturnUnsupported);
+ 			return kIOReturnUnsupported;
+ 		}
+ #if 0
+@@ -4391,6 +4402,7 @@
+ 			}
+ 		}
+ #endif
++		LMIPRO_FB_EVENT(service, 2, 0);
+ 		res = service->newUserClient( owningTask, (void *) owningTask,
+ 		    connect_type, propertiesDict, &client );
+ 
+@@ -4554,6 +4566,7 @@
+ 		}
+ 	}while (false);
+ 
++	LMIPRO_FB_EVENT(service, 3, res);
+ 	*connection = client;
+ 	*result = res;
+ 
+@@ -4575,6 +4588,7 @@
+ 	IOStatisticsClientCall();
+ 
+ 	if (client->sharedInstance || OSCompareAndSwap8(0, 1, &client->closed)) {
++		LMIPRO_FB_EVENT(client, 4, 0);
+ 		client->ipcEnter(kIPCLockWrite);
+ 		client->clientClose();
+ 		client->ipcExit(kIPCLockWrite);
+@@ -4585,6 +4599,8 @@
+ 
+ 	return kIOReturnSuccess;
+ }
++
++#undef LMIPRO_FB_EVENT
+ 
+ /* Routine io_connect_get_service */
+ kern_return_t
+@@ -6422,10 +6438,19 @@
  }
  } /* extern "C" */
  
@@ -20,7 +94,7 @@
  
  	ipcEnter(defaultLocking ? (defaultLockingSingleThreadExternalMethod ? kIPCLockWrite : kIPCLockRead) : kIPCLockNone);
  	if (uc2022) {
-@@ -6434,6 +6443,10 @@
+@@ -6434,6 +6459,10 @@
  		ret = externalMethod(selector, args);
  	}
  	ipcExit(defaultLocking ? (defaultLockingSingleThreadExternalMethod ? kIPCLockWrite : kIPCLockRead) : kIPCLockNone);

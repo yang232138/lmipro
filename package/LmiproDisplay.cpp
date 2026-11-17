@@ -137,6 +137,25 @@ static __attribute__((noinline)) bool lmiproConfigureDisplayMode(const PE_Video 
 }
 
 
+// Backboardd only. Each event is a boundary crossing, not a live connection.
+static unsigned fbOpen[6], fbLastError, otherOpen;
+extern "C" __attribute__((noinline)) void lmipro_fb_open_probe(IOService *obj,unsigned phase,IOReturn status)
+{
+    if(!gLmiproDisplayTraceEnabled || !obj || phase>4)return;
+    char name[17]={};proc_selfname(name,sizeof(name));
+    if(strcmp(name,"backboardd"))return;
+    if(!obj->metaCast(phase==4?"IOMobileFramebufferUserClient":"IOMobileFramebufferLegacy")) {
+        if(phase==0)__atomic_fetch_add(&otherOpen,1,__ATOMIC_RELAXED);
+        return;
+    }
+    // 0 entry, 1 early refusal, 2 provider call, 3 successful final reply,
+    // 4 accepted explicit close, 5 failed final reply (including owner checks).
+    unsigned idx=(phase==3 && status)?5:phase;
+    __atomic_fetch_add(&fbOpen[idx],1,__ATOMIC_RELAXED);
+    if(status)__atomic_store_n(&fbLastError,(unsigned)status,__ATOMIC_RELAXED);
+}
+static unsigned openCount(const unsigned &n){return __atomic_load_n(&n,__ATOMIC_RELAXED);}
+
 extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
 {
     char methods[1400]={},opens[640]={};
@@ -144,6 +163,7 @@ extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
     lmiproFormatClients(opens,sizeof(opens));
     return snprintf(out,capacity,
       "Legacy initStage=%u status=%d registered=%u guard=%u\n"
+      "BBopen/v1 entry=%u early=%u provider=%u ok=%u fail=%u close=%u err=%x other=%u\n"
       "mapping=%llx bytes=%llu clientCalls=%u type=%u status=%x\n"
       "validate=%llu transfers=%llu active=%u; CPU presentation candidate\n"
       "Mode policy stage=%u status=%d scale=1 rotation=0\n"
@@ -151,7 +171,9 @@ extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
       "UI stack context gate=%u checks=%llu (0 ready,1 off,2 irq,3 irqOff,4 preempt,5 warm)\n"
       "CPU enabled=%u owned=%u handoff=%d PM=%u/%x accepted=%u reason=%u\n"
       "copied=%llu bytes=%llu failed=%llu retired=%llu surfaces=%llu last=%x\n%s%s",
-      stage,result,registered,guardSlot,(unsigned long long)mappedBase,
+      stage,result,registered,guardSlot,openCount(fbOpen[0]),openCount(fbOpen[1]),openCount(fbOpen[2]),
+      openCount(fbOpen[3]),openCount(fbOpen[5]),openCount(fbOpen[4]),openCount(fbLastError),openCount(otherOpen),
+      (unsigned long long)mappedBase,
       (unsigned long long)mappedBytes,clients,clientType,clientStatus,
       (unsigned long long)validationCalls,(unsigned long long)transferCalls,
       activeDisplay && activeProvider ? 1U:0U,modePolicy.stage,modePolicy.status,
