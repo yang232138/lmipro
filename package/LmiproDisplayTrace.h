@@ -23,17 +23,22 @@ static uint64_t gLmiproDisplayEntered=0,gLmiproDisplayReturned=0;
 static unsigned gLmiproDisplayErrorValid=0;
 static LmiproDisplayMethod gLmiproDisplayLastIn={},gLmiproDisplayLastOut={},gLmiproDisplayFirstError={};
 static LmiproDisplaySelector gLmiproDisplaySelectors[96]={};
-// Whether the userspace compositor ever reaches an IOSurface/IOGPU external method.
-static uint64_t gLmiproOtherCalls=0;
-static uint32_t gLmiproOtherSelector=0,gLmiproOtherStatus=0;
-static int gLmiproOtherPid=0;
-static char gLmiproOtherName[17]={};
-static __attribute__((unused)) void lmiproRecordOtherClient(unsigned kind,uint32_t selector,uint32_t status,int pid,const char *name)
+// Whether the userspace compositor reaches IOSurface and an IOSurface/IOGPU/AGX accelerator separately.
+static uint64_t gLmiproSurfaceCalls=0,gLmiproGpuCalls=0;
+static uint32_t gLmiproSurfaceSelector=0,gLmiproSurfaceStatus=0,gLmiproGpuSelector=0,gLmiproGpuStatus=0;
+static int gLmiproSurfacePid=0,gLmiproGpuPid=0;
+static char gLmiproSurfaceName[17]={},gLmiproGpuName[17]={};
+static __attribute__((unused)) void lmiproRecordOtherClient(unsigned kind,uint32_t selector,uint32_t status,int pid,const char *name,unsigned isSurface)
 {
     if(!gLmiproDisplayTraceEnabled || kind!=1)return;
     if(!__sync_bool_compare_and_swap(&gLmiproDisplayTraceBusy,0,1))return;
-    ++gLmiproOtherCalls;gLmiproOtherSelector=selector;gLmiproOtherStatus=status;gLmiproOtherPid=pid;
-    for(unsigned i=0;i<16 && name && name[i];++i)gLmiproOtherName[i]=name[i];
+    if(isSurface) {
+        ++gLmiproSurfaceCalls;gLmiproSurfaceSelector=selector;gLmiproSurfaceStatus=status;gLmiproSurfacePid=pid;
+        for(unsigned i=0;i<16 && name && name[i];++i)gLmiproSurfaceName[i]=name[i];
+    } else {
+        ++gLmiproGpuCalls;gLmiproGpuSelector=selector;gLmiproGpuStatus=status;gLmiproGpuPid=pid;
+        for(unsigned i=0;i<16 && name && name[i];++i)gLmiproGpuName[i]=name[i];
+    }
     __sync_lock_release(&gLmiproDisplayTraceBusy);
 }
 
@@ -86,10 +91,12 @@ static unsigned lmiproFormatDisplayMethods(char *out,unsigned capacity)
     LmiproDisplaySelector rows[16]={};unsigned selectors[16]={},shown=0,unique=0;
     const LmiproDisplaySelector dimensions=gLmiproDisplaySelectors[8],pitch=gLmiproDisplaySelectors[28];
     const LmiproDisplaySelector sel5=gLmiproDisplaySelectors[5],sel17=gLmiproDisplaySelectors[17],sel27=gLmiproDisplaySelectors[27];
-    const uint64_t otherCalls=gLmiproOtherCalls;
-    const uint32_t otherSelector=gLmiproOtherSelector,otherStatus=gLmiproOtherStatus;
-    const int otherPid=gLmiproOtherPid;
-    char otherName[17]={};for(unsigned i=0;i<16;++i)otherName[i]=gLmiproOtherName[i];
+    const uint64_t surfaceCalls=gLmiproSurfaceCalls,gpuCalls=gLmiproGpuCalls;
+    const uint32_t surfaceSelector=gLmiproSurfaceSelector,surfaceStatus=gLmiproSurfaceStatus;
+    const uint32_t gpuSelector=gLmiproGpuSelector,gpuStatus=gLmiproGpuStatus;
+    const int surfacePid=gLmiproSurfacePid,gpuPid=gLmiproGpuPid;
+    char surfaceName[17]={},gpuName[17]={};
+    for(unsigned i=0;i<16;++i){surfaceName[i]=gLmiproSurfaceName[i];gpuName[i]=gLmiproGpuName[i];}
     for(unsigned i=0;i<96;++i) {
         if(!gLmiproDisplaySelectors[i].entered && !gLmiproDisplaySelectors[i].returned)continue;
         ++unique;
@@ -105,7 +112,8 @@ static unsigned lmiproFormatDisplayMethods(char *out,unsigned capacity)
       "sel5 in=%u/%u out=%u/%u pid=%d st=%x ent=%llu ret=%llu\n"
       "sel17 in=%u/%u out=%u/%u pid=%d st=%x ent=%llu ret=%llu\n"
       "sel27 in=%u/%u out=%u/%u pid=%d st=%x ent=%llu ret=%llu\n"
-      "other IOSurface/IOGPU out=%llu last=%s pid=%d sel=%u st=%x\n"
+      "surface out=%llu last=%s pid=%d sel=%u st=%x\n"
+      "gpu out=%llu last=%s pid=%d sel=%u st=%x\n"
       "selectors shown=%u of %u (cap16): ",
       (unsigned long long)entered,(unsigned long long)returned,(unsigned long long)gLmiproDisplayTraceDropped,
       in.selector,in.pid,in.name,(unsigned long long)in.scalar[0],(unsigned long long)in.scalar[1],(unsigned long long)in.scalar[2],
@@ -118,7 +126,8 @@ static unsigned lmiproFormatDisplayMethods(char *out,unsigned capacity)
       (unsigned long long)sel17.entered,(unsigned long long)sel17.returned,
       sel27.inScalars,sel27.inStructBytes,sel27.outScalars,sel27.outStructBytes,sel27.pid,sel27.status,
       (unsigned long long)sel27.entered,(unsigned long long)sel27.returned,
-      (unsigned long long)otherCalls,otherName,otherPid,otherSelector,otherStatus,
+      (unsigned long long)surfaceCalls,surfaceName,surfacePid,surfaceSelector,surfaceStatus,
+      (unsigned long long)gpuCalls,gpuName,gpuPid,gpuSelector,gpuStatus,
       shown,unique);
     if(n<0)return 0;
     unsigned used=(unsigned)n<capacity?(unsigned)n:capacity-1;
