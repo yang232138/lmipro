@@ -72,7 +72,7 @@ static unsigned lmiproFormatDisplayMethods(char *out,unsigned capacity)
     const unsigned valid=gLmiproDisplayErrorValid;
     LmiproDisplaySelector rows[16]={};unsigned selectors[16]={},shown=0,unique=0;
     const LmiproDisplaySelector dimensions=gLmiproDisplaySelectors[8],pitch=gLmiproDisplaySelectors[28];
-    const LmiproDisplaySelector sel5=gLmiproDisplaySelectors[5],sel17=gLmiproDisplaySelectors[17];
+    const LmiproDisplaySelector sel5=gLmiproDisplaySelectors[5],sel17=gLmiproDisplaySelectors[17],sel27=gLmiproDisplaySelectors[27];
     for(unsigned i=0;i<96;++i) {
         if(!gLmiproDisplaySelectors[i].entered && !gLmiproDisplaySelectors[i].returned)continue;
         ++unique;
@@ -87,6 +87,7 @@ static unsigned lmiproFormatDisplayMethods(char *out,unsigned capacity)
       "scalar replies: 8 n=%u %llx/%llx; 28 n=%u %llx\n"
       "sel5 in=%u/%u out=%u/%u pid=%d st=%x ent=%llu ret=%llu\n"
       "sel17 in=%u/%u out=%u/%u pid=%d st=%x ent=%llu ret=%llu\n"
+      "sel27 in=%u/%u out=%u/%u pid=%d st=%x ent=%llu ret=%llu\n"
       "selectors shown=%u of %u (cap16): ",
       (unsigned long long)entered,(unsigned long long)returned,(unsigned long long)gLmiproDisplayTraceDropped,
       in.selector,in.pid,in.name,(unsigned long long)in.scalar[0],(unsigned long long)in.scalar[1],(unsigned long long)in.scalar[2],
@@ -97,6 +98,8 @@ static unsigned lmiproFormatDisplayMethods(char *out,unsigned capacity)
       (unsigned long long)sel5.entered,(unsigned long long)sel5.returned,
       sel17.inScalars,sel17.inStructBytes,sel17.outScalars,sel17.outStructBytes,sel17.pid,sel17.status,
       (unsigned long long)sel17.entered,(unsigned long long)sel17.returned,
+      sel27.inScalars,sel27.inStructBytes,sel27.outScalars,sel27.outStructBytes,sel27.pid,sel27.status,
+      (unsigned long long)sel27.entered,(unsigned long long)sel27.returned,
       shown,unique);
     if(n<0)return 0;
     unsigned used=(unsigned)n<capacity?(unsigned)n:capacity-1;
