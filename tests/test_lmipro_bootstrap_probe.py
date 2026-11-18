@@ -52,6 +52,7 @@ static bool enabled, bad_word, bad_right;
 static unsigned seconds, reads, name_reads, right_checks;
 static uint64_t tick;
 static uint32_t fixture_port;
+static uint8_t user_stack[0x300];
 static struct {int num_breakpoint_pairs;} caps = {2};
 #define arm_debug_info() (&caps)
 static unsigned PE_parse_boot_argn(const char *name,void *dst,unsigned n) {
@@ -74,11 +75,16 @@ static uint64_t get_saved_state_lr(const arm_saved_state_t *s) {return s->lr;}
 static uint64_t get_saved_state_fp(const arm_saved_state_t *s) {return s->fp;}
 static const arm_saved_state_t *const_saved_state64(const arm_saved_state_t *s) {return s;}
 static int copyin(user_addr_t a,void *out,size_t n) {
+    if(a>=0x8d00 && a-0x8d00<sizeof(user_stack) && n<=sizeof(user_stack)-(a-0x8d00)) {
+        memcpy(out,user_stack+(a-0x8d00),n);return 0;
+    }
     a-=task.task_shared_region_slide;
     uint32_t op=0;
     if(a==0x1dd67d1c4ULL)op=0xd100c3ff;
     else if(a==0x1dd67cb70ULL)op=0xb90002f9;
     else if(a==0x1dd67d214ULL)op=0xd65f03c0;
+    else if(a==0x1dd6699d0ULL)op=0xa9045ff8;
+    else if(a==0x1dd6699d8ULL)op=0xa9064ff4;
     else if(a+task.task_shared_region_slide==0x5000) {op=fixture_port;++reads;}
     else return EFAULT;
     if(n!=4)return EFAULT;
@@ -117,6 +123,7 @@ static arm_saved_state_t start(void) {
     memcpy(task.task_shared_region_uuid,lmb_uuid,sizeof(lmb_uuid));
     proc.p_lflag=0;seconds=300;enabled=true;bad_word=bad_right=false;
     reads=name_reads=right_checks=0;fixture_port=0x507;
+    memset(user_stack,0,sizeof(user_stack));
     return ss;
 }
 static void enter(arm_saved_state_t ss) {
@@ -132,6 +139,23 @@ static void store(arm_saved_state_t ss) {
 static void finish(arm_saved_state_t ss,unsigned status) {
     ss.pc=LMB_RET+lmb_live.slide;ss.x[0]=status;
     assert(lmipro_bootstrap_break(&th,&ss));assert(th.machine.DebugData==NULL);
+}
+static void stack_word(uint64_t address,uint64_t word) {
+    assert(address>=0x8d00 && address+8<=0x9000);
+    memcpy(user_stack+address-0x8d00,&word,8);
+}
+static arm_saved_state_t in_flight(arm_saved_state_t wrapper,bool wrong_chain) {
+    const uint64_t frame[]={0x8e00,0x8e30,0x8e60,0x8e90,0x8ec0,0x8f60,0x8fc0,0x8ff0};
+    const uint64_t ret[]={0x1cb7841b0,0x1cb783fb8,0x1dd68b7ec,0x1dd68ac9c,0x1dd669a90,0x1dd67cb20,0x1dd67d1f4};
+    for(unsigned i=0;i<7;++i) {
+        stack_word(frame[i],frame[i+1]);
+        stack_word(frame[i]+8,ret[i]+task.task_shared_region_slide+((i==4&&wrong_chain)?4:0));
+    }
+    stack_word(frame[5]-40,wrapper.x[2]);
+    stack_word(frame[5]-8,wrapper.x[1]);
+    stack_word(frame[7]+8,wrapper.lr);
+    wrapper.fp=frame[0];wrapper.sp=0x8db0;wrapper.pc=LMB_MACH2+task.task_shared_region_slide;
+    return wrapper;
 }
 int main(void) {
     char buf[416];
@@ -162,6 +186,21 @@ int main(void) {
     ss=start();ss.x[1]=0x7000;enter(ss);assert(lmb_live.name_error==ENAMETOOLONG && !lmb_live.name[0]);
     finish(ss,0);assert(lmb_live.phase==LMB_RETURNED && !reads && !lmb_live.port);
     ss=start();enter(ss);ss.sp-=16;finish(ss,0);assert(lmb_live.phase==LMB_MISMATCH && !reads);
+    ss=start();ipc=in_flight(ss,true);
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);
+    assert(lmb_live.phase==LMB_ARMED && lmb_live.chain_checked==1 && !name_reads);
+    ipc=in_flight(ss,false);seconds=309;
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);
+    assert(lmb_live.phase==LMB_ENTERED && lmb_live.chain_checked==2 && lmb_live.source==2);
+    assert(lmb_live.armed_seconds==300 && lmb_live.at_seconds==309 && lmb_live.mach_in && lmb_live.caller==ss.lr);
+    assert(lmb_sp==ss.sp && lmb_out==ss.x[2] && !strcmp(lmb_live.name,"com.apple.fixture"));
+    lmipro_bootstrap_svc(&th,&ipc,-47,true);
+    store(ss);finish(ss,0);
+    assert(lmb_live.phase==LMB_RETURNED && lmb_live.mach_out && lmb_live.port_check==2);
+    lmipro_bootstrap_report(buf,sizeof(buf));assert(strstr(buf,"arm=300 via=2 chains=2"));
+    ss=start();ipc=in_flight(ss,false);
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);
+    assert(lmb_live.phase==LMB_ENTERED && lmb_live.source==2 && lmb_live.chain_checked==1);
     puts("PASS: exact XNU probe body: opt-in/ABI gates, untouched debugger, Mach pending vs wrapper failure, observed output store, real send right and pairing");
 }
 '''
