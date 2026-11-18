@@ -512,6 +512,10 @@ OSDefineMetaClassAndStructors(LmiproUfsController, IOService)
 static unsigned gDiag = 0;
 static LmiproUfsBlock *gSystemOsBlock = nullptr;
 static LmiproUfsBlock *gOsBlock = nullptr;
+extern "C" unsigned lmipro_ui_is_main_thread(void)
+{
+    return (thread_get_tag(current_thread()) & THREAD_TAG_MAINTHREAD) != 0;
+}
 #include "LmiproDisplayWatch.h"
 #include "LmiproDataWatch.h"
 

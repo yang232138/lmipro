@@ -6,13 +6,21 @@ static const char *testName="SpringBoard";
 static unsigned nameCopies=0;
 static int testPid=58;
 extern "C" int proc_selfpid(void){return testPid;}
+static unsigned testMain=0,stackReady=0;
+static uint64_t stackTime=45;
+extern "C" unsigned lmipro_ui_is_main_thread(void){return testMain;}
 extern "C" void proc_selfname(char *out,int size){++nameCopies;snprintf(out,(size_t)size,"%s",testName);}
 static void *current_thread(){return (void *)1;}
 static uint64_t thread_tid(void *){return 77;}
-extern "C" unsigned lmipro_ui_stack_ready(void){return 0;}
-extern "C" uint64_t lmipro_ui_stack_seconds(void){return 0;}
-extern "C" unsigned lmipro_ui_stack_capture(uintptr_t *,unsigned,int *,unsigned *){assert(false);return 0;}
+extern "C" unsigned lmipro_ui_stack_ready(void){return stackReady;}
+extern "C" uint64_t lmipro_ui_stack_seconds(void){return stackTime;}
+extern "C" unsigned lmipro_ui_stack_capture(uintptr_t *,unsigned,int *,unsigned *);
 #include "../package/LmiproUITrace.h"
+extern "C" unsigned lmipro_ui_stack_capture(uintptr_t *pc,unsigned cap,int *error,unsigned *flags){
+    assert(stackReady && cap==8 && !gLmiproSpringMainBusy);
+    pc[0]=0x12340;pc[1]=0x31220;*error=0;*flags=1;
+    return 2;
+}
 
 // The kernel defines this ring in sleh.c; host tests need their own copy.
 extern "C" volatile uint64_t lmipro_user_faults[8][7] = {};
@@ -93,4 +101,30 @@ int main(){
     lmipro_render_ipc_report(receipts,sizeof(receipts));
     assert(strstr(receipts,"p158 t77 SB226 ok1 fail0 other0 drop1"));
     assert(!strstr(receipts,"id40000") && strstr(receipts,"id40199 from27"));
+    lmipro_render_ipc_send(40002,0x123,0,0); // Non-SpringBoard excluded.
+    assert(!gLmiproRenderSend.entered);
+    testName="SpringBoard";
+    lmipro_render_ipc_send(40002,0x123,0,0);
+    lmipro_render_ipc_send(40002,0x123,0x10000003,1);
+    lmipro_render_ipc_send(40003,0x234,0,0);
+    lmipro_render_ipc_send(40003,0x234,0,1);
+    lmipro_render_ipc_report(receipts,sizeof(receipts));
+    assert(strstr(receipts,"CA send SB158 in2 ret2 ok1 first10000003 id40003 port234"));
+    lmipro_ui_stacks_enable(1);
+    stackReady=1;
+    lmipro_ui_user_event(1,-47,0x100,0,0,158);
+    assert(!gLmiproSpringMain.state);
+    testMain=1;
+    lmipro_ui_user_event(1,-47,0x100,0,0,158);
+    assert(gLmiproSpringMain.count==2 && gLmiproSpringMain.seconds==45);
+    lmipro_ui_user_event(2,-47,0x100,0x10004003,0,158);
+    lmipro_spring_main_report(receipts,sizeof(receipts));
+    assert(strstr(receipts,"SB main p158 t77 at45 c-47 s2 n2 e0 R1/10004003"));
+    assert(strstr(receipts,"12340 31220"));
+    stackTime=59;
+    lmipro_ui_user_event(1,375,0x100,0,0,158);
+    assert(gLmiproSpringMain.code==-47);
+    stackTime=60;
+    lmipro_ui_user_event(1,375,0x100,0,0,158);
+    assert(gLmiproSpringMain.code==375 && !gLmiproSpringMain.returned);
 }

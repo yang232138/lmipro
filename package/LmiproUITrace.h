@@ -4,6 +4,7 @@
 #include "LmiproUIStacks.h"
 extern "C" void proc_selfname(char *, int);
 extern "C" int proc_selfpid(void);
+extern "C" unsigned lmipro_ui_is_main_thread(void);
 struct LmiproUIEvent {int code;uint64_t pc,a,b,tid;};
 struct LmiproUIActor {
     int pid;
@@ -32,6 +33,38 @@ static volatile uint64_t gLmiproRenderReceiptDropped=0;
 static uint64_t gLmiproRenderDelivered=0, gLmiproRenderFailed=0, gLmiproRenderUnlisted=0;
 static uint64_t gLmiproRenderLastTid=0;
 static int gLmiproRenderLastPid=0;
+struct LmiproRenderSend {
+    int pid,lastId;
+    uint32_t lastPort,firstError;
+    uint64_t entered,returned,success;
+};
+static LmiproRenderSend gLmiproRenderSend={};
+
+extern "C" __attribute__((noinline)) void lmipro_render_ipc_send(int id,uint32_t port,int status,unsigned phase) {
+    if(!gLmiproUIEnabled || id<40000 || id>40199 || phase>1)return;
+    char name[17]={};
+    proc_selfname(name,sizeof(name));
+    if(strcmp(name,"SpringBoard"))return;
+    const int pid=proc_selfpid();
+    if(!__sync_bool_compare_and_swap(&gLmiproRenderReceiptBusy,0,1)) {
+        __atomic_fetch_add(&gLmiproRenderReceiptDropped,1,__ATOMIC_RELAXED);
+        return;
+    }
+    auto &send=gLmiproRenderSend;
+    if(send.pid!=pid) {
+        send={};
+        send.pid=pid;
+    }
+    send.lastId=id;
+    send.lastPort=port;
+    if(phase==0)++send.entered;
+    else {
+        ++send.returned;
+        if(!status)++send.success;
+        else if(!send.firstError)send.firstError=(uint32_t)status;
+    }
+    __sync_lock_release(&gLmiproRenderReceiptBusy);
+}
 
 // The Mach receive path has released the kmsg before calling this observer.
 // A successful copyout only proves delivery to the receiver, not CA acceptance.
@@ -86,6 +119,7 @@ extern "C" __attribute__((noinline)) unsigned lmipro_render_ipc_report(char *out
     const uint64_t ok=gLmiproRenderDelivered, fail=gLmiproRenderFailed, other=gLmiproRenderUnlisted;
     const uint64_t tid=gLmiproRenderLastTid;
     const int pid=gLmiproRenderLastPid;
+    const auto send=gLmiproRenderSend;
     __sync_lock_release(&gLmiproRenderReceiptBusy);
     int springboard=-1;
     if(__sync_bool_compare_and_swap(&gLmiproUIBusy,0,1)) {
@@ -97,6 +131,11 @@ extern "C" __attribute__((noinline)) unsigned lmipro_render_ipc_report(char *out
         (unsigned long long)other,(unsigned long long)__atomic_load_n(&gLmiproRenderReceiptDropped,__ATOMIC_RELAXED));
     if(n<0)return 0;
     unsigned used=(unsigned)n<capacity?(unsigned)n:capacity-1;
+    n=snprintf(out+used,capacity-used,"CA send SB%d in%llu ret%llu ok%llu first%x id%d port%x\n",
+        send.pid,(unsigned long long)send.entered,(unsigned long long)send.returned,
+        (unsigned long long)send.success,send.firstError,send.lastId,send.lastPort);
+    if(n<0)return used;
+    used+=(unsigned)n<capacity-used?(unsigned)n:capacity-used-1;
     for(unsigned i=0;i<count && used<capacity-1;++i) {
         const auto &row=rows[i];
         n=snprintf(out+used,capacity-used,"id%d from%d ok%llu fail%llu err%x\n",row.id,row.sender,
@@ -104,6 +143,84 @@ extern "C" __attribute__((noinline)) unsigned lmipro_render_ipc_report(char *out
         if(n<0)break;
         used+=(unsigned)n<capacity-used?(unsigned)n:capacity-used-1;
     }
+    return used;
+}
+
+static LmiproUIStack gLmiproSpringMain={};
+static volatile unsigned gLmiproSpringMainBusy=0;
+static volatile unsigned gLmiproSpringMainInFlight=0;
+static volatile uint64_t gLmiproSpringMainDropped=0;
+
+// Sample the fork-created main thread using the pinned XNU thread tag.
+// A stack is a syscall-entry observation, even when no return was recorded.
+static __attribute__((noinline)) void lmiproSpringMainEvent(unsigned kind,int pid,uint64_t tid,
+    int code,uint64_t result) {
+    if(!gLmiproUIStacksEnabled || (kind!=1 && kind!=2) || !lmipro_ui_is_main_thread())return;
+    if(!__sync_bool_compare_and_swap(&gLmiproSpringMainBusy,0,1)) {
+        __atomic_fetch_add(&gLmiproSpringMainDropped,1,__ATOMIC_RELAXED);
+        return;
+    }
+    auto &row=gLmiproSpringMain;
+    if(kind==2) {
+        if(row.pid==pid && row.tid==tid && row.code==code && row.state==2 && !row.returned) {
+            row.result=result;
+            row.returned=1;
+        }
+        __sync_lock_release(&gLmiproSpringMainBusy);
+        return;
+    }
+    const uint64_t now=lmipro_ui_stack_seconds();
+    if(__atomic_load_n(&gLmiproSpringMainInFlight,__ATOMIC_ACQUIRE) ||
+       (row.pid==pid && now>=row.seconds && now-row.seconds<15) ||
+       !lmipro_ui_stack_ready()) {
+        __sync_lock_release(&gLmiproSpringMainBusy);
+        return;
+    }
+    row={};
+    row.pid=pid;
+    row.tid=tid;
+    row.code=code;
+    row.seconds=now;
+    row.state=1;
+    __atomic_store_n(&gLmiproSpringMainInFlight,1,__ATOMIC_RELEASE);
+    __sync_lock_release(&gLmiproSpringMainBusy);
+    uintptr_t frames[8]={};
+    int error=0;
+    unsigned flags=0;
+    const unsigned count=lmipro_ui_stack_capture(frames,8,&error,&flags);
+    if(!__sync_bool_compare_and_swap(&gLmiproSpringMainBusy,0,1)) {
+        __atomic_fetch_add(&gLmiproSpringMainDropped,1,__ATOMIC_RELAXED);
+        __atomic_store_n(&gLmiproSpringMainInFlight,0,__ATOMIC_RELEASE);
+        return;
+    }
+    row.count=count<=8?count:0;
+    row.error=error;
+    row.info=flags;
+    for(unsigned i=0;i<row.count;++i)row.pc[i]=frames[i];
+    row.state=count<=8?2:3;
+    __atomic_store_n(&gLmiproSpringMainInFlight,0,__ATOMIC_RELEASE);
+    __sync_lock_release(&gLmiproSpringMainBusy);
+}
+
+extern "C" __attribute__((noinline)) unsigned lmipro_spring_main_report(char *out,unsigned capacity) {
+    if(!out || !capacity)return 0;
+    if(!__sync_bool_compare_and_swap(&gLmiproSpringMainBusy,0,1))
+        return snprintf(out,capacity,"SB main snapshot busy\n");
+    auto row=gLmiproSpringMain;
+    if(row.state==1 && !__atomic_load_n(&gLmiproSpringMainInFlight,__ATOMIC_ACQUIRE))row.state=3;
+    __sync_lock_release(&gLmiproSpringMainBusy);
+    int n=snprintf(out,capacity,"SB main p%d t%llu at%llu c%d s%u n%u e%d R%u/%llx drop%llu",
+        row.pid,(unsigned long long)row.tid,(unsigned long long)row.seconds,row.code,row.state,row.count,
+        row.error,row.returned,(unsigned long long)row.result,
+        (unsigned long long)__atomic_load_n(&gLmiproSpringMainDropped,__ATOMIC_RELAXED));
+    if(n<0)return 0;
+    unsigned used=(unsigned)n<capacity?(unsigned)n:capacity-1;
+    for(unsigned i=0;i<row.count && used<capacity-1;++i) {
+        n=snprintf(out+used,capacity-used," %llx",(unsigned long long)row.pc[i]);
+        if(n<0)break;
+        used+=(unsigned)n<capacity-used?(unsigned)n:capacity-used-1;
+    }
+    if(used<capacity-1){out[used++]='\n';out[used]=0;}
     return used;
 }
 
@@ -140,6 +257,7 @@ extern "C" __attribute__((noinline)) void lmipro_ui_user_event(unsigned kind,int
     for(unsigned i=0;i<2;++i)if(!strcmp(name,gLmiproUINames[i])) {
         uint64_t tid=thread_tid(current_thread());
         lmiproRecordUI(i,pid,kind,code,pc,a,b,tid);
+        if(i==0)lmiproSpringMainEvent(kind,pid,tid,code,a);
         if(i==1 && kind==1)lmiproSampleUIStack(pid,tid,code);
         if(i==1 && kind==2)lmiproReturnUIStack(pid,tid,code,a,b);
         if(i==1 && kind==4)lmiproInterruptUIStack(pid,tid,pc);

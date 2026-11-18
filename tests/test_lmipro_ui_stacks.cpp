@@ -11,6 +11,7 @@ static int replyError=0;
 static bool recurse=false,loseStore=false;
 extern "C" void proc_selfname(char *out,int size){snprintf(out,(size_t)size,"%s",testName);}
 extern "C" int proc_selfpid(void){return 58;}
+extern "C" unsigned lmipro_ui_is_main_thread(void){return 0;}
 static void *current_thread(){return (void *)1;}
 static uint64_t thread_tid(void *){return testTid;}
 static uint64_t testSeconds=100;

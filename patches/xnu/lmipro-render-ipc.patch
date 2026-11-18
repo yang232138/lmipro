@@ -1,17 +1,18 @@
 --- a/osfmk/ipc/mach_msg.c
 +++ b/osfmk/ipc/mach_msg.c
-@@ -275,6 +275,10 @@
+@@ -275,6 +275,11 @@
   *      MACH_RCV_INVALID_NOTIFY Bad notify port.
   *      MACH_RCV_HEADER_ERROR
   */
 +#if defined(LMIPRO_RENDER_IPC) && LMIPRO_RENDER_IPC
 +extern void lmipro_render_ipc_receive(mach_msg_id_t, int, mach_msg_return_t);
++extern void lmipro_render_ipc_send(mach_msg_id_t, mach_port_name_t, mach_msg_return_t, unsigned int);
 +#endif
 +
  mach_msg_return_t
  mach_msg_receive_results(
  	mach_msg_recv_result_t *msgr_out)
-@@ -347,6 +351,16 @@
+@@ -347,6 +352,16 @@
  	/* auto redeem the voucher in the message */
  	ipc_voucher_receive_postprocessing(kmsg, options);
  
@@ -28,7 +29,7 @@
  	/* Save destination port context for the trailer before copyout */
  	msgr.msgr_context = ikm_header(kmsg)->msgh_remote_port->ip_context;
  
-@@ -376,6 +390,11 @@
+@@ -376,6 +391,11 @@
  		    options, map, mr);
  	}
  	/* kmsg freed */
@@ -40,3 +41,84 @@
  
  out:
  	if (msgr_out) {
+@@ -669,15 +689,32 @@
+ 	mach_msg_return_t mr;
+ 
+ 	assert(options & MACH64_SEND_MSG);
++#if defined(LMIPRO_RENDER_IPC) && LMIPRO_RENDER_IPC
++	mach_msg_id_t lmipro_send_id = send_uctx->send_header.msgh_id;
++	mach_port_name_t lmipro_send_port = send_uctx->send_header.msgh_remote_port;
++	bool lmipro_send_observe = lmipro_send_id >= 40000 && lmipro_send_id <= 40199;
++	if (lmipro_send_observe) {
++		lmipro_render_ipc_send(lmipro_send_id, lmipro_send_port, 0, 0);
++	}
++#define LMIPRO_SEND_RESULT(result) do { \
++	if (lmipro_send_observe) { \
++		lmipro_render_ipc_send(lmipro_send_id, lmipro_send_port, (result), 1); \
++	} \
++} while (0)
++#else
++#define LMIPRO_SEND_RESULT(result) ((void)0)
++#endif
+ 
+ 	/*
+ 	 * Validate the send sizes and header carefuly.
+ 	 */
+ 	if (send_uctx->send_msg_size < sizeof(mach_msg_user_header_t) ||
+ 	    (send_uctx->send_msg_size & 3)) {
++		LMIPRO_SEND_RESULT(MACH_SEND_MSG_TOO_SMALL);
+ 		return MACH_SEND_MSG_TOO_SMALL;
+ 	}
+ 	if (send_uctx->send_msg_size > IPC_KMSG_MAX_BODY_SPACE) {
++		LMIPRO_SEND_RESULT(MACH_SEND_TOO_LARGE);
+ 		return MACH_SEND_TOO_LARGE;
+ 	}
+ 	/*
+@@ -686,11 +723,13 @@
+ 	 */
+ 	if (send_uctx->send_header.msgh_bits & MACH_MSGH_BITS_COMPLEX) {
+ 		if (send_uctx->send_msg_size < sizeof(mach_msg_user_base_t)) {
++			LMIPRO_SEND_RESULT(MACH_SEND_MSG_TOO_SMALL);
+ 			return MACH_SEND_MSG_TOO_SMALL;
+ 		}
+ 		if (send_uctx->send_dsc_count >
+ 		    (send_uctx->send_msg_size - sizeof(mach_msg_user_base_t)) /
+ 		    sizeof(mach_msg_type_descriptor_t)) {
++			LMIPRO_SEND_RESULT(MACH_SEND_MSG_TOO_SMALL);
+ 			return MACH_SEND_MSG_TOO_SMALL;
+ 		}
+ 	} else if (send_uctx->send_dsc_count != 0) {
+@@ -701,6 +740,7 @@
+ 		 * since desc_count is passed as its own trap argument.
+ 		 */
+ 		assert(options & MACH64_MACH_MSG2);
++		LMIPRO_SEND_RESULT(MACH_SEND_TOO_LARGE);
+ 		return MACH_SEND_TOO_LARGE;
+ 	}
+ 
+@@ -711,6 +751,7 @@
+ 	kmsg = ipc_kmsg_alloc(send_uctx->send_msg_size, send_uctx->send_aux_size,
+ 	    send_uctx->send_dsc_count, IPC_KMSG_ALLOC_USER);
+ 	if (kmsg == IKM_NULL) {
++		LMIPRO_SEND_RESULT(MACH_SEND_NO_BUFFER);
+ 		return MACH_SEND_NO_BUFFER;
+ 	}
+ 
+@@ -725,6 +766,7 @@
+ 	mr = ipc_kmsg_copyin_from_user(kmsg, send_uctx, space, map, priority, &options);
+ 	if (mr != MACH_MSG_SUCCESS) {
+ 		ipc_kmsg_free(kmsg);
++		LMIPRO_SEND_RESULT(mr);
+ 		return mr;
+ 	}
+ 
+@@ -735,7 +777,9 @@
+ 		/* kmsg is freed */
+ 	}
+ 
++	LMIPRO_SEND_RESULT(mr);
+ 	return mr;
++#undef LMIPRO_SEND_RESULT
+ }
+ 
+ /*

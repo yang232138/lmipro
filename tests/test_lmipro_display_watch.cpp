@@ -52,6 +52,7 @@ extern "C" char lmipro_user_fault_name[8][17] = {};
 static unsigned boardReports=0;
 extern "C" unsigned lmipro_display_callers_report(char *out,unsigned n){return snprintf(out,n,"BBcall/v1 fixture\n");}
 extern "C" unsigned lmipro_render_ipc_report(char *out,unsigned n){return snprintf(out,n,"RenderIPC/v1 fixture\n");}
+extern "C" unsigned lmipro_spring_main_report(char *out,unsigned n){return snprintf(out,n,"SB main fixture\n");}
 static bool framePresented=false;
 extern "C" unsigned lmipro_display_frame_presented(){return framePresented;}
 static void *current_thread(){return (void *)1;}
@@ -111,7 +112,8 @@ int main(){
     const char *text=e.what();
     assert(strstr(text,"BBcall/v1 fixture") < strstr(text,"UI entry stacks fixture"));
     assert(strstr(text,"board snapshot fixture") < strstr(text,"RenderIPC/v1 fixture"));
-    assert(strstr(text,"RenderIPC/v1 fixture") < strstr(text,"BBcall/v1 fixture"));
+    assert(strstr(text,"RenderIPC/v1 fixture") < strstr(text,"SB main fixture"));
+    assert(strstr(text,"SB main fixture") < strstr(text,"BBcall/v1 fixture"));
   }
   enabled=2;framePresented=false;caught=false;
   try{lmiproDisplayCheckpoint(600,"1:launchd");}catch(const std::runtime_error &e){caught=true;assert(strstr(e.what(),"LMIPRO UI CHECKPOINT"));}
