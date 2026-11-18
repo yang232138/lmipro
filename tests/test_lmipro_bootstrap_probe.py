@@ -52,7 +52,7 @@ static bool enabled, bad_word, bad_right, display_case;
 static unsigned from_seconds, seconds, reads, name_reads, right_checks;
 static uint64_t tick;
 static uint32_t fixture_port;
-static uint8_t user_stack[0x600];
+static uint8_t user_stack[0x700];
 static struct {int num_breakpoint_pairs;} caps = {2};
 #define arm_debug_info() (&caps)
 static unsigned PE_parse_boot_argn(const char *name,void *dst,unsigned n) {
@@ -96,6 +96,11 @@ static int copyin(user_addr_t a,void *out,size_t n) {
     else if(a==0x18a3ba9c4ULL)op=0x9453742f;
     else if(a==0x18a3ba9c8ULL)op=0xaa1603e0;
     else if(a==0x18a3baa28ULL)op=0x903528ba;
+    else if(a==0x18f6929f0ULL)op=0x910543fd;
+    else if(a==0x18f692bb4ULL)op=0x97ff2720;
+    else if(a==0x18f692bb8ULL)op=0xaa1903e0;
+    else if(a==0x18f692c90ULL)op=0x910583ff;
+    else if(a==0x18f692c94ULL)op=0xd65f03c0;
     else if(a+task.task_shared_region_slide==0x5000) {op=fixture_port;++reads;}
     else return EFAULT;
     if(n!=4)return EFAULT;
@@ -147,7 +152,7 @@ static void finish(arm_saved_state_t ss,unsigned status) {
     assert(lmipro_bootstrap_break(&th,&ss));assert(th.machine.DebugData==NULL);
 }
 static void stack_word(uint64_t address,uint64_t word) {
-    assert(address>=0x8d00 && address+8<=0x9300);
+    assert(address>=0x8d00 && address+8<=0x8d00+sizeof(user_stack));
     memcpy(user_stack+address-0x8d00,&word,8);
 }
 static arm_saved_state_t in_flight(arm_saved_state_t wrapper,bool wrong_chain) {
@@ -282,7 +287,29 @@ int main(void) {
     assert(lmipro_bootstrap_break(&th,&mig));mig.pc=LMD_RET+lmb_live.slide;mig.x[0]=0;
     assert(lmipro_bootstrap_break(&th,&mig));
     assert(!lmb_live.ui_armed && lmb_live.ui_diag==ENOEXEC && !th.machine.DebugData);
-    puts("PASS: exact XNU probe body: opt-in/ABI gates, untouched debugger, Mach pending vs wrapper failure, observed output store, real send right and BKS-to-UIKit pairing");
+    /* The original BKS shell caller is distinct from UIKit and has its own stack. */
+    for (unsigned bad_lr=0;bad_lr<2;++bad_lr) {
+        mig=display_begin(true);
+        const uint64_t parent=0x100038000;
+        stack_word(0x91e0,0x9340);
+        stack_word(0x91e8,0x18f692bb8ULL+lmb_live.slide);
+        stack_word(0x9348,parent);
+        assert(lmipro_bootstrap_break(&th,&mig));
+        mig.pc=LMD_RET+lmb_live.slide;mig.x[0]=0;
+        assert(lmipro_bootstrap_break(&th,&mig));
+        assert(lmb_live.ui_armed && lmb_live.shell_parent==parent && lmu_sp==0x91f0);
+        u=(arm_saved_state_t){.pc=lmu_shell_sites[0].pc+lmb_live.slide,.sp=0x91f0};
+        u.x[0]=1;
+        assert(lmipro_bootstrap_break(&th,&u) && lmb_live.ui_step==1);
+        u.pc=lmu_shell_sites[1].pc+lmb_live.slide;u.sp+=0x160;u.lr=parent+4*bad_lr;
+        assert(lmipro_bootstrap_break(&th,&u) && !th.machine.DebugData);
+        assert(lmb_live.ui_step==(bad_lr?1:2) && lmb_live.ui_diag==(bad_lr?EINVAL:0));
+        if (!bad_lr) {
+            lmipro_bootstrap_report(buf,sizeof(buf));
+            assert(strstr(buf,"BKS shell/v1 arm1 step2 diag0 bks1") && strstr(buf,"parent100038000"));
+        }
+    }
+    puts("PASS: exact XNU probe body: opt-in/ABI gates, original IPC results, UIKit and shell return pairing");
 }
 '''
 with tempfile.TemporaryDirectory() as directory:

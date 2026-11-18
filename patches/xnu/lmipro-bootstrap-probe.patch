@@ -98,7 +98,7 @@ diff --git a/osfmk/arm64/lmipro_bootstrap_probe.h b/osfmk/arm64/lmipro_bootstrap
 new file mode 100644
 --- /dev/null
 +++ b/osfmk/arm64/lmipro_bootstrap_probe.h
-@@ -0,0 +1,622 @@
+@@ -0,0 +1,653 @@
 +/* Opt-in one-shot lookup probe for the pinned 21H461 ARM64 cache.
 + * Uses the existing XNU per-thread debug state machinery. No writes to EL0
 + * memory, changes to saved registers, debug entitlements, or IPC semantics. */
@@ -130,13 +130,14 @@ new file mode 100644
 +	uint32_t disp_words[4];
 +	uint8_t disp_flags[2];
 +	unsigned ui_armed, ui_step, ui_diag, ui_start_result;
-+	uint64_t ui_caller, ui_at;
++	uint64_t ui_caller, ui_at, shell_parent;
 +	mach_port_name_t port;
 +	char name[96];
 +};
 +static struct lmb_record lmb_live, lmb_snapshot;
 +/* Unslid UIKitCore checkpoints, in order in __UIApplicationMainPreparations. */
-+static const struct { uint64_t pc; uint32_t op; } lmu_sites[] = {
++struct lmu_site { uint64_t pc; uint32_t op; };
++static const struct lmu_site lmu_sites[] = {
 +	{ UINT64_C(0x18a3ba7e4), 0x52801b14 }, /* BKSDisplayServicesStart returned */
 +	{ UINT64_C(0x18a3ba81c), 0x94db417b }, /* preload initialization returned */
 +	{ UINT64_C(0x18a3ba838), 0x94db4174 }, /* initial display context preload returned */
@@ -147,6 +148,12 @@ new file mode 100644
 +	{ UINT64_C(0x18a3baa28), 0x903528ba }, /* application singleton returned */
 +};
 +#define LMU_COUNT (sizeof(lmu_sites) / sizeof(lmu_sites[0]))
++/* Return from BKSDisplayServicesStart and the enclosing shell activation. */
++static const struct lmu_site lmu_shell_sites[] = {
++	{ UINT64_C(0x18f692bb8), 0xaa1903e0 },
++	{ UINT64_C(0x18f692c94), 0xd65f03c0 },
++};
++#define LMU_SHELL_COUNT (sizeof(lmu_shell_sites) / sizeof(lmu_shell_sites[0]))
 +static uint64_t lmb_sp, lmb_out, lmd_sp, lmd_trap_sp, lmu_sp;
 +static mach_port_name_t lmb_expected;
 +static arm_debug_state_t *lmb_owner;
@@ -420,8 +427,8 @@ new file mode 100644
 +	lmb_publish();
 +}
 +
-+/* Arm only the real caller recovered across GetMainScreenInfo and BKS Start.
-+ * Check every instruction before arming and pair subsequent PCs with UIKit SP. */
++/* Arm only a verified caller reached across GetMainScreenInfo and BKS Start.
++ * Pair every checkpoint with the stack pointer of that activation. */
 +static bool
 +lmu_arm(thread_t th, const arm_saved_state_t *ss)
 +{
@@ -438,19 +445,37 @@ new file mode 100644
 +		return false;
 +	}
 +	lmb_live.ui_caller = frame[1];
-+	if (frame[1] != lmu_sites[0].pc + slide) {
++	const bool shell = frame[1] == lmu_shell_sites[0].pc + slide;
++	if (!shell && frame[1] != lmu_sites[0].pc + slide) {
 +		lmb_live.ui_diag = ENOEXEC;
 +		return false;
 +	}
-+	for (unsigned i = 0; i < LMU_COUNT; ++i) {
-+		if (!lmb_word(lmu_sites[i].pc + slide, lmu_sites[i].op)) {
++	const struct lmu_site *sites = shell ? lmu_shell_sites : lmu_sites;
++	const unsigned count = shell ? LMU_SHELL_COUNT : LMU_COUNT;
++	for (unsigned i = 0; i < count; ++i) {
++		if (!lmb_word(sites[i].pc + slide, sites[i].op)) {
 +			lmb_live.ui_diag = ENOEXEC;
 +			return false;
 +		}
 +	}
++	if (shell) {
++		if (!lmb_word(UINT64_C(0x18f6929f0) + slide, 0x910543fd) ||
++		    !lmb_word(UINT64_C(0x18f692bb4) + slide, 0x97ff2720) ||
++		    !lmb_word(UINT64_C(0x18f692c90) + slide, 0x910583ff)) {
++			lmb_live.ui_diag = ENOEXEC;
++			return false;
++		}
++		if (frame[0] != sp + 0x240 || !lmb_ptr(frame[0], sizeof(frame)) ||
++		    copyin((user_addr_t)frame[0], frame, sizeof(frame)) || (frame[1] & 3) ||
++		    !lmb_ptr(frame[1], sizeof(uint32_t))) {
++			lmb_live.ui_diag = EFAULT;
++			return false;
++		}
++		lmb_live.shell_parent = frame[1];
++	}
 +	lmu_sp = sp + 0xf0;
-+	lmb_live.ui_diag = lmb_set(th, lmu_sites[0].pc + slide, 0);
-+	if (!lmb_live.ui_diag && !lmb_owned(th, lmu_sites[0].pc + slide)) {
++	lmb_live.ui_diag = lmb_set(th, sites[0].pc + slide, 0);
++	if (!lmb_live.ui_diag && !lmb_owned(th, sites[0].pc + slide)) {
 +		lmb_live.ui_diag = EIO;
 +	}
 +	lmb_live.ui_armed = lmb_live.ui_diag == 0;
@@ -462,16 +487,21 @@ new file mode 100644
 +{
 +	const unsigned i = lmb_live.ui_step;
 +	const uint64_t slide = lmb_live.slide;
-+	if (i < LMU_COUNT && get_saved_state_pc(ss) == lmu_sites[i].pc + slide &&
-+	    get_saved_state_sp(ss) == lmu_sp) {
++	const bool shell = lmb_live.shell_parent != 0;
++	const struct lmu_site *sites = shell ? lmu_shell_sites : lmu_sites;
++	const unsigned count = shell ? LMU_SHELL_COUNT : LMU_COUNT;
++	const bool shell_return = shell && i == 1;
++	if (i < count && get_saved_state_pc(ss) == sites[i].pc + slide &&
++	    get_saved_state_sp(ss) == lmu_sp + (shell_return ? 0x160 : 0) &&
++	    (!shell_return || get_saved_state_lr(ss) == lmb_live.shell_parent)) {
 +		if (i == 0) {
 +			lmb_live.ui_start_result = (uint32_t)const_saved_state64(ss)->x[0];
 +		}
 +		lmb_live.ui_step = i + 1;
 +		lmb_live.ui_at = lmipro_ui_stack_seconds();
-+		if (i + 1 < LMU_COUNT && (i || lmb_live.ui_start_result == 1)) {
-+			lmb_live.ui_diag = lmb_set(th, lmu_sites[i + 1].pc + slide, 0);
-+			if (!lmb_live.ui_diag && lmb_owned(th, lmu_sites[i + 1].pc + slide)) {
++		if (i + 1 < count && (shell || i || lmb_live.ui_start_result == 1)) {
++			lmb_live.ui_diag = lmb_set(th, sites[i + 1].pc + slide, 0);
++			if (!lmb_live.ui_diag && lmb_owned(th, sites[i + 1].pc + slide)) {
 +				lmb_publish();
 +				return true;
 +			}
@@ -685,7 +715,7 @@ new file mode 100644
 +		    "BKS screen/v1 p%d t%llu bootRet%d port%x state%u diag%u\n"
 +		    "id6001011 at%llu trap%u/%u/%x ageMs%llu run%d msg%u/%x ret%u/%d\n"
 +		    "out%u %x/%x/%x/%x flags%x/%x upper%llx cache%llx main%llx\n"
-+		    "UIKit init/v1 arm%u step%u diag%u bks%u at%llu caller%llx\n",
++		    "%s arm%u step%u diag%u bks%u at%llu caller%llx parent%llx\n",
 +		    row.pid, (unsigned long long)row.tid, row.result, row.port, row.disp, row.disp_diag,
 +		    (unsigned long long)row.disp_at, (unsigned)(row.disp_mach_in != 0),
 +		    (unsigned)(row.disp_mach_out != 0), (unsigned)row.disp_trap_status,
@@ -694,8 +724,9 @@ new file mode 100644
 +		    row.disp_output, row.disp_words[0], row.disp_words[1], row.disp_words[2], row.disp_words[3],
 +		    (unsigned)row.disp_flags[0], (unsigned)row.disp_flags[1], (unsigned long long)row.disp_upper,
 +		    (unsigned long long)(LMB_CACHE + row.slide), (unsigned long long)row.main_base,
-+		    row.ui_armed, row.ui_step, row.ui_diag, row.ui_start_result, (unsigned long long)row.ui_at,
-+		    (unsigned long long)row.ui_caller);
++		    row.shell_parent ? "BKS shell/v1" : "UIKit init/v1", row.ui_armed, row.ui_step, row.ui_diag,
++		    row.ui_start_result, (unsigned long long)row.ui_at, (unsigned long long)row.ui_caller,
++		    (unsigned long long)row.shell_parent);
 +	}
 +	uint64_t ms = 0, mms = 0;
 +	if (row.enter) {
