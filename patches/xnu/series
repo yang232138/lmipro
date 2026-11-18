@@ -13,3 +13,4 @@ lmipro-data-mobile-owners.patch
 lmipro-ui-exit.patch
 lmipro-fault-trace.patch
 lmipro-render-ipc.patch
+lmipro-bootstrap-probe.patch

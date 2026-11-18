@@ -1,0 +1,403 @@
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -77,6 +77,16 @@
+ #include <kperf/kperf.h>
+ 
+ #include <kern/policy_internal.h>
++
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++#include <arm/cpuid.h>
++#include <mach/mach_port.h>
++#include <mach/thread_info.h>
++#include <pexpert/pexpert.h>
++#include <sys/proc_internal.h>
++#include <sys/systm.h>
++#include "lmipro_bootstrap_probe.h"
++#endif
+ #if CONFIG_TELEMETRY
+ #include <kern/telemetry.h>
+ #endif
+@@ -871,6 +881,11 @@
+ 
+ 	case ESR_EC_BKPT_REG_MATCH_EL0:
+ 		if (FSC_DEBUG_FAULT == ISS_SSDE_FSC(esr)) {
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++			if (is_user && is_saved_state64(state) && lmipro_bootstrap_break(thread, state)) {
++				break;
++			}
++#endif
+ 			handle_breakpoint(state, esr);
+ 		}
+ 		panic("Unsupported Class %u event code. state=%p class=%u esr=%u far=%p",
+@@ -1955,6 +1970,9 @@
+ 	}
+ 
+ 	current_cached_proc_cred_update();
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++	lmipro_bootstrap_svc(thread, state, trap_no, false);
++#endif
+ 	LMIPRO_USER_EVENT(1, trap_no, get_saved_state_pc(state),
+ 	    saved_state64(state)->x[0], saved_state64(state)->x[1]);
+ 
+@@ -1980,6 +1998,9 @@
+ 
+ 		unix_syscall(state, thread, p);
+ 	}
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++	lmipro_bootstrap_svc(thread, state, trap_no, true);
++#endif
+ 	LMIPRO_USER_EVENT(2, trap_no, get_saved_state_pc(state),
+ 	    saved_state64(state)->x[0], get_saved_state_cpsr(state));
+ }
+@@ -2348,6 +2369,9 @@
+ 
+ 	assert(is_saved_state64(state));
+ 	saved_state64(state)->x[0] = error;
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++	lmipro_bootstrap_svc(current_thread(), state, get_saved_state_svc_number(state), true);
++#endif
+ 	LMIPRO_USER_EVENT(2, get_saved_state_svc_number(state), get_saved_state_pc(state),
+ 	    saved_state64(state)->x[0], get_saved_state_cpsr(state));
+ 
+diff --git a/osfmk/arm64/lmipro_bootstrap_probe.h b/osfmk/arm64/lmipro_bootstrap_probe.h
+new file mode 100644
+--- /dev/null
++++ b/osfmk/arm64/lmipro_bootstrap_probe.h
+@@ -0,0 +1,337 @@
++/* Opt-in one-shot user breakpoint probe for the pinned 21H461 ARM64 cache.
++ * Uses the existing XNU per-thread debug state machinery. No writes to EL0
++ * memory, changes to saved registers, debug entitlements, or IPC semantics. */
++#define LMB_ENTRY UINT64_C(0x1dd67d1c4)
++#define LMB_STORE UINT64_C(0x1dd67cb70)
++#define LMB_RET   UINT64_C(0x1dd67d214)
++#define LMB_MACH2 UINT64_C(0x1cb780b58)
++#define LMB_CACHE UINT64_C(0x180000000)
++#define LMB_XPC   UINT64_C(0x1dd666000)
++#define LMB_BCR   (ARM_DBG_CR_BYTE_ADDRESS_SELECT_MASK | ARM_DBG_CR_ENABLE_ENABLE)
++
++static const uint8_t lmb_uuid[16] = {
++	0x59,0x0d,0x83,0x9a,0x82,0xd2,0x30,0xf1,0xa1,0x7d,0x0c,0xc0,0x53,0x42,0x0f,0x73
++};
++enum { LMB_IDLE, LMB_ARMED, LMB_ENTERED, LMB_RETURNED, LMB_REFUSED, LMB_MISMATCH, LMB_QUALIFYING };
++struct lmb_record {
++	unsigned phase, slide, name_error, port_check, stored;
++	int pid, diagnostic, result, mach_status;
++	uint64_t tid, enter, end, at_seconds, caller, parent, main_base, mach_in, mach_out;
++	mach_port_name_t port;
++	char name[96];
++};
++static struct lmb_record lmb_live, lmb_snapshot;
++static uint64_t lmb_sp, lmb_out;
++static mach_port_name_t lmb_expected;
++static arm_debug_state_t *lmb_owner;
++static unsigned lmb_guard, lmb_lost;
++static unsigned lmb_config; /* 0 unparsed, 1 off, otherwise requested sec + 2 */
++
++static unsigned
++lmb_setting(void)
++{
++	unsigned config = __atomic_load_n(&lmb_config, __ATOMIC_ACQUIRE);
++	if (config == 0) {
++		unsigned from = 0;
++		config = PE_parse_boot_argn("lmipro-bootstrap-at", &from, sizeof(from)) &&
++		    from <= 590 ? from + 2 : 1;
++		__atomic_store_n(&lmb_config, config, __ATOMIC_RELEASE);
++	}
++	return config;
++}
++
++static void
++lmb_publish(void)
++{
++	if (!__sync_bool_compare_and_swap(&lmb_guard, 0, 1)) {
++		__atomic_fetch_add(&lmb_lost, 1, __ATOMIC_RELAXED);
++		return;
++	}
++	lmb_snapshot = lmb_live;
++	__sync_lock_release(&lmb_guard);
++}
++
++static bool
++lmb_ptr(uint64_t p, size_t bytes)
++{
++	return p >= 0x1000 && bytes != 0 && p < MACH_VM_MAX_ADDRESS &&
++	    bytes <= MACH_VM_MAX_ADDRESS - p;
++}
++
++static bool
++lmb_word(uint64_t pc, uint32_t expected)
++{
++	uint32_t actual = 0;
++	return lmb_ptr(pc, sizeof(actual)) && copyin((user_addr_t)pc, &actual, sizeof(actual)) == 0 &&
++	    actual == expected;
++}
++
++static kern_return_t
++lmb_set(thread_t th, uint64_t first, uint64_t second)
++{
++	arm_debug_state64_t d = {};
++	if (first) {
++		d.bvr[0] = first;
++		d.bcr[0] = LMB_BCR;
++	}
++	if (second) {
++		d.bvr[1] = second;
++		d.bcr[1] = LMB_BCR;
++	}
++	return machine_thread_set_state(th, ARM_DEBUG_STATE64, (thread_state_t)&d, ARM_DEBUG_STATE64_COUNT);
++}
++
++static bool
++lmb_owned(thread_t th, uint64_t pc)
++{
++	arm_debug_state_t *d = th->machine.DebugData;
++	return lmb_owner != NULL && d == lmb_owner && d->dsh.flavor == ARM_DEBUG_STATE64 &&
++	    (((d->uds.ds64.bcr[0] & ARM_DBG_CR_ENABLE_ENABLE) && d->uds.ds64.bvr[0] == pc) ||
++	    ((d->uds.ds64.bcr[1] & ARM_DBG_CR_ENABLE_ENABLE) && d->uds.ds64.bvr[1] == pc));
++}
++
++static bool
++lmb_can_read(void)
++{
++	return ml_get_interrupts_enabled() && preemption_enabled();
++}
++
++static void
++lmb_name(uint64_t address)
++{
++	char name[sizeof(lmb_live.name)] = {};
++	size_t done = 0;
++	lmb_live.name_error = EFAULT;
++	if (!lmb_ptr(address, sizeof(name))) {
++		return;
++	}
++	lmb_live.name_error = copyinstr((user_addr_t)address, name, sizeof(name), &done);
++	if (lmb_live.name_error) {
++		return;
++	}
++	if (done < 2 || done > sizeof(name) || name[done - 1] != 0) {
++		lmb_live.name_error = EINVAL;
++		return;
++	}
++	for (size_t i = 0; i < done - 1; ++i) {
++		if (name[i] < 0x21 || name[i] > 0x7e) {
++			lmb_live.name_error = EINVAL;
++			return;
++		}
++	}
++	memcpy(lmb_live.name, name, done);
++}
++
++extern uint64_t lmipro_ui_stack_seconds(void);
++
++static __attribute__((noinline)) void
++lmipro_bootstrap_svc(thread_t th, arm_saved_state_t *ss, int trap, bool returning)
++{
++	const unsigned config = lmb_setting();
++	if (config <= 1 || !(thread_get_tag(th) & THREAD_TAG_MAINTHREAD)) {
++		return;
++	}
++	unsigned phase = __atomic_load_n(&lmb_live.phase, __ATOMIC_ACQUIRE);
++	if (phase == LMB_ENTERED) {
++		if (trap == -47 && lmb_live.tid == thread_tid(th) &&
++		    get_saved_state_pc(ss) == LMB_MACH2 + lmb_live.slide) {
++			if (!returning) {
++				lmb_live.mach_in = mach_absolute_time();
++				lmb_live.mach_out = 0;
++			} else if (lmb_live.mach_in && !lmb_live.mach_out) {
++				lmb_live.mach_out = mach_absolute_time();
++				lmb_live.mach_status = (int)const_saved_state64(ss)->x[0];
++			}
++			lmb_publish();
++		}
++		return;
++	}
++	if (returning || phase != LMB_IDLE || !lmb_can_read() ||
++	    lmipro_ui_stack_seconds() < config - 2) {
++		return;
++	}
++	char name[17] = {};
++	proc_selfname(name, sizeof(name));
++	if (strcmp(name, "SpringBoard")) {
++		return;
++	}
++	task_t task = current_task();
++	proc_t proc = proc_self();
++	uint32_t slide = task->task_shared_region_slide;
++	if (slide == UINT32_MAX) {
++		return; /* dyld has not published the cache yet */
++	}
++	unsigned idle = LMB_IDLE;
++	if (!__atomic_compare_exchange_n(&lmb_live.phase, &idle, LMB_QUALIFYING, false,
++	    __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
++		return;
++	}
++	lmb_live.pid = proc_selfpid();
++	lmb_live.tid = thread_tid(th);
++	lmb_live.slide = slide;
++	lmb_live.main_base = task->mach_header_vm_address;
++	int status = 0;
++	if (!proc || (proc->p_lflag & (P_LNOATTACH | P_LTRACED)) || th->machine.DebugData) {
++		status = EPERM;
++	} else if (arm_debug_info()->num_breakpoint_pairs < 2) {
++		status = ENOTSUP;
++	} else if (memcmp(task->task_shared_region_uuid, lmb_uuid, sizeof(lmb_uuid)) ||
++	    (slide & 0xfff) || !lmb_word(LMB_ENTRY + slide, 0xd100c3ff) ||
++	    !lmb_word(LMB_STORE + slide, 0xb90002f9) || !lmb_word(LMB_RET + slide, 0xd65f03c0)) {
++		status = ENOEXEC;
++	} else {
++		status = lmb_set(th, LMB_ENTRY + slide, 0);
++		lmb_owner = th->machine.DebugData;
++		if (!status && !lmb_owned(th, LMB_ENTRY + slide)) {
++			(void)lmb_set(th, 0, 0);
++			lmb_owner = NULL;
++			status = EIO;
++		}
++	}
++	lmb_live.diagnostic = status;
++	__atomic_store_n(&lmb_live.phase, status ? LMB_REFUSED : LMB_ARMED, __ATOMIC_RELEASE);
++	lmb_publish();
++}
++
++static __attribute__((noinline)) bool
++lmipro_bootstrap_break(thread_t th, const arm_saved_state_t *ss)
++{
++	const uint64_t pc = get_saved_state_pc(ss);
++	unsigned phase = __atomic_load_n(&lmb_live.phase, __ATOMIC_ACQUIRE);
++	if ((phase != LMB_ARMED && phase != LMB_ENTERED) || lmb_live.tid != thread_tid(th) ||
++	    !lmb_owned(th, pc)) {
++		return false;
++	}
++	const uint64_t slide = lmb_live.slide;
++	const uint64_t caller = get_saved_state_lr(ss);
++	const uint64_t sp = get_saved_state_sp(ss);
++	const uint64_t *regs = const_saved_state64(ss)->x;
++	if (phase == LMB_ARMED && pc == LMB_ENTRY + slide && lmb_can_read()) {
++		lmb_sp = sp;
++		lmb_out = regs[2];
++		lmb_live.caller = caller;
++		lmb_live.enter = mach_absolute_time();
++		lmb_live.at_seconds = lmipro_ui_stack_seconds();
++		lmb_name(regs[1]);
++		uint64_t frame[2] = {};
++		uint64_t fp = get_saved_state_fp(ss);
++		if (!(fp & 7) && lmb_ptr(fp, sizeof(frame)) &&
++		    copyin((user_addr_t)fp, frame, sizeof(frame)) == 0 &&
++		    !(frame[1] & 3) && lmb_ptr(frame[1], sizeof(uint32_t))) {
++			lmb_live.parent = frame[1];
++		}
++		lmb_live.diagnostic = lmb_set(th, LMB_RET + slide, LMB_STORE + slide);
++		if (!lmb_live.diagnostic) {
++			__atomic_store_n(&lmb_live.phase, LMB_ENTERED, __ATOMIC_RELEASE);
++			lmb_publish();
++			return true;
++		}
++	} else if (phase == LMB_ENTERED && pc == LMB_STORE + slide && lmb_can_read() &&
++	    lmb_sp >= 0x90 && sp == lmb_sp - 0x90 && regs[23] == lmb_out) {
++		/* The next instruction is the original _bootstrap_look_up3 store.
++		 * Disable this breakpoint before letting that instruction run. */
++		lmb_live.stored = 1;
++		lmb_expected = (mach_port_name_t)regs[25];
++		lmb_live.diagnostic = lmb_set(th, LMB_RET + slide, 0);
++		if (!lmb_live.diagnostic) {
++			lmb_publish();
++			return true;
++		}
++	} else if (phase == LMB_ENTERED && pc == LMB_RET + slide && lmb_sp == sp &&
++	    caller == lmb_live.caller && lmb_can_read()) {
++		lmb_live.end = mach_absolute_time();
++		lmb_live.result = (kern_return_t)regs[0];
++		if (lmb_live.result == KERN_SUCCESS && lmb_live.stored) {
++			mach_port_name_t port = MACH_PORT_NULL;
++			mach_port_type_t type = 0;
++			lmb_live.port_check = 1; /* store seen, no validated right yet */
++			if (!(lmb_out & 3) && lmb_ptr(lmb_out, sizeof(port)) &&
++			    copyin((user_addr_t)lmb_out, &port, sizeof(port)) == 0 && port == lmb_expected &&
++			    MACH_PORT_VALID(port) &&
++			    mach_port_type(current_task()->itk_space, port, &type) == KERN_SUCCESS &&
++			    (type & MACH_PORT_TYPE_SEND)) {
++				lmb_live.port_check = 2;
++				lmb_live.port = port;
++			}
++		}
++		lmb_live.diagnostic = lmb_set(th, 0, 0);
++		lmb_owner = NULL;
++		__atomic_store_n(&lmb_live.phase, LMB_RETURNED, __ATOMIC_RELEASE);
++		lmb_publish();
++		return true;
++	}
++	/* Do not repeatedly trap on our instruction if an ABI/call-pair check
++	 * fails. Let the original instruction execute, and mark the sample invalid. */
++	(void)lmb_set(th, 0, 0);
++	lmb_owner = NULL;
++	__atomic_store_n(&lmb_live.phase, LMB_MISMATCH, __ATOMIC_RELEASE);
++	lmb_publish();
++	return true;
++}
++
++unsigned lmipro_bootstrap_report(char *, unsigned);
++__attribute__((noinline)) unsigned
++lmipro_bootstrap_report(char *out, unsigned cap)
++{
++	if (!out || !cap) {
++		return 0;
++	}
++	out[0] = 0;
++	const unsigned config = lmb_setting();
++	if (config <= 1) {
++		return 0;
++	}
++	if (!__sync_bool_compare_and_swap(&lmb_guard, 0, 1)) {
++		return (unsigned)snprintf(out, cap, "SB lookup/v1 snapshot busy\n");
++	}
++	struct lmb_record row = lmb_snapshot;
++	__sync_lock_release(&lmb_guard);
++	int run_state = -1;
++	if (row.phase == LMB_ENTERED) {
++		proc_t p = proc_find(row.pid);
++		if (p) {
++			task_t task = proc_task(p);
++			thread_t th = task ? task_findtid(task, row.tid) : THREAD_NULL;
++			if (th != THREAD_NULL) {
++				thread_basic_info_data_t basic = {};
++				mach_msg_type_number_t n = THREAD_BASIC_INFO_COUNT;
++				if (thread_info_internal(th, THREAD_BASIC_INFO, (thread_info_t)&basic, &n) == KERN_SUCCESS) {
++					run_state = basic.run_state;
++				}
++				thread_deallocate(th);
++			}
++			proc_rele(p);
++		}
++	}
++	/* If the wrapper returned during the task/thread lookup, prefer its
++	 * paired return over combining a stale open row with a new run state. */
++	if (row.phase == LMB_ENTERED && __sync_bool_compare_and_swap(&lmb_guard, 0, 1)) {
++		if (lmb_snapshot.phase != LMB_ENTERED || lmb_snapshot.mach_in != row.mach_in ||
++		    lmb_snapshot.mach_out != row.mach_out) {
++			row = lmb_snapshot;
++			run_state = -1;
++		}
++		__sync_lock_release(&lmb_guard);
++	}
++	uint64_t ms = 0, mms = 0;
++	if (row.enter) {
++		absolutetime_to_nanoseconds((row.end ? row.end : mach_absolute_time()) - row.enter, &ms);
++	}
++	if (row.mach_in) {
++		absolutetime_to_nanoseconds((row.mach_out ? row.mach_out : mach_absolute_time()) - row.mach_in, &mms);
++	}
++	return (unsigned)snprintf(out, cap,
++	    "SB lookup/v1 from%u phase%u diag%d p%d t%llu lost%u\n"
++	    "name=%s err%d ret%u/%d store%u port%u/%x\n"
++	    "lr=%llx parent=%llx main=%llx cache=%llx xpc=%llx\n"
++	    "at=%llu ticks=%llx ageMs=%llu run=%d mach=%u/%u/%x ageMs=%llu\n",
++	    config - 2, row.phase, row.diagnostic, row.pid, (unsigned long long)row.tid,
++	    __atomic_load_n(&lmb_lost, __ATOMIC_RELAXED), row.name[0] ? row.name : "?", row.name_error,
++	    (unsigned)(row.phase == LMB_RETURNED), row.result, row.stored, row.port_check, row.port,
++	    (unsigned long long)row.caller, (unsigned long long)row.parent, (unsigned long long)row.main_base,
++	    row.phase ? (unsigned long long)(LMB_CACHE + row.slide) : 0ULL,
++	    row.phase ? (unsigned long long)(LMB_XPC + row.slide) : 0ULL,
++	    (unsigned long long)row.at_seconds, (unsigned long long)row.enter, (unsigned long long)(ms / UINT64_C(1000000)), run_state,
++	    (unsigned)(row.mach_in != 0), (unsigned)(row.mach_out != 0), (unsigned)row.mach_status, (unsigned long long)(mms / UINT64_C(1000000)));
++}
++
