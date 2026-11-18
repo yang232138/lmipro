@@ -12,3 +12,4 @@ lmipro-ui-fault-registers.patch
 lmipro-data-mobile-owners.patch
 lmipro-ui-exit.patch
 lmipro-fault-trace.patch
+lmipro-render-ipc.patch

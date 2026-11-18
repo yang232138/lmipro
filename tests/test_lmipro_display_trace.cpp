@@ -37,6 +37,8 @@ int main()
     char tiny[4]={};lmiproFormatDisplayMethods(tiny,sizeof(tiny));assert(tiny[3]==0);
     lmiproFormatDisplayMethods(nullptr,0);
     const char name[17]="1234567890123456";
+    lmiproFormatSwapCounts(out,sizeof(out));
+    assert(strstr(out,"Swap 4:0/0/0 5:0/0/0 drop1"));
     lmiproRecordDisplayMethod(0,28,0,94,0,0,0,name);
     assert(!strcmp(gLmiproDisplayLastIn.name,name));
     assert(gLmiproDisplayLastIn.name[16]==0);

@@ -10,6 +10,7 @@ static unsigned ready=1,captures=0,replyCount=3;
 static int replyError=0;
 static bool recurse=false,loseStore=false;
 extern "C" void proc_selfname(char *out,int size){snprintf(out,(size_t)size,"%s",testName);}
+extern "C" int proc_selfpid(void){return 58;}
 static void *current_thread(){return (void *)1;}
 static uint64_t thread_tid(void *){return testTid;}
 static uint64_t testSeconds=100;

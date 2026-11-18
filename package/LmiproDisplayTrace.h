@@ -24,6 +24,18 @@ static unsigned gLmiproDisplayErrorValid=0;
 static LmiproDisplayMethod gLmiproDisplayLastIn={},gLmiproDisplayLastOut={},gLmiproDisplayFirstError={};
 static LmiproDisplaySelector gLmiproDisplaySelectors[96]={};
 
+static unsigned lmiproFormatSwapCounts(char *out,unsigned capacity) {
+    if(!__sync_bool_compare_and_swap(&gLmiproDisplayTraceBusy,0,1))
+        return snprintf(out,capacity,"Swap snapshot busy\n");
+    const auto begin=gLmiproDisplaySelectors[4], end=gLmiproDisplaySelectors[5];
+    const uint64_t dropped=__atomic_load_n(&gLmiproDisplayTraceDropped,__ATOMIC_RELAXED);
+    __sync_lock_release(&gLmiproDisplayTraceBusy);
+    return snprintf(out,capacity,"Swap 4:%llu/%llu/%x 5:%llu/%llu/%x drop%llu\n",
+        (unsigned long long)begin.entered,(unsigned long long)begin.returned,begin.status,
+        (unsigned long long)end.entered,(unsigned long long)end.returned,end.status,
+        (unsigned long long)dropped);
+}
+
 static void lmiproRecordDisplayMethod(unsigned kind,uint32_t selector,uint32_t status,
     int pid,uint64_t a,uint64_t b,uint64_t c,const char *name=nullptr,unsigned outputCount=0,
     uint32_t inScalars=0,uint32_t inStructBytes=0,uint32_t outScalars=0,uint32_t outStructBytes=0)

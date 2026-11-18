@@ -6,6 +6,7 @@ extern "C" unsigned lmipro_display_report(char *,unsigned);
 extern "C" unsigned lmipro_display_callers_report(char *,unsigned);
 extern "C" unsigned lmipro_ui_trace_report(char *,unsigned);
 extern "C" unsigned lmipro_ui_stack_report(char *,unsigned);
+extern "C" unsigned lmipro_render_ipc_report(char *,unsigned);
 extern "C" unsigned lmipro_ui_exit_report(char *,unsigned);
 extern "C" unsigned lmipro_display_frame_presented(void);
 #endif
@@ -95,15 +96,16 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
   char stacks[1536] = {};
   char exits[576] = {};
   char callers[1668] = {};
+  char renderIPC[420] = {};
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
   lmipro_display_report(detail,sizeof(detail));
   lmipro_display_callers_report(callers,sizeof(callers));
   lmipro_ui_trace_report(ui,sizeof(ui));
   lmipro_ui_stack_report(stacks,sizeof(stacks));
   lmipro_ui_exit_report(exits,sizeof(exits));
+  lmipro_render_ipc_report(renderIPC,sizeof(renderIPC));
 #endif
-  // Put new interface evidence and user stacks before repeated UI counters.
-  // The physical console cannot fit the former full concatenation.
-  panic("LMIPRO UI CHECKPOINT timeout=%u\n%.900s\n%s\n%.850s\n%.0s%.0s%.0s%.0sEND UI SNAPSHOT",
-    seconds, callers, stacks, detail, ui, display, exits, processes);
+  // Keep actual submit/copy and CA receive counts above the bounded call stacks.
+  panic("LMIPRO UI CHECKPOINT timeout=%u\n%.280s\n%s%.900s\n%.760s\n%.0s%.0s%.0s%.0sEND UI SNAPSHOT",
+    seconds, detail, renderIPC, callers, stacks, ui, display, exits, processes);
 }

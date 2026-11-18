@@ -4,6 +4,8 @@
 #include <string.h>
 static const char *testName="SpringBoard";
 static unsigned nameCopies=0;
+static int testPid=58;
+extern "C" int proc_selfpid(void){return testPid;}
 extern "C" void proc_selfname(char *out,int size){++nameCopies;snprintf(out,(size_t)size,"%s",testName);}
 static void *current_thread(){return (void *)1;}
 static uint64_t thread_tid(void *){return 77;}
@@ -65,4 +67,30 @@ int main(){
     assert(strstr(wdt,"pc=10000ab54 lr=112233"));
     strcpy(wdt,"original");lmipro_watchdog_exit_report(27,"SpringBoard",wdt,sizeof(wdt));
     assert(!strcmp(wdt,"original"));
+    lmipro_render_ipc_receive(40000,27,0); // SpringBoard isn't a receiver here.
+    assert(!gLmiproRenderDelivered);
+    testName="backboardd";
+    lmipro_render_ipc_receive(39999,27,0);
+    lmipro_render_ipc_receive(40200,27,0);
+    assert(!gLmiproRenderDelivered);
+    lmipro_render_ipc_receive(40000,27,0);
+    lmipro_render_ipc_receive(40000,27,0x10004004);
+    lmipro_render_ipc_receive(40000,27,0x1000400c);
+    lmipro_render_ipc_receive(40000,29,0);
+    for(int id=40001;id<=40003;++id)lmipro_render_ipc_receive(id,27,0);
+    char receipts[420];
+    lmipro_render_ipc_report(receipts,sizeof(receipts));
+    assert(strstr(receipts,"p58 t77 SB226 ok5 fail2 other1 drop0"));
+    assert(strstr(receipts,"id40000 from27 ok1 fail2 err10004004"));
+    assert(strstr(receipts,"id40000 from29 ok1 fail0 err0"));
+    gLmiproRenderReceiptBusy=1;
+    lmipro_render_ipc_receive(40000,27,0);
+    lmipro_render_ipc_report(receipts,sizeof(receipts));
+    assert(strstr(receipts,"snapshot busy") && gLmiproRenderReceiptDropped==1);
+    gLmiproRenderReceiptBusy=0;
+    testPid=158;
+    lmipro_render_ipc_receive(40199,27,0);
+    lmipro_render_ipc_report(receipts,sizeof(receipts));
+    assert(strstr(receipts,"p158 t77 SB226 ok1 fail0 other0 drop1"));
+    assert(!strstr(receipts,"id40000") && strstr(receipts,"id40199 from27"));
 }

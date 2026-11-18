@@ -172,10 +172,12 @@ static unsigned openCount(const unsigned &n){return __atomic_load_n(&n,__ATOMIC_
 
 extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
 {
-    char methods[1400]={},opens[640]={};
+    char methods[1400]={},opens[640]={},swaps[128]={};
+    lmiproFormatSwapCounts(swaps,sizeof(swaps));
     lmiproFormatDisplayMethods(methods,sizeof(methods));
     lmiproFormatClients(opens,sizeof(opens));
     return snprintf(out,capacity,
+      "%svalidate=%llu transfers=%llu copied=%llu retired=%llu surfaces=%llu\n"
       "Legacy initStage=%u status=%d registered=%u guard=%u\n"
       "BBopen/v1 entry=%u early=%u provider=%u ok=%u fail=%u close=%u err=%x other=%u\n"
       "mapping=%llx bytes=%llu clientCalls=%u type=%u status=%x\n"
@@ -185,6 +187,8 @@ extern "C" unsigned lmipro_display_report(char *out,unsigned capacity)
       "UI stack context gate=%u checks=%llu (0 ready,1 off,2 irq,3 irqOff,4 preempt,5 warm)\n"
       "CPU enabled=%u owned=%u handoff=%d PM=%u/%x accepted=%u reason=%u\n"
       "copied=%llu bytes=%llu failed=%llu retired=%llu surfaces=%llu last=%x\n%s%s",
+      swaps,(unsigned long long)validationCalls,(unsigned long long)transferCalls,
+      (unsigned long long)successfulCopies,(unsigned long long)retirements,(unsigned long long)surfaceFrames,
       stage,result,registered,guardSlot,openCount(fbOpen[0]),openCount(fbOpen[1]),openCount(fbOpen[2]),
       openCount(fbOpen[3]),openCount(fbOpen[5]),openCount(fbOpen[4]),openCount(fbLastError),openCount(otherOpen),
       (unsigned long long)mappedBase,

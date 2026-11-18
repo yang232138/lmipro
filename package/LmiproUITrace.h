@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "LmiproUIStacks.h"
 extern "C" void proc_selfname(char *, int);
+extern "C" int proc_selfpid(void);
 struct LmiproUIEvent {int code;uint64_t pc,a,b,tid;};
 struct LmiproUIActor {
     int pid;
@@ -18,6 +19,93 @@ static LmiproUIMkdirError gLmiproUIMkdirErrors[2]={};
 static const char *const gLmiproUINames[2]={"SpringBoard","backboardd"};
 #include "LmiproUIExit.h"
 extern "C" void lmipro_ui_trace_enable(unsigned enabled) {gLmiproUIEnabled=enabled==1;}
+
+struct LmiproRenderReceipt {
+    int id, sender;
+    uint64_t delivered, failed;
+    unsigned firstError;
+};
+static LmiproRenderReceipt gLmiproRenderReceipts[4]={};
+static unsigned gLmiproRenderReceiptCount=0;
+static volatile unsigned gLmiproRenderReceiptBusy=0;
+static volatile uint64_t gLmiproRenderReceiptDropped=0;
+static uint64_t gLmiproRenderDelivered=0, gLmiproRenderFailed=0, gLmiproRenderUnlisted=0;
+static uint64_t gLmiproRenderLastTid=0;
+static int gLmiproRenderLastPid=0;
+
+// The Mach receive path has released the kmsg before calling this observer.
+// A successful copyout only proves delivery to the receiver, not CA acceptance.
+extern "C" __attribute__((noinline)) void lmipro_render_ipc_receive(int id,int sender,int status) {
+    if(!gLmiproUIEnabled || id<40000 || id>40199)return;
+    char name[17]={};
+    proc_selfname(name,sizeof(name));
+    if(strcmp(name,"backboardd"))return;
+    const int pid=proc_selfpid();
+    const uint64_t tid=thread_tid(current_thread());
+    if(!__sync_bool_compare_and_swap(&gLmiproRenderReceiptBusy,0,1)) {
+        __atomic_fetch_add(&gLmiproRenderReceiptDropped,1,__ATOMIC_RELAXED);
+        return;
+    }
+    if(gLmiproRenderLastPid!=pid) {
+        gLmiproRenderReceiptCount=0;
+        gLmiproRenderDelivered=0;
+        gLmiproRenderFailed=0;
+        gLmiproRenderUnlisted=0;
+    }
+    if(status)++gLmiproRenderFailed;
+    else ++gLmiproRenderDelivered;
+    gLmiproRenderLastTid=tid;
+    gLmiproRenderLastPid=pid;
+    unsigned slot=0;
+    while(slot<gLmiproRenderReceiptCount) {
+        const auto &row=gLmiproRenderReceipts[slot];
+        if(row.id==id && row.sender==sender)break;
+        ++slot;
+    }
+    if(slot==gLmiproRenderReceiptCount && slot<4) {
+        gLmiproRenderReceipts[slot]={id,sender,0,0,0};
+        ++gLmiproRenderReceiptCount;
+    }
+    if(slot<4) {
+        auto &row=gLmiproRenderReceipts[slot];
+        if(status) {
+            ++row.failed;
+            if(!row.firstError)row.firstError=(unsigned)status;
+        } else ++row.delivered;
+    } else ++gLmiproRenderUnlisted;
+    __sync_lock_release(&gLmiproRenderReceiptBusy);
+}
+
+extern "C" __attribute__((noinline)) unsigned lmipro_render_ipc_report(char *out,unsigned capacity) {
+    if(!out || !capacity)return 0;
+    if(!__sync_bool_compare_and_swap(&gLmiproRenderReceiptBusy,0,1))
+        return snprintf(out,capacity,"RenderIPC/v1 snapshot busy\n");
+    LmiproRenderReceipt rows[4];
+    unsigned count=gLmiproRenderReceiptCount;
+    for(unsigned i=0;i<count;++i)rows[i]=gLmiproRenderReceipts[i];
+    const uint64_t ok=gLmiproRenderDelivered, fail=gLmiproRenderFailed, other=gLmiproRenderUnlisted;
+    const uint64_t tid=gLmiproRenderLastTid;
+    const int pid=gLmiproRenderLastPid;
+    __sync_lock_release(&gLmiproRenderReceiptBusy);
+    int springboard=-1;
+    if(__sync_bool_compare_and_swap(&gLmiproUIBusy,0,1)) {
+        springboard=gLmiproUIActors[0].pid;
+        __sync_lock_release(&gLmiproUIBusy);
+    }
+    int n=snprintf(out,capacity,"RenderIPC/v1 40000-40199 p%d t%llu SB%d ok%llu fail%llu other%llu drop%llu\n",
+        pid,(unsigned long long)tid,springboard,(unsigned long long)ok,(unsigned long long)fail,
+        (unsigned long long)other,(unsigned long long)__atomic_load_n(&gLmiproRenderReceiptDropped,__ATOMIC_RELAXED));
+    if(n<0)return 0;
+    unsigned used=(unsigned)n<capacity?(unsigned)n:capacity-1;
+    for(unsigned i=0;i<count && used<capacity-1;++i) {
+        const auto &row=rows[i];
+        n=snprintf(out+used,capacity-used,"id%d from%d ok%llu fail%llu err%x\n",row.id,row.sender,
+            (unsigned long long)row.delivered,(unsigned long long)row.failed,row.firstError);
+        if(n<0)break;
+        used+=(unsigned)n<capacity-used?(unsigned)n:capacity-used-1;
+    }
+    return used;
+}
 
 static void lmiproRecordUI(unsigned index,int pid,unsigned kind,int code,
     uint64_t pc,uint64_t a,uint64_t b,uint64_t tid)
