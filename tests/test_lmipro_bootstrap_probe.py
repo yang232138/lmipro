@@ -88,6 +88,14 @@ static int copyin(user_addr_t a,void *out,size_t n) {
     else if(a==0x18f65cc08ULL)op=0xd10283ff;
     else if(a==0x18f65ccacULL)op=0xaa0003f3;
     else if(a==0x18f65cdb8ULL)op=0xd65f03c0;
+    else if(a==0x18a3ba7e4ULL)op=0x52801b14;
+    else if(a==0x18a3ba81cULL)op=0x94db417b;
+    else if(a==0x18a3ba838ULL)op=0x94db4174;
+    else if(a==0x18a3ba854ULL)op=0x94db416d;
+    else if(a==0x18a3ba85cULL)op=0x94db41b3;
+    else if(a==0x18a3ba9c4ULL)op=0x9453742f;
+    else if(a==0x18a3ba9c8ULL)op=0xaa1603e0;
+    else if(a==0x18a3baa28ULL)op=0x903528ba;
     else if(a+task.task_shared_region_slide==0x5000) {op=fixture_port;++reads;}
     else return EFAULT;
     if(n!=4)return EFAULT;
@@ -160,7 +168,7 @@ static void enter(arm_saved_state_t ss) {
     lmipro_bootstrap_svc(&th,&ipc,-47,false);
     assert(lmb_live.phase==LMB_ENTERED);
 }
-static arm_saved_state_t display_begin(void) {
+static arm_saved_state_t display_begin(bool ui) {
     arm_saved_state_t wrapper=start();
     display_case=true;
     wrapper.lr=0x18f65d674ULL+task.task_shared_region_slide;
@@ -176,7 +184,8 @@ static arm_saved_state_t display_begin(void) {
     arm_saved_state_t mig={.pc=LMD_ENTRY+lmb_live.slide,.lr=LMD_LR+lmb_live.slide,.sp=0x9100,.fp=0x9150};
     const unsigned offsets[]={0x1c,0x18,0x14,0x10,0xf,0xe};
     mig.x[0]=fixture_port;for(unsigned i=0;i<6;++i)mig.x[i+1]=mig.sp+offsets[i];
-    stack_word(0x9158,0x18f640008ULL+lmb_live.slide);
+    stack_word(0x9158,(ui?0x18f65c884ULL:0x18f640008ULL)+lmb_live.slide);
+    if(ui){stack_word(0x9150,0x91e0);stack_word(0x91e8,0x18a3ba7e4ULL+lmb_live.slide);}
     return mig;
 }
 int main(void) {
@@ -233,10 +242,10 @@ int main(void) {
     lmipro_bootstrap_svc(&th,&ipc,-47,false);
     assert(lmb_live.phase==LMB_ENTERED && lmb_live.chain_checked==1 && lmb_live.at_seconds==40);
     /* Do not follow unrelated callers, endpoints or message IDs. */
-    arm_saved_state_t mig=display_begin();mig.x[0]++;
+    arm_saved_state_t mig=display_begin(false);mig.x[0]++;
     assert(lmipro_bootstrap_break(&th,&mig));
     assert(lmb_live.disp==LMD_INVALID && !th.machine.DebugData);
-    mig=display_begin();assert(lmipro_bootstrap_break(&th,&mig));
+    mig=display_begin(false);assert(lmipro_bootstrap_break(&th,&mig));
     assert(lmb_live.disp==LMD_ENTERED && lmb_live.disp_upper==0x18f640008ULL+lmb_live.slide);
     ipc=mig;ipc.pc=LMB_MACH2+lmb_live.slide;ipc.sp-=0xe0;
     ipc.x[1]=3;ipc.x[3]=fixture_port;ipc.x[4]=(LMD_ID-1)<<32;
@@ -251,12 +260,29 @@ int main(void) {
     assert(lmipro_bootstrap_break(&th,&mig));
     assert(lmb_live.disp==LMD_RETURNED && lmb_live.disp_result==-300 && !lmb_live.disp_output);
     lmipro_bootstrap_report(buf,sizeof(buf));assert(strstr(buf,"msg1/0 ret1/-300"));
-    mig=display_begin();assert(lmipro_bootstrap_break(&th,&mig));
+    mig=display_begin(false);assert(lmipro_bootstrap_break(&th,&mig));
     stack_word(0x910e,0x3f8000000100ULL);stack_word(0x9118,0x4407000044700000ULL);
     mig.pc=LMD_RET+lmb_live.slide;mig.x[0]=0;
     assert(lmipro_bootstrap_break(&th,&mig));
     assert(lmb_live.disp_output==1 && lmb_live.disp_words[0]==0x44070000 && lmb_live.disp_words[1]==0x44700000 && lmb_live.disp_flags[0]==1);
-    puts("PASS: exact XNU probe body: opt-in/ABI gates, untouched debugger, Mach pending vs wrapper failure, observed output store, real send right and pairing");
+    /* Pair the matched BKS return through both real frames into UIKit. */
+    mig=display_begin(true);assert(lmipro_bootstrap_break(&th,&mig));
+    mig.pc=LMD_RET+lmb_live.slide;mig.x[0]=0;
+    assert(lmipro_bootstrap_break(&th,&mig));
+    assert(lmb_live.ui_armed && lmu_sp==0x91f0 && lmb_live.ui_step==0);
+    arm_saved_state_t u={.sp=0x91f0};u.x[0]=1;
+    assert(!lmipro_bootstrap_break(&th,&u));
+    for (unsigned i=0;i<LMU_COUNT;++i) {
+        u.pc=lmu_sites[i].pc+lmb_live.slide;
+        assert(lmipro_bootstrap_break(&th,&u) && lmb_live.ui_step==i+1);
+    }
+    assert(lmb_live.ui_diag==0 && lmb_live.ui_start_result==1 && !th.machine.DebugData);
+    lmipro_bootstrap_report(buf,sizeof(buf));assert(strstr(buf,"UIKit init/v1 arm1 step8 diag0 bks1"));
+    mig=display_begin(true);stack_word(0x91e8,0x18a3ba7e8ULL+lmb_live.slide);
+    assert(lmipro_bootstrap_break(&th,&mig));mig.pc=LMD_RET+lmb_live.slide;mig.x[0]=0;
+    assert(lmipro_bootstrap_break(&th,&mig));
+    assert(!lmb_live.ui_armed && lmb_live.ui_diag==ENOEXEC && !th.machine.DebugData);
+    puts("PASS: exact XNU probe body: opt-in/ABI gates, untouched debugger, Mach pending vs wrapper failure, observed output store, real send right and BKS-to-UIKit pairing");
 }
 '''
 with tempfile.TemporaryDirectory() as directory:
