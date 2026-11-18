@@ -98,7 +98,7 @@ diff --git a/osfmk/arm64/lmipro_bootstrap_probe.h b/osfmk/arm64/lmipro_bootstrap
 new file mode 100644
 --- /dev/null
 +++ b/osfmk/arm64/lmipro_bootstrap_probe.h
-@@ -0,0 +1,397 @@
+@@ -0,0 +1,532 @@
 +/* Opt-in one-shot lookup probe for the pinned 21H461 ARM64 cache.
 + * Uses the existing XNU per-thread debug state machinery. No writes to EL0
 + * memory, changes to saved registers, debug entitlements, or IPC semantics. */
@@ -108,21 +108,32 @@ new file mode 100644
 +#define LMB_MACH2 UINT64_C(0x1cb780b58)
 +#define LMB_CACHE UINT64_C(0x180000000)
 +#define LMB_XPC   UINT64_C(0x1dd666000)
++#define LMD_ENTRY UINT64_C(0x18f65cc08)
++#define LMD_LR    UINT64_C(0x18f65cb98)
++#define LMD_MACH  UINT64_C(0x18f65ccac)
++#define LMD_RET   UINT64_C(0x18f65cdb8)
++#define LMD_ID    UINT64_C(6001011)
 +#define LMB_BCR   (ARM_DBG_CR_BYTE_ADDRESS_SELECT_MASK | ARM_DBG_CR_ENABLE_ENABLE)
 +
 +static const uint8_t lmb_uuid[16] = {
 +	0x59,0x0d,0x83,0x9a,0x82,0xd2,0x30,0xf1,0xa1,0x7d,0x0c,0xc0,0x53,0x42,0x0f,0x73
 +};
 +enum { LMB_IDLE, LMB_SCANNING, LMB_ENTERED, LMB_RETURNED, LMB_REFUSED, LMB_MISMATCH, LMB_QUALIFYING };
++enum { LMD_OFF, LMD_ARMED, LMD_ENTERED, LMD_RETURNED, LMD_INVALID };
 +struct lmb_record {
 +	unsigned phase, slide, name_error, port_check, stored, chain_checked, chain_depth;
 +	int pid, diagnostic, result, mach_status;
 +	uint64_t tid, enter, end, at_seconds, caller, parent, main_base, mach_in, mach_out, ready_seconds;
++	unsigned disp, disp_diag, disp_output, disp_mach_ret;
++	int disp_result, disp_transport, disp_trap_status;
++	uint64_t disp_at, disp_mach_in, disp_mach_out, disp_upper;
++	uint32_t disp_words[4];
++	uint8_t disp_flags[2];
 +	mach_port_name_t port;
 +	char name[96];
 +};
 +static struct lmb_record lmb_live, lmb_snapshot;
-+static uint64_t lmb_sp, lmb_out;
++static uint64_t lmb_sp, lmb_out, lmd_sp, lmd_trap_sp;
 +static mach_port_name_t lmb_expected;
 +static arm_debug_state_t *lmb_owner;
 +static unsigned lmb_guard, lmb_lost;
@@ -313,6 +324,24 @@ new file mode 100644
 +		return;
 +	}
 +	unsigned phase = __atomic_load_n(&lmb_live.phase, __ATOMIC_ACQUIRE);
++	if (phase == LMB_RETURNED && lmb_live.disp == LMD_ENTERED && trap == -47 &&
++	    lmb_live.tid == thread_tid(th) && get_saved_state_pc(ss) == LMB_MACH2 + lmb_live.slide) {
++		const uint64_t *x = const_saved_state64(ss)->x;
++		if (!returning && (x[1] & 3) == 3 && (uint32_t)x[3] == lmb_live.port &&
++		    x[4] >> 32 == LMD_ID) {
++			lmd_trap_sp = get_saved_state_sp(ss);
++			lmb_live.disp_mach_in = mach_absolute_time();
++			lmb_live.disp_mach_out = 0;
++		} else if (returning && lmb_live.disp_mach_in && !lmb_live.disp_mach_out &&
++		    lmd_trap_sp == get_saved_state_sp(ss)) {
++			lmb_live.disp_mach_out = mach_absolute_time();
++			lmb_live.disp_trap_status = (int)x[0];
++		} else {
++			return;
++		}
++		lmb_publish();
++		return;
++	}
 +	if (phase == LMB_ENTERED) {
 +		if (trap == -47 && lmb_live.tid == thread_tid(th) &&
 +		    get_saved_state_pc(ss) == LMB_MACH2 + lmb_live.slide) {
@@ -377,13 +406,80 @@ new file mode 100644
 +	lmb_publish();
 +}
 +
++/* Follow only the screen-info call immediately after the proven lookup.
++ * At the MIG return, the caller's six real output slots are still live. */
++static bool
++lmd_break(thread_t th, const arm_saved_state_t *ss)
++{
++	const uint64_t slide = lmb_live.slide, pc = get_saved_state_pc(ss);
++	const uint64_t lr = get_saved_state_lr(ss), sp = get_saved_state_sp(ss);
++	const uint64_t *x = const_saved_state64(ss)->x;
++	if (lmb_live.disp == LMD_ARMED && pc == LMD_ENTRY + slide && lr == LMD_LR + slide &&
++	    lmb_can_read() && !(sp & 15) && lmb_ptr(sp, 0x60) && (uint32_t)x[0] == lmb_live.port &&
++	    x[1] == sp + 0x1c && x[2] == sp + 0x18 && x[3] == sp + 0x14 &&
++	    x[4] == sp + 0x10 && x[5] == sp + 0xf && x[6] == sp + 0xe) {
++		uint64_t upper = 0;
++		if (get_saved_state_fp(ss) == sp + 0x50 &&
++		    copyin((user_addr_t)(sp + 0x58), &upper, sizeof(upper)) == 0 &&
++		    !(upper & 3) && lmb_ptr(upper, sizeof(uint32_t))) {
++			lmb_live.disp_upper = upper;
++		}
++		lmd_sp = sp;
++		lmb_live.disp_at = lmipro_ui_stack_seconds();
++		lmb_live.disp_diag = lmb_set(th, LMD_MACH + slide, LMD_RET + slide);
++		if (!lmb_live.disp_diag) {
++			lmb_live.disp = LMD_ENTERED;
++			lmb_publish();
++			return true;
++		}
++	} else if (lmb_live.disp == LMD_ENTERED && pc == LMD_MACH + slide &&
++	    lmd_sp >= 0xa0 && sp == lmd_sp - 0xa0) {
++		lmb_live.disp_transport = (int)x[0];
++		lmb_live.disp_mach_ret = 1;
++		lmb_live.disp_diag = lmb_set(th, LMD_RET + slide, 0);
++		if (!lmb_live.disp_diag) {
++			lmb_publish();
++			return true;
++		}
++	} else if (lmb_live.disp == LMD_ENTERED && pc == LMD_RET + slide &&
++	    lr == LMD_LR + slide && sp == lmd_sp && lmb_can_read()) {
++		lmb_live.disp_result = (int)x[0];
++		if (!lmb_live.disp_result) {
++			uint8_t buf[18] = {};
++			if (copyin((user_addr_t)(sp + 0xe), buf, sizeof(buf)) == 0) {
++				for (unsigned i = 0; i < 4; ++i) {
++					memcpy(&lmb_live.disp_words[i], buf + 14 - 4 * i, sizeof(uint32_t));
++				}
++				lmb_live.disp_flags[0] = buf[1];
++				lmb_live.disp_flags[1] = buf[0];
++				lmb_live.disp_output = 1;
++			}
++		}
++		lmb_live.disp_diag = lmb_set(th, 0, 0);
++		lmb_owner = NULL;
++		lmb_live.disp = LMD_RETURNED;
++		lmb_publish();
++		return true;
++	}
++	(void)lmb_set(th, 0, 0);
++	lmb_owner = NULL;
++	lmb_live.disp = LMD_INVALID;
++	lmb_publish();
++	return true;
++}
++
 +static __attribute__((noinline)) bool
 +lmipro_bootstrap_break(thread_t th, const arm_saved_state_t *ss)
 +{
 +	const uint64_t pc = get_saved_state_pc(ss);
 +	unsigned phase = __atomic_load_n(&lmb_live.phase, __ATOMIC_ACQUIRE);
-+	if (phase != LMB_ENTERED || lmb_live.tid != thread_tid(th) ||
-+	    !lmb_owned(th, pc)) {
++	if (lmb_live.tid != thread_tid(th) || !lmb_owned(th, pc)) {
++		return false;
++	}
++	if (phase == LMB_RETURNED && (lmb_live.disp == LMD_ARMED || lmb_live.disp == LMD_ENTERED)) {
++		return lmd_break(th, ss);
++	}
++	if (phase != LMB_ENTERED) {
 +		return false;
 +	}
 +	const uint64_t slide = lmb_live.slide;
@@ -418,8 +514,26 @@ new file mode 100644
 +				lmb_live.port = port;
 +			}
 +		}
-+		lmb_live.diagnostic = lmb_set(th, 0, 0);
-+		lmb_owner = NULL;
++		if (lmb_live.port_check == 2 && lmb_live.caller == 0x18f65d674 + slide &&
++		    lmb_live.parent == 0x18f65cb7c + slide &&
++		    !strcmp(lmb_live.name, "com.apple.backboard.display.services")) {
++			if (lmb_word(LMD_ENTRY + slide, 0xd10283ff) && lmb_word(LMD_MACH + slide, 0xaa0003f3) &&
++			    lmb_word(LMD_RET + slide, 0xd65f03c0)) {
++				lmb_live.disp_diag = lmb_set(th, LMD_ENTRY + slide, 0);
++				if (!lmb_live.disp_diag && lmb_owned(th, LMD_ENTRY + slide)) {
++					lmb_live.disp = LMD_ARMED;
++				}
++			} else {
++				lmb_live.disp_diag = ENOEXEC;
++			}
++			if (lmb_live.disp != LMD_ARMED) {
++				lmb_live.disp = LMD_INVALID;
++			}
++		}
++		if (lmb_live.disp != LMD_ARMED) {
++			lmb_live.diagnostic = lmb_set(th, 0, 0);
++			lmb_owner = NULL;
++		}
 +		__atomic_store_n(&lmb_live.phase, LMB_RETURNED, __ATOMIC_RELEASE);
 +		lmb_publish();
 +		return true;
@@ -451,7 +565,7 @@ new file mode 100644
 +	struct lmb_record row = lmb_snapshot;
 +	__sync_lock_release(&lmb_guard);
 +	int run_state = -1;
-+	if (row.phase == LMB_ENTERED) {
++	if (row.phase == LMB_ENTERED || row.disp == LMD_ENTERED) {
 +		thread_t th = lmipro_bootstrap_report_thread(row.pid, row.tid);
 +		if (th != THREAD_NULL) {
 +			thread_basic_info_data_t basic = {};
@@ -464,13 +578,34 @@ new file mode 100644
 +	}
 +	/* If the wrapper returned during the task/thread lookup, prefer its
 +	 * paired return over combining a stale open row with a new run state. */
-+	if (row.phase == LMB_ENTERED && __sync_bool_compare_and_swap(&lmb_guard, 0, 1)) {
-+		if (lmb_snapshot.phase != LMB_ENTERED || lmb_snapshot.mach_in != row.mach_in ||
-+		    lmb_snapshot.mach_out != row.mach_out) {
++	if ((row.phase == LMB_ENTERED || row.disp == LMD_ENTERED) &&
++	    __sync_bool_compare_and_swap(&lmb_guard, 0, 1)) {
++		if (lmb_snapshot.phase != row.phase || lmb_snapshot.mach_in != row.mach_in ||
++		    lmb_snapshot.mach_out != row.mach_out || lmb_snapshot.disp != row.disp ||
++		    lmb_snapshot.disp_mach_in != row.disp_mach_in || lmb_snapshot.disp_mach_out != row.disp_mach_out) {
 +			row = lmb_snapshot;
 +			run_state = -1;
 +		}
 +		__sync_lock_release(&lmb_guard);
++	}
++	if (row.disp != LMD_OFF) {
++		uint64_t age = 0;
++		if (row.disp_mach_in) {
++			absolutetime_to_nanoseconds((row.disp_mach_out ? row.disp_mach_out : mach_absolute_time()) -
++			    row.disp_mach_in, &age);
++		}
++		return (unsigned)snprintf(out, cap,
++		    "BKS screen/v1 p%d t%llu bootRet%d port%x state%u diag%u\n"
++		    "id6001011 at%llu trap%u/%u/%x ageMs%llu run%d msg%u/%x ret%u/%d\n"
++		    "out%u %x/%x/%x/%x flags%x/%x upper%llx cache%llx main%llx\n",
++		    row.pid, (unsigned long long)row.tid, row.result, row.port, row.disp, row.disp_diag,
++		    (unsigned long long)row.disp_at, (unsigned)(row.disp_mach_in != 0),
++		    (unsigned)(row.disp_mach_out != 0), (unsigned)row.disp_trap_status,
++		    (unsigned long long)(age / UINT64_C(1000000)), run_state, row.disp_mach_ret,
++		    (unsigned)row.disp_transport, (unsigned)(row.disp == LMD_RETURNED), row.disp_result,
++		    row.disp_output, row.disp_words[0], row.disp_words[1], row.disp_words[2], row.disp_words[3],
++		    (unsigned)row.disp_flags[0], (unsigned)row.disp_flags[1], (unsigned long long)row.disp_upper,
++		    (unsigned long long)(LMB_CACHE + row.slide), (unsigned long long)row.main_base);
 +	}
 +	uint64_t ms = 0, mms = 0;
 +	if (row.enter) {

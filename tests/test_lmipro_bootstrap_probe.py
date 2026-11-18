@@ -48,11 +48,11 @@ static struct task task;
 static struct thread th;
 static struct proc proc;
 static arm_debug_state_t deb;
-static bool enabled, bad_word, bad_right;
+static bool enabled, bad_word, bad_right, display_case;
 static unsigned from_seconds, seconds, reads, name_reads, right_checks;
 static uint64_t tick;
 static uint32_t fixture_port;
-static uint8_t user_stack[0x300];
+static uint8_t user_stack[0x600];
 static struct {int num_breakpoint_pairs;} caps = {2};
 #define arm_debug_info() (&caps)
 static unsigned PE_parse_boot_argn(const char *name,void *dst,unsigned n) {
@@ -85,6 +85,9 @@ static int copyin(user_addr_t a,void *out,size_t n) {
     else if(a==0x1dd67d214ULL)op=0xd65f03c0;
     else if(a==0x1dd6699d0ULL)op=0xa9045ff8;
     else if(a==0x1dd6699d8ULL)op=0xa9064ff4;
+    else if(a==0x18f65cc08ULL)op=0xd10283ff;
+    else if(a==0x18f65ccacULL)op=0xaa0003f3;
+    else if(a==0x18f65cdb8ULL)op=0xd65f03c0;
     else if(a+task.task_shared_region_slide==0x5000) {op=fixture_port;++reads;}
     else return EFAULT;
     if(n!=4)return EFAULT;
@@ -95,8 +98,8 @@ static int copyinstr(user_addr_t a,void *out,size_t n,size_t *done) {
     ++name_reads;
     if(a==0x7000)return ENAMETOOLONG;
     if(a!=0x6000)return EFAULT;
-    const char name[]="com.apple.fixture";assert(sizeof(name)<=n);
-    memcpy(out,name,sizeof(name));*done=sizeof(name);return 0;
+    const char *name=display_case?"com.apple.backboard.display.services":"com.apple.fixture";
+    *done=strlen(name)+1;assert(*done<=n);memcpy(out,name,*done);return 0;
 }
 static int machine_thread_set_state(thread_t t,int f,void *s,unsigned n) {
     assert(t==&th && f==ARM_DEBUG_STATE64 && n==ARM_DEBUG_STATE64_COUNT);
@@ -121,7 +124,7 @@ static arm_saved_state_t start(void) {
     lmb_config=lmb_guard=lmb_lost=0;th.machine.DebugData=NULL;
     task.task_shared_region_slide=0x4d04000;task.mach_header_vm_address=0x100000000;
     memcpy(task.task_shared_region_uuid,lmb_uuid,sizeof(lmb_uuid));
-    proc.p_lflag=0;from_seconds=0;seconds=40;enabled=true;bad_word=bad_right=false;
+    proc.p_lflag=0;from_seconds=0;seconds=40;enabled=true;bad_word=bad_right=display_case=false;
     reads=name_reads=right_checks=0;fixture_port=0x507;
     memset(user_stack,0,sizeof(user_stack));
     return ss;
@@ -136,7 +139,7 @@ static void finish(arm_saved_state_t ss,unsigned status) {
     assert(lmipro_bootstrap_break(&th,&ss));assert(th.machine.DebugData==NULL);
 }
 static void stack_word(uint64_t address,uint64_t word) {
-    assert(address>=0x8d00 && address+8<=0x9000);
+    assert(address>=0x8d00 && address+8<=0x9300);
     memcpy(user_stack+address-0x8d00,&word,8);
 }
 static arm_saved_state_t in_flight(arm_saved_state_t wrapper,bool wrong_chain) {
@@ -156,6 +159,25 @@ static void enter(arm_saved_state_t ss) {
     arm_saved_state_t ipc=in_flight(ss,false);
     lmipro_bootstrap_svc(&th,&ipc,-47,false);
     assert(lmb_live.phase==LMB_ENTERED);
+}
+static arm_saved_state_t display_begin(void) {
+    arm_saved_state_t wrapper=start();
+    display_case=true;
+    wrapper.lr=0x18f65d674ULL+task.task_shared_region_slide;
+    arm_saved_state_t ipc=in_flight(wrapper,false);
+    stack_word(0x8ff0,0x9020);
+    stack_word(0x9028,0x18f65cb7cULL+task.task_shared_region_slide);
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);
+    assert(lmb_live.phase==LMB_ENTERED);
+    store(wrapper);
+    wrapper.pc=LMB_RET+lmb_live.slide;wrapper.x[0]=0;
+    assert(lmipro_bootstrap_break(&th,&wrapper));
+    assert(lmb_live.phase==LMB_RETURNED && lmb_live.disp==LMD_ARMED && lmb_live.port==fixture_port);
+    arm_saved_state_t mig={.pc=LMD_ENTRY+lmb_live.slide,.lr=LMD_LR+lmb_live.slide,.sp=0x9100,.fp=0x9150};
+    const unsigned offsets[]={0x1c,0x18,0x14,0x10,0xf,0xe};
+    mig.x[0]=fixture_port;for(unsigned i=0;i<6;++i)mig.x[i+1]=mig.sp+offsets[i];
+    stack_word(0x9158,0x18f640008ULL+lmb_live.slide);
+    return mig;
 }
 int main(void) {
     char buf[416];
@@ -210,6 +232,30 @@ int main(void) {
     ss=start();ipc=in_flight(ss,false);
     lmipro_bootstrap_svc(&th,&ipc,-47,false);
     assert(lmb_live.phase==LMB_ENTERED && lmb_live.chain_checked==1 && lmb_live.at_seconds==40);
+    /* Do not follow unrelated callers, endpoints or message IDs. */
+    arm_saved_state_t mig=display_begin();mig.x[0]++;
+    assert(lmipro_bootstrap_break(&th,&mig));
+    assert(lmb_live.disp==LMD_INVALID && !th.machine.DebugData);
+    mig=display_begin();assert(lmipro_bootstrap_break(&th,&mig));
+    assert(lmb_live.disp==LMD_ENTERED && lmb_live.disp_upper==0x18f640008ULL+lmb_live.slide);
+    ipc=mig;ipc.pc=LMB_MACH2+lmb_live.slide;ipc.sp-=0xe0;
+    ipc.x[1]=3;ipc.x[3]=fixture_port;ipc.x[4]=(LMD_ID-1)<<32;
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);assert(!lmb_live.disp_mach_in);
+    ipc.x[4]=LMD_ID<<32;
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);
+    lmipro_bootstrap_report(buf,sizeof(buf));assert(strstr(buf,"trap1/0/0") && strstr(buf,"run3"));
+    ipc.x[0]=0;lmipro_bootstrap_svc(&th,&ipc,-47,true);
+    arm_saved_state_t transport=mig;transport.pc=LMD_MACH+lmb_live.slide;transport.sp-=0xa0;transport.x[0]=0;
+    assert(lmipro_bootstrap_break(&th,&transport));assert(lmb_live.disp_mach_ret==1);
+    mig.pc=LMD_RET+lmb_live.slide;mig.x[0]=(uint32_t)-300;
+    assert(lmipro_bootstrap_break(&th,&mig));
+    assert(lmb_live.disp==LMD_RETURNED && lmb_live.disp_result==-300 && !lmb_live.disp_output);
+    lmipro_bootstrap_report(buf,sizeof(buf));assert(strstr(buf,"msg1/0 ret1/-300"));
+    mig=display_begin();assert(lmipro_bootstrap_break(&th,&mig));
+    stack_word(0x910e,0x3f8000000100ULL);stack_word(0x9118,0x4407000044700000ULL);
+    mig.pc=LMD_RET+lmb_live.slide;mig.x[0]=0;
+    assert(lmipro_bootstrap_break(&th,&mig));
+    assert(lmb_live.disp_output==1 && lmb_live.disp_words[0]==0x44070000 && lmb_live.disp_words[1]==0x44700000 && lmb_live.disp_flags[0]==1);
     puts("PASS: exact XNU probe body: opt-in/ABI gates, untouched debugger, Mach pending vs wrapper failure, observed output store, real send right and pairing");
 }
 '''
