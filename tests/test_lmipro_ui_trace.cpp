@@ -38,6 +38,17 @@ int main(){
     assert(gLmiproUIActors[0].returned.tid==88&&gLmiproUIActors[0].entry.tid==77);
     testName="backboardd";lmipro_ui_user_event(3,0x24,0x200,0x92000007,0x300,58);
     assert(gLmiproUIActors[1].exceptions==1&&gLmiproUIActors[1].exception.b==0x300);
+    char quiet[320];
+    lmipro_quiet_display_report(quiet,sizeof(quiet),"SB sample\n");
+    assert(strstr(quiet,"BB activity pid58 gen1 exitPid0 count0"));
+    assert(strstr(quiet,"\nSB sample\n"));
+    lmipro_ui_exit_event(57,"backboardd",0x100,3,7);
+    lmipro_quiet_display_report(quiet,sizeof(quiet),"");
+    assert(strstr(quiet,"pid58 gen1 exitPid57 count1 raw100 ns3 code7"));
+    gLmiproUIExitBusy=1;
+    lmipro_quiet_display_report(quiet,sizeof(quiet),"");
+    assert(strstr(quiet,"exitPid-1"));
+    gLmiproUIExitBusy=0;
     lmiproRecordUI(0,26,4,0,1,2,3,77);assert(gLmiproUIActors[0].interrupts==1);
     lmiproRecordUI(0,126,1,1,0x400,2,3,99);
     assert(gLmiproUIActors[0].pid==126&&gLmiproUIActors[0].generations==2);
@@ -87,6 +98,8 @@ int main(){
     lmipro_render_ipc_receive(40000,29,0);
     for(int id=40001;id<=40003;++id)lmipro_render_ipc_receive(id,27,0);
     char receipts[420];
+    lmipro_quiet_display_report(receipts,sizeof(receipts),"SB main fixture\n");
+    assert(!receipts[0]);
     lmipro_render_ipc_report(receipts,sizeof(receipts));
     assert(strstr(receipts,"p58 t77 SB226 ok5 fail2 other1 drop0"));
     assert(strstr(receipts,"id40000 from27 ok1 fail2 err10004004"));

@@ -33,6 +33,41 @@ static volatile uint64_t gLmiproRenderReceiptDropped=0;
 static uint64_t gLmiproRenderDelivered=0, gLmiproRenderFailed=0, gLmiproRenderUnlisted=0;
 static uint64_t gLmiproRenderLastTid=0;
 static int gLmiproRenderLastPid=0;
+
+// Show existing samples when this boot has no backboardd render receipt.
+// The two snapshots may refer to different process generations; print both PIDs.
+extern "C" __attribute__((noinline)) unsigned lmipro_quiet_display_report(
+    char *out, unsigned capacity, const char *mainStack)
+{
+    if (!out || !capacity) return 0;
+    out[0] = 0;
+    if (!gLmiproUIEnabled) return 0;
+    if (!__sync_bool_compare_and_swap(&gLmiproRenderReceiptBusy, 0, 1))
+        return snprintf(out, capacity, "BB receipt snapshot busy\n");
+    const bool hasReceipt = gLmiproRenderLastPid != 0;
+    __sync_lock_release(&gLmiproRenderReceiptBusy);
+    if (hasReceipt) return 0;
+
+    // -1 denotes an unavailable snapshot. 0 denotes no matching observation.
+    int activityPid = -1, exitPid = -1;
+    uint64_t generation = 0, exits = 0;
+    LmiproUIExit last = {};
+    if (__sync_bool_compare_and_swap(&gLmiproUIBusy, 0, 1)) {
+        activityPid = gLmiproUIActors[1].pid;
+        generation = gLmiproUIActors[1].generations;
+        __sync_lock_release(&gLmiproUIBusy);
+    }
+    if (__sync_bool_compare_and_swap(&gLmiproUIExitBusy, 0, 1)) {
+        last = gLmiproUIExitLast[1];
+        exits = gLmiproUIExitCounts[1];
+        exitPid = last.pid;
+        __sync_lock_release(&gLmiproUIExitBusy);
+    }
+    return snprintf(out, capacity,
+        "BB activity pid%d gen%llu exitPid%d count%llu raw%x ns%u code%llx\n%s",
+        activityPid, (unsigned long long)generation, exitPid, (unsigned long long)exits,
+        last.raw, last.ns, (unsigned long long)last.code, mainStack);
+}
 struct LmiproRenderSend {
     int pid,lastId;
     uint32_t lastPort,firstError;

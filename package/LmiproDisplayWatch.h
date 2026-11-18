@@ -9,6 +9,7 @@ extern "C" unsigned lmipro_ui_stack_report(char *,unsigned);
 extern "C" unsigned lmipro_render_ipc_report(char *,unsigned);
 extern "C" unsigned lmipro_spring_main_report(char *,unsigned);
 extern "C" unsigned lmipro_bootstrap_report(char *,unsigned);
+extern "C" unsigned lmipro_quiet_display_report(char *,unsigned,const char *);
 extern "C" unsigned lmipro_ui_exit_report(char *,unsigned);
 extern "C" unsigned lmipro_display_frame_presented(void);
 #endif
@@ -110,11 +111,12 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
   lmipro_render_ipc_report(renderIPC,sizeof(renderIPC));
   lmipro_spring_main_report(springMain,sizeof(springMain));
   lmipro_bootstrap_report(lookup,sizeof(lookup));
-#endif
   if(lookup[0]) {
-    panic("LMIPRO UI CHECKPOINT timeout=%u\n%.210s\n%s%sEND UI SNAPSHOT",
-      seconds, detail, renderIPC, lookup);
+    lmipro_quiet_display_report(exits,sizeof(exits),springMain);
+    panic("LMIPRO UI CHECKPOINT timeout=%u\n%.210s\n%s%s%sEND UI SNAPSHOT",
+      seconds, detail, renderIPC, lookup, exits);
   }
+#endif
   // Keep actual submit/copy and CA receive counts above the bounded call stacks.
   panic("LMIPRO UI CHECKPOINT timeout=%u\n%.210s\n%s%s%.730s\n%.520s\n%.0s%.0s%.0s%.0sEND UI SNAPSHOT",
     seconds, detail, renderIPC, springMain, callers, stacks, ui, display, exits, processes);
