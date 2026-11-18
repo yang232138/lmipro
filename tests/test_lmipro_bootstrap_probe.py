@@ -105,6 +105,10 @@ static int copyin(user_addr_t a,void *out,size_t n) {
     else if(a==0x18f691ef0ULL)op=0x94011c64;
     else if(a==0x18f691f24ULL)op=0x9101c3ff;
     else if(a==0x18f691f28ULL)op=0xd65f03c0;
+    else if(a==0x1cb780a14ULL)op=0xd65f03c0;
+    else if(a==0x187cd3cc4ULL)op=0xaa0003fb;
+    else if(a==0x187c8d2d4ULL)op=0x340009e0;
+    else if(a==0x187c8d2f0ULL)op=0xaa0003f8;
     else if(a+task.task_shared_region_slide==0x5000) {op=fixture_port;++reads;}
     else return EFAULT;
     if(n!=4)return EFAULT;
@@ -198,7 +202,7 @@ static arm_saved_state_t display_begin(bool ui) {
     return mig;
 }
 int main(void) {
-    char buf[416];
+    char buf[512];
     arm_saved_state_t ss=start(), ipc=in_flight(ss,false);enabled=false;
     lmipro_bootstrap_svc(&th,&ipc,-47,false);
     assert(!th.machine.DebugData && !lmipro_bootstrap_report(buf,sizeof(buf)));
@@ -324,7 +328,34 @@ int main(void) {
         }
         assert(!th.machine.DebugData);
     }
-    puts("PASS: exact XNU probe body: opt-in/ABI gates, original IPC results, UIKit and shell return pairing");
+    /* Reuse the verified initializer thread for exactly one store transaction. */
+    const uint64_t ls_sp=0x8d00, slide=lmb_live.slide;
+    const unsigned ls_offsets[]={0x20,0x40,0x60,0xd0,0x360,0x550};
+    const uint64_t ls_returns[]={0x1dd686494ULL,0x1dd6736f0ULL,0x186f61b44ULL,LMS_XPC,LMS_STORE};
+    for(unsigned i=0;i<5;++i){
+        stack_word(ls_sp+ls_offsets[i],ls_sp+ls_offsets[i+1]);
+        stack_word(ls_sp+ls_offsets[i]+8,ls_returns[i]+slide);
+    }
+    arm_saved_state_t ls={.pc=LMS_TRAP+slide,.lr=0x1cb784f54ULL+slide,.sp=ls_sp,.fp=ls_sp+0x20};
+    ls.x[3]=1;
+    stack_word(ls_sp+0x368,LMS_STORE+slide+4);
+    lmipro_bootstrap_svc(&th,&ls,-19,false);
+    assert(!lmb_live.ls_stage && !th.machine.DebugData);
+    stack_word(ls_sp+0x368,LMS_STORE+slide);
+    lmipro_bootstrap_svc(&th,&ls,-19,false);
+    assert(lmb_live.ls_stage==1 && th.machine.DebugData);
+    ls.x[0]=0;
+    lmipro_bootstrap_svc(&th,&ls,-19,true);
+    assert(lmb_live.ls_trap_returned && lmb_live.ls_trap_result==0);
+    ls.pc=LMS_XPC+slide;ls.sp=ls_sp+0xe0;ls.x[0]=0x6000;
+    assert(lmipro_bootstrap_break(&th,&ls) && lmb_live.ls_stage==2 && lmb_live.ls_xpc);
+    ls.pc=LMS_STORE+slide;ls.sp=ls_sp+0x380;ls.x[0]=1;
+    assert(lmipro_bootstrap_break(&th,&ls) && lmb_live.ls_stage==3 && lmb_live.ls_store==1);
+    ls.pc=LMS_DB+slide;ls.x[0]=0x7000;
+    assert(lmipro_bootstrap_break(&th,&ls) && lmb_live.ls_stage==4 && !th.machine.DebugData);
+    lmipro_bootstrap_report(buf,sizeof(buf));
+    assert(strstr(buf,"LS store/v1 s4 e0 trap1/0 xpc1 store1 db1"));
+    puts("PASS: exact XNU probe body: opt-in/ABI gates, original IPC results, shell and LaunchServices return pairing");
 }
 '''
 with tempfile.TemporaryDirectory() as directory:

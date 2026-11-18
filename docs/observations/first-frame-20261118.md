@@ -108,3 +108,9 @@ The observer captured caller `0x19042abb8` with the shared cache mapped at `0x18
 Run 44401347424 observed `BKS shell/v1 arm1 step2 diag0 bks1 at246`, with a successful screen-info RPC and trap duration of 63,934 ms. LegacyFB open succeeded and all 27 selected render messages were backboardd self-sends. There was no observed swap or copied surface by 600 seconds.
 
 The matched return address `0x1a2bf5ef4` resolves to `-[BKSSystemShellService initWithConfigurator:] + 0x118` with slide `0x13564000`. The remaining normal path releases an ARC object, checks the stack canary and returns the receiver. With the verified initializer frame and return location, step 3 records the paired initializer return. `object1` records a nonnull result at that breakpoint. Read `next` as the captured saved caller PC and compare the time and identity on the existing `SB main` sample with the BKS record. The checkpoint displays that sample when render receipts are present as well.
+
+### 06:45 handset checkpoint
+
+Run 44408703079 observed the nonnull BKS shell initializer return at second 204, to `-[FBSystemShell _initWithOptions:] + 0x2fc` in 21H461. The SpringBoard main thread ran later and the sample at second 334 resolved to `mach_port_mod_refs` inside `-[NSXPCConnection initWithListenerEndpoint:]`, called by `_LSCopyServerStore`. The trap returned zero. The XPC object, store response and database creation remained unobserved, and no swap or copied frame was observed by 600 seconds.
+
+The next checkpoint follows one live call for the same main thread after a successful shell initializer. It matches the observed Mach trap stack and verifies the three paired return sites. In `LS store/v1`, stage 1 records the matched reference-count operation, stage 2 the XPC constructor result, stage 3 the boolean store return, and stage 4 the database object. Interpret the result fields only once their corresponding stage has been reported.

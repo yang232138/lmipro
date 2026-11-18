@@ -98,7 +98,7 @@ diff --git a/osfmk/arm64/lmipro_bootstrap_probe.h b/osfmk/arm64/lmipro_bootstrap
 new file mode 100644
 --- /dev/null
 +++ b/osfmk/arm64/lmipro_bootstrap_probe.h
-@@ -0,0 +1,679 @@
+@@ -0,0 +1,794 @@
 +/* Opt-in one-shot lookup probe for the pinned 21H461 ARM64 cache.
 + * Uses the existing XNU per-thread debug state machinery. No writes to EL0
 + * memory, changes to saved registers, debug entitlements, or IPC semantics. */
@@ -113,6 +113,10 @@ new file mode 100644
 +#define LMD_MACH  UINT64_C(0x18f65ccac)
 +#define LMD_RET   UINT64_C(0x18f65cdb8)
 +#define LMD_ID    UINT64_C(6001011)
++#define LMS_TRAP  UINT64_C(0x1cb780a14)
++#define LMS_XPC   UINT64_C(0x187cd3cc4)
++#define LMS_STORE UINT64_C(0x187c8d2d4)
++#define LMS_DB    UINT64_C(0x187c8d2f0)
 +#define LMB_BCR   (ARM_DBG_CR_BYTE_ADDRESS_SELECT_MASK | ARM_DBG_CR_ENABLE_ENABLE)
 +
 +static const uint8_t lmb_uuid[16] = {
@@ -131,6 +135,9 @@ new file mode 100644
 +	uint8_t disp_flags[2];
 +	unsigned ui_armed, ui_step, ui_diag, ui_start_result, shell_object;
 +	uint64_t ui_caller, ui_at, shell_parent, shell_init_lr;
++	unsigned ls_stage, ls_trap_returned, ls_xpc, ls_store, ls_db;
++	int ls_diag, ls_trap_result;
++	uint64_t ls_at, ls_last;
 +	mach_port_name_t port;
 +	char name[96];
 +};
@@ -157,6 +164,7 @@ new file mode 100644
 +#define LMU_SHELL_ACTIVATION_COUNT 2
 +#define LMU_SHELL_COUNT (sizeof(lmu_shell_sites) / sizeof(lmu_shell_sites[0]))
 +static uint64_t lmb_sp, lmb_out, lmd_sp, lmd_trap_sp, lmu_sp;
++static uint64_t lms_trap_sp;
 +static mach_port_name_t lmb_expected;
 +static arm_debug_state_t *lmb_owner;
 +static unsigned lmb_guard, lmb_lost;
@@ -340,6 +348,102 @@ new file mode 100644
 +}
 +
 +static __attribute__((noinline)) void
++lms_observe(thread_t th, const arm_saved_state_t *ss, bool returning)
++{
++	const uint64_t slide = lmb_live.slide, sp = get_saved_state_sp(ss);
++	const uint64_t *regs = const_saved_state64(ss)->x;
++	if (get_saved_state_pc(ss) != LMS_TRAP + slide) {
++		return;
++	}
++	if (returning) {
++		if (lmb_live.ls_stage == 1 && !lmb_live.ls_trap_returned && sp == lms_trap_sp) {
++			lmb_live.ls_trap_returned = 1;
++			lmb_live.ls_trap_result = (int)regs[0];
++			lmb_publish();
++		}
++		return;
++	}
++	if (lmb_live.ls_stage || lmb_live.ls_diag || !lmb_can_read() ||
++	    th->machine.DebugData || !lmipro_bootstrap_debug_allowed() ||
++	    (sp & 15) || !lmb_ptr(sp, 0x560) || get_saved_state_fp(ss) != sp + 0x20 ||
++	    get_saved_state_lr(ss) != UINT64_C(0x1cb784f54) + slide || regs[2] != 0 || regs[3] != 1) {
++		return;
++	}
++	/* Stack from mach_port_mod_refs through the observed LSContext call site. */
++	static const uint16_t offsets[] = {0x20, 0x40, 0x60, 0xd0, 0x360, 0x550};
++	static const uint64_t returns[] = {
++		UINT64_C(0x1dd686494), UINT64_C(0x1dd6736f0), UINT64_C(0x186f61b44), LMS_XPC, LMS_STORE,
++	};
++	for (unsigned i = 0; i < sizeof(returns) / sizeof(returns[0]); ++i) {
++		uint64_t frame[2];
++		if (copyin((user_addr_t)(sp + offsets[i]), frame, sizeof(frame)) ||
++		    frame[0] != sp + offsets[i + 1] || frame[1] != returns[i] + slide) {
++			return;
++		}
++	}
++	if (!lmb_word(LMS_TRAP + slide, 0xd65f03c0) ||
++	    !lmb_word(LMS_XPC + slide, 0xaa0003fb) || !lmb_word(LMS_STORE + slide, 0x340009e0) ||
++	    !lmb_word(LMS_DB + slide, 0xaa0003f8)) {
++		lmb_live.ls_diag = ENOEXEC;
++		lmb_publish();
++		return;
++	}
++	lmb_live.ls_diag = lmb_set(th, LMS_XPC + slide, 0);
++	lmb_owner = th->machine.DebugData;
++	if (!lmb_live.ls_diag && !lmb_owned(th, LMS_XPC + slide)) {
++		lmb_live.ls_diag = EIO;
++	}
++	if (!lmb_live.ls_diag) {
++		lms_trap_sp = sp;
++		lmb_live.ls_stage = 1;
++		lmb_live.ls_at = lmb_live.ls_last = lmipro_ui_stack_seconds();
++	} else if (lmb_owner != NULL) {
++		(void)lmb_set(th, 0, 0);
++		lmb_owner = NULL;
++	}
++	lmb_publish();
++}
++
++static __attribute__((noinline)) bool
++lms_break(thread_t th, const arm_saved_state_t *ss)
++{
++	const uint64_t slide = lmb_live.slide, pc = get_saved_state_pc(ss), sp = get_saved_state_sp(ss);
++	const uint64_t value = const_saved_state64(ss)->x[0];
++	uint64_t next = 0;
++	if (lmb_live.ls_stage == 1 && pc == LMS_XPC + slide && sp == lms_trap_sp + 0xe0) {
++		lmb_live.ls_xpc = value != 0;
++		lmb_live.ls_stage = 2;
++		next = LMS_STORE + slide;
++	} else if (lmb_live.ls_stage == 2 && pc == LMS_STORE + slide && sp == lms_trap_sp + 0x380) {
++		lmb_live.ls_store = (uint32_t)value;
++		lmb_live.ls_stage = 3;
++		if (lmb_live.ls_store) {
++			next = LMS_DB + slide;
++		}
++	} else if (lmb_live.ls_stage == 3 && pc == LMS_DB + slide && sp == lms_trap_sp + 0x380) {
++		lmb_live.ls_db = value != 0;
++		lmb_live.ls_stage = 4;
++	} else {
++		lmb_live.ls_diag = EINVAL;
++	}
++	lmb_live.ls_last = lmipro_ui_stack_seconds();
++	if (next) {
++		lmb_live.ls_diag = lmb_set(th, next, 0);
++		if (!lmb_live.ls_diag && lmb_owned(th, next)) {
++			lmb_publish();
++			return true;
++		}
++		if (!lmb_live.ls_diag) {
++			lmb_live.ls_diag = EIO;
++		}
++	}
++	(void)lmb_set(th, 0, 0);
++	lmb_owner = NULL;
++	lmb_publish();
++	return true;
++}
++
++static __attribute__((noinline)) void
 +lmipro_bootstrap_svc(thread_t th, arm_saved_state_t *ss, int trap, bool returning)
 +{
 +	const unsigned config = lmb_setting();
@@ -347,6 +451,11 @@ new file mode 100644
 +		return;
 +	}
 +	unsigned phase = __atomic_load_n(&lmb_live.phase, __ATOMIC_ACQUIRE);
++	if (phase == LMB_RETURNED && trap == -19 && lmb_live.tid == thread_tid(th) &&
++	    lmb_live.ui_step == 3 && lmb_live.shell_init_lr && lmb_live.shell_object) {
++		lms_observe(th, ss, returning);
++		return;
++	}
 +	if (phase == LMB_RETURNED && lmb_live.disp == LMD_ENTERED && trap == -47 &&
 +	    lmb_live.tid == thread_tid(th) && get_saved_state_pc(ss) == LMB_MACH2 + lmb_live.slide) {
 +		const uint64_t *x = const_saved_state64(ss)->x;
@@ -615,6 +724,9 @@ new file mode 100644
 +		return false;
 +	}
 +	if (phase == LMB_RETURNED && lmb_live.disp == LMD_RETURNED && lmb_live.ui_armed) {
++		if (lmb_live.ls_stage) {
++			return lms_break(th, ss);
++		}
 +		return lmu_break(th, ss);
 +	}
 +	if (phase == LMB_RETURNED && (lmb_live.disp == LMD_ARMED || lmb_live.disp == LMD_ENTERED)) {
@@ -740,7 +852,8 @@ new file mode 100644
 +		    "id6001011 at%llu trap%u/%u/%x ageMs%llu run%d msg%u/%x ret%u/%d\n"
 +		    "out%u %x/%x/%x/%x flags%x/%x upper%llx cache%llx main%llx\n"
 +		    "%s arm%u step%u diag%u bks%u at%llu caller%llx parent%llx\n"
-+		    "BKS init object%u next%llx\n",
++		    "BKS init object%u next%llx\n"
++		    "LS store/v1 s%u e%d trap%u/%d xpc%u store%u db%u at%llu/%llu\n",
 +		    row.pid, (unsigned long long)row.tid, row.result, row.port, row.disp, row.disp_diag,
 +		    (unsigned long long)row.disp_at, (unsigned)(row.disp_mach_in != 0),
 +		    (unsigned)(row.disp_mach_out != 0), (unsigned)row.disp_trap_status,
@@ -752,7 +865,9 @@ new file mode 100644
 +		    row.shell_parent ? "BKS shell/v1" : "UIKit init/v1", row.ui_armed, row.ui_step, row.ui_diag,
 +		    row.ui_start_result, (unsigned long long)row.ui_at, (unsigned long long)row.ui_caller,
 +		    (unsigned long long)row.shell_parent, row.shell_object,
-+		    (unsigned long long)row.shell_init_lr);
++		    (unsigned long long)row.shell_init_lr, row.ls_stage, row.ls_diag,
++		    row.ls_trap_returned, row.ls_trap_result, row.ls_xpc, row.ls_store, row.ls_db,
++		    (unsigned long long)row.ls_at, (unsigned long long)row.ls_last);
 +	}
 +	uint64_t ms = 0, mms = 0;
 +	if (row.enter) {
