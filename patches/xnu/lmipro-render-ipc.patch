@@ -1,27 +1,24 @@
 --- a/osfmk/ipc/mach_msg.c
 +++ b/osfmk/ipc/mach_msg.c
-@@ -275,6 +275,12 @@
+@@ -275,6 +275,10 @@
   *      MACH_RCV_INVALID_NOTIFY Bad notify port.
   *      MACH_RCV_HEADER_ERROR
   */
-+#if DEVELOPMENT || DEBUG
-+/* This device patch is also applied to the flag-off reference build. */
-+extern void lmipro_render_ipc_receive(mach_msg_id_t, int, mach_msg_return_t)
-+    __attribute__((weak_import));
++#if defined(LMIPRO_RENDER_IPC) && LMIPRO_RENDER_IPC
++extern void lmipro_render_ipc_receive(mach_msg_id_t, int, mach_msg_return_t);
 +#endif
 +
  mach_msg_return_t
  mach_msg_receive_results(
  	mach_msg_recv_result_t *msgr_out)
-@@ -347,6 +353,17 @@
+@@ -347,6 +351,16 @@
  	/* auto redeem the voucher in the message */
  	ipc_voucher_receive_postprocessing(kmsg, options);
  
-+#if DEVELOPMENT || DEBUG
++#if defined(LMIPRO_RENDER_IPC) && LMIPRO_RENDER_IPC
 +	/* Snapshot only scalar metadata while the received kmsg is still owned. */
 +	mach_msg_id_t lmipro_render_id = ikm_header(kmsg)->msgh_id;
-+	bool lmipro_render_observe = lmipro_render_ipc_receive &&
-+	    lmipro_render_id >= 40000 && lmipro_render_id <= 40199;
++	bool lmipro_render_observe = lmipro_render_id >= 40000 && lmipro_render_id <= 40199;
 +	int lmipro_render_sender = 0;
 +	if (lmipro_render_observe) {
 +		lmipro_render_sender = (int)ipc_kmsg_get_trailer(kmsg)->msgh_audit.val[5];
@@ -31,11 +28,11 @@
  	/* Save destination port context for the trailer before copyout */
  	msgr.msgr_context = ikm_header(kmsg)->msgh_remote_port->ip_context;
  
-@@ -376,6 +393,11 @@
+@@ -376,6 +390,11 @@
  		    options, map, mr);
  	}
  	/* kmsg freed */
-+#if DEVELOPMENT || DEBUG
++#if defined(LMIPRO_RENDER_IPC) && LMIPRO_RENDER_IPC
 +	if (lmipro_render_observe) {
 +		lmipro_render_ipc_receive(lmipro_render_id, lmipro_render_sender, mr);
 +	}
