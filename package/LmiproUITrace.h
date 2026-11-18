@@ -37,7 +37,7 @@ static int gLmiproRenderLastPid=0;
 // Show existing samples when this boot has no backboardd render receipt.
 // The two snapshots may refer to different process generations; print both PIDs.
 extern "C" __attribute__((noinline)) unsigned lmipro_quiet_display_report(
-    char *out, unsigned capacity, const char *mainStack)
+    char *out, unsigned capacity)
 {
     if (!out || !capacity) return 0;
     out[0] = 0;
@@ -64,9 +64,9 @@ extern "C" __attribute__((noinline)) unsigned lmipro_quiet_display_report(
         __sync_lock_release(&gLmiproUIExitBusy);
     }
     return snprintf(out, capacity,
-        "BB activity pid%d gen%llu exitPid%d count%llu raw%x ns%u code%llx\n%s",
+        "BB activity pid%d gen%llu exitPid%d count%llu raw%x ns%u code%llx\n",
         activityPid, (unsigned long long)generation, exitPid, (unsigned long long)exits,
-        last.raw, last.ns, (unsigned long long)last.code, mainStack);
+        last.raw, last.ns, (unsigned long long)last.code);
 }
 struct LmiproRenderSend {
     int pid,lastId;

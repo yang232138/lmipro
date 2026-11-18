@@ -101,6 +101,10 @@ static int copyin(user_addr_t a,void *out,size_t n) {
     else if(a==0x18f692bb8ULL)op=0xaa1903e0;
     else if(a==0x18f692c90ULL)op=0x910583ff;
     else if(a==0x18f692c94ULL)op=0xd65f03c0;
+    else if(a==0x18f691decULL)op=0x910183fd;
+    else if(a==0x18f691ef0ULL)op=0x94011c64;
+    else if(a==0x18f691f24ULL)op=0x9101c3ff;
+    else if(a==0x18f691f28ULL)op=0xd65f03c0;
     else if(a+task.task_shared_region_slide==0x5000) {op=fixture_port;++reads;}
     else return EFAULT;
     if(n!=4)return EFAULT;
@@ -288,12 +292,16 @@ int main(void) {
     assert(lmipro_bootstrap_break(&th,&mig));
     assert(!lmb_live.ui_armed && lmb_live.ui_diag==ENOEXEC && !th.machine.DebugData);
     /* The original BKS shell caller is distinct from UIKit and has its own stack. */
-    for (unsigned bad_lr=0;bad_lr<2;++bad_lr) {
+    for (unsigned scenario=0;scenario<3;++scenario) {
+        const bool bad_lr=scenario==1, initializer=scenario==2;
         mig=display_begin(true);
-        const uint64_t parent=0x100038000;
+        const uint64_t next=0x100048000;
+        const uint64_t parent=initializer?0x18f691ef4ULL+lmb_live.slide:0x100038000;
         stack_word(0x91e0,0x9340);
         stack_word(0x91e8,0x18f692bb8ULL+lmb_live.slide);
+        stack_word(0x9340,initializer?0x93b0:0);
         stack_word(0x9348,parent);
+        stack_word(0x93b8,next);
         assert(lmipro_bootstrap_break(&th,&mig));
         mig.pc=LMD_RET+lmb_live.slide;mig.x[0]=0;
         assert(lmipro_bootstrap_break(&th,&mig));
@@ -302,12 +310,19 @@ int main(void) {
         u.x[0]=1;
         assert(lmipro_bootstrap_break(&th,&u) && lmb_live.ui_step==1);
         u.pc=lmu_shell_sites[1].pc+lmb_live.slide;u.sp+=0x160;u.lr=parent+4*bad_lr;
-        assert(lmipro_bootstrap_break(&th,&u) && !th.machine.DebugData);
+        assert(lmipro_bootstrap_break(&th,&u));
         assert(lmb_live.ui_step==(bad_lr?1:2) && lmb_live.ui_diag==(bad_lr?EINVAL:0));
-        if (!bad_lr) {
+        if (initializer) {
+            assert(th.machine.DebugData && lmb_live.shell_init_lr==next);
+            u.pc=lmu_shell_sites[2].pc+lmb_live.slide;u.sp+=0x70;u.lr=next;u.x[0]=0x3330;
+            assert(lmipro_bootstrap_break(&th,&u) && lmb_live.ui_step==3);
+            lmipro_bootstrap_report(buf,sizeof(buf));
+            assert(strstr(buf,"BKS init object1 next100048000"));
+        } else if (!bad_lr) {
             lmipro_bootstrap_report(buf,sizeof(buf));
             assert(strstr(buf,"BKS shell/v1 arm1 step2 diag0 bks1") && strstr(buf,"parent100038000"));
         }
+        assert(!th.machine.DebugData);
     }
     puts("PASS: exact XNU probe body: opt-in/ABI gates, original IPC results, UIKit and shell return pairing");
 }

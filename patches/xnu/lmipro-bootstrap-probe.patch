@@ -98,7 +98,7 @@ diff --git a/osfmk/arm64/lmipro_bootstrap_probe.h b/osfmk/arm64/lmipro_bootstrap
 new file mode 100644
 --- /dev/null
 +++ b/osfmk/arm64/lmipro_bootstrap_probe.h
-@@ -0,0 +1,653 @@
+@@ -0,0 +1,679 @@
 +/* Opt-in one-shot lookup probe for the pinned 21H461 ARM64 cache.
 + * Uses the existing XNU per-thread debug state machinery. No writes to EL0
 + * memory, changes to saved registers, debug entitlements, or IPC semantics. */
@@ -129,8 +129,8 @@ new file mode 100644
 +	uint64_t disp_at, disp_mach_in, disp_mach_out, disp_upper;
 +	uint32_t disp_words[4];
 +	uint8_t disp_flags[2];
-+	unsigned ui_armed, ui_step, ui_diag, ui_start_result;
-+	uint64_t ui_caller, ui_at, shell_parent;
++	unsigned ui_armed, ui_step, ui_diag, ui_start_result, shell_object;
++	uint64_t ui_caller, ui_at, shell_parent, shell_init_lr;
 +	mach_port_name_t port;
 +	char name[96];
 +};
@@ -148,11 +148,13 @@ new file mode 100644
 +	{ UINT64_C(0x18a3baa28), 0x903528ba }, /* application singleton returned */
 +};
 +#define LMU_COUNT (sizeof(lmu_sites) / sizeof(lmu_sites[0]))
-+/* Return from BKSDisplayServicesStart and the enclosing shell activation. */
++/* BKSDisplayServicesStart, shell activation, then the shell initializer. */
 +static const struct lmu_site lmu_shell_sites[] = {
 +	{ UINT64_C(0x18f692bb8), 0xaa1903e0 },
 +	{ UINT64_C(0x18f692c94), 0xd65f03c0 },
++	{ UINT64_C(0x18f691f28), 0xd65f03c0 },
 +};
++#define LMU_SHELL_ACTIVATION_COUNT 2
 +#define LMU_SHELL_COUNT (sizeof(lmu_shell_sites) / sizeof(lmu_shell_sites[0]))
 +static uint64_t lmb_sp, lmb_out, lmd_sp, lmd_trap_sp, lmu_sp;
 +static mach_port_name_t lmb_expected;
@@ -451,7 +453,7 @@ new file mode 100644
 +		return false;
 +	}
 +	const struct lmu_site *sites = shell ? lmu_shell_sites : lmu_sites;
-+	const unsigned count = shell ? LMU_SHELL_COUNT : LMU_COUNT;
++	const unsigned count = shell ? LMU_SHELL_ACTIVATION_COUNT : LMU_COUNT;
 +	for (unsigned i = 0; i < count; ++i) {
 +		if (!lmb_word(sites[i].pc + slide, sites[i].op)) {
 +			lmb_live.ui_diag = ENOEXEC;
@@ -472,6 +474,17 @@ new file mode 100644
 +			return false;
 +		}
 +		lmb_live.shell_parent = frame[1];
++		/* The known initializer saves FP/LR 0x60 above the shell's return SP. */
++		if (lmb_live.shell_parent == UINT64_C(0x18f691ef4) + slide &&
++		    frame[0] == sp + 0x2b0 && lmb_ptr(frame[0], sizeof(frame)) &&
++		    !copyin((user_addr_t)frame[0], frame, sizeof(frame)) && !(frame[1] & 3) &&
++		    lmb_ptr(frame[1], sizeof(uint32_t)) &&
++		    lmb_word(UINT64_C(0x18f691dec) + slide, 0x910183fd) &&
++		    lmb_word(UINT64_C(0x18f691ef0) + slide, 0x94011c64) &&
++		    lmb_word(UINT64_C(0x18f691f24) + slide, 0x9101c3ff) &&
++		    lmb_word(lmu_shell_sites[2].pc + slide, lmu_shell_sites[2].op)) {
++			lmb_live.shell_init_lr = frame[1];
++		}
 +	}
 +	lmu_sp = sp + 0xf0;
 +	lmb_live.ui_diag = lmb_set(th, sites[0].pc + slide, 0);
@@ -489,13 +502,24 @@ new file mode 100644
 +	const uint64_t slide = lmb_live.slide;
 +	const bool shell = lmb_live.shell_parent != 0;
 +	const struct lmu_site *sites = shell ? lmu_shell_sites : lmu_sites;
-+	const unsigned count = shell ? LMU_SHELL_COUNT : LMU_COUNT;
-+	const bool shell_return = shell && i == 1;
++	const unsigned count = shell ?
++	    (lmb_live.shell_init_lr ? LMU_SHELL_COUNT : LMU_SHELL_ACTIVATION_COUNT) : LMU_COUNT;
++	uint64_t expected_sp = lmu_sp;
++	uint64_t expected_lr = 0;
++	if (shell && i == 1) {
++		expected_sp += 0x160;
++		expected_lr = lmb_live.shell_parent;
++	} else if (shell && i == 2) {
++		expected_sp += 0x160 + 0x70;
++		expected_lr = lmb_live.shell_init_lr;
++	}
 +	if (i < count && get_saved_state_pc(ss) == sites[i].pc + slide &&
-+	    get_saved_state_sp(ss) == lmu_sp + (shell_return ? 0x160 : 0) &&
-+	    (!shell_return || get_saved_state_lr(ss) == lmb_live.shell_parent)) {
++	    get_saved_state_sp(ss) == expected_sp &&
++	    (!expected_lr || get_saved_state_lr(ss) == expected_lr)) {
 +		if (i == 0) {
 +			lmb_live.ui_start_result = (uint32_t)const_saved_state64(ss)->x[0];
++		} else if (shell && i == 2) {
++			lmb_live.shell_object = const_saved_state64(ss)->x[0] != 0;
 +		}
 +		lmb_live.ui_step = i + 1;
 +		lmb_live.ui_at = lmipro_ui_stack_seconds();
@@ -715,7 +739,8 @@ new file mode 100644
 +		    "BKS screen/v1 p%d t%llu bootRet%d port%x state%u diag%u\n"
 +		    "id6001011 at%llu trap%u/%u/%x ageMs%llu run%d msg%u/%x ret%u/%d\n"
 +		    "out%u %x/%x/%x/%x flags%x/%x upper%llx cache%llx main%llx\n"
-+		    "%s arm%u step%u diag%u bks%u at%llu caller%llx parent%llx\n",
++		    "%s arm%u step%u diag%u bks%u at%llu caller%llx parent%llx\n"
++		    "BKS init object%u next%llx\n",
 +		    row.pid, (unsigned long long)row.tid, row.result, row.port, row.disp, row.disp_diag,
 +		    (unsigned long long)row.disp_at, (unsigned)(row.disp_mach_in != 0),
 +		    (unsigned)(row.disp_mach_out != 0), (unsigned)row.disp_trap_status,
@@ -726,7 +751,8 @@ new file mode 100644
 +		    (unsigned long long)(LMB_CACHE + row.slide), (unsigned long long)row.main_base,
 +		    row.shell_parent ? "BKS shell/v1" : "UIKit init/v1", row.ui_armed, row.ui_step, row.ui_diag,
 +		    row.ui_start_result, (unsigned long long)row.ui_at, (unsigned long long)row.ui_caller,
-+		    (unsigned long long)row.shell_parent);
++		    (unsigned long long)row.shell_parent, row.shell_object,
++		    (unsigned long long)row.shell_init_lr);
 +	}
 +	uint64_t ms = 0, mms = 0;
 +	if (row.enter) {

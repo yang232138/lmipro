@@ -54,9 +54,11 @@ extern "C" unsigned lmipro_display_callers_report(char *out,unsigned n){return s
 extern "C" unsigned lmipro_render_ipc_report(char *out,unsigned n){return snprintf(out,n,"RenderIPC/v1 fixture\n");}
 extern "C" unsigned lmipro_spring_main_report(char *out,unsigned n){return snprintf(out,n,"SB main fixture\n");}
 static bool lookupEnabled=false;
-extern "C" unsigned lmipro_quiet_display_report(char *out,unsigned n,const char *mainStack) {
-  assert(lookupEnabled && strstr(mainStack,"SB main fixture"));
-  return snprintf(out,n,"BB activity fixture\n%s",mainStack);
+static bool haveReceipts=false;
+extern "C" unsigned lmipro_quiet_display_report(char *out,unsigned n) {
+  assert(lookupEnabled);
+  if(haveReceipts){out[0]=0;return 0;}
+  return snprintf(out,n,"BB activity fixture\n");
 }
 extern "C" unsigned lmipro_bootstrap_report(char *out,unsigned n){
   return lookupEnabled?snprintf(out,n,"SB lookup/v1 fixture\n"):0;
@@ -131,6 +133,14 @@ int main(){
     assert(strstr(e.what(),"SB lookup/v1 fixture"));
     assert(strstr(e.what(),"BB activity fixture\nSB main fixture"));
     assert(!strstr(e.what(),"BBcall/v1 fixture"));
+  }
+  assert(caught);
+  haveReceipts=true;caught=false;
+  try{lmiproDisplayCheckpoint(600,"1:launchd");}
+  catch(const std::runtime_error &e){
+    caught=true;
+    assert(strstr(e.what(),"SB lookup/v1 fixture\nSB main fixture"));
+    assert(!strstr(e.what(),"BB activity fixture"));
   }
   assert(caught);lookupEnabled=false;
   enabled=2;framePresented=false;caught=false;
