@@ -49,7 +49,7 @@ static struct thread th;
 static struct proc proc;
 static arm_debug_state_t deb;
 static bool enabled, bad_word, bad_right;
-static unsigned seconds, reads, name_reads, right_checks;
+static unsigned from_seconds, seconds, reads, name_reads, right_checks;
 static uint64_t tick;
 static uint32_t fixture_port;
 static uint8_t user_stack[0x300];
@@ -57,7 +57,7 @@ static struct {int num_breakpoint_pairs;} caps = {2};
 #define arm_debug_info() (&caps)
 static unsigned PE_parse_boot_argn(const char *name,void *dst,unsigned n) {
     assert(!strcmp(name,"lmipro-bootstrap-at") && n==sizeof(unsigned));
-    *(unsigned *)dst=300; return enabled;
+    *(unsigned *)dst=from_seconds; return enabled;
 }
 static void proc_selfname(char *out,int n) {snprintf(out,n,"SpringBoard");}
 static int proc_selfpid(void) {return 27;}
@@ -121,15 +121,10 @@ static arm_saved_state_t start(void) {
     lmb_config=lmb_guard=lmb_lost=0;th.machine.DebugData=NULL;
     task.task_shared_region_slide=0x4d04000;task.mach_header_vm_address=0x100000000;
     memcpy(task.task_shared_region_uuid,lmb_uuid,sizeof(lmb_uuid));
-    proc.p_lflag=0;seconds=300;enabled=true;bad_word=bad_right=false;
+    proc.p_lflag=0;from_seconds=0;seconds=40;enabled=true;bad_word=bad_right=false;
     reads=name_reads=right_checks=0;fixture_port=0x507;
     memset(user_stack,0,sizeof(user_stack));
     return ss;
-}
-static void enter(arm_saved_state_t ss) {
-    lmipro_bootstrap_svc(&th,&ss,-47,false);assert(lmb_live.phase==LMB_ARMED);
-    ss.pc=LMB_ENTRY+lmb_live.slide;
-    assert(lmipro_bootstrap_break(&th,&ss));assert(lmb_live.phase==LMB_ENTERED);
 }
 static void store(arm_saved_state_t ss) {
     ss.pc=LMB_STORE+lmb_live.slide;ss.sp-=0x90;
@@ -157,22 +152,33 @@ static arm_saved_state_t in_flight(arm_saved_state_t wrapper,bool wrong_chain) {
     wrapper.fp=frame[0];wrapper.sp=0x8db0;wrapper.pc=LMB_MACH2+task.task_shared_region_slide;
     return wrapper;
 }
+static void enter(arm_saved_state_t ss) {
+    arm_saved_state_t ipc=in_flight(ss,false);
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);
+    assert(lmb_live.phase==LMB_ENTERED);
+}
 int main(void) {
     char buf[416];
-    arm_saved_state_t ss=start();enabled=false;
-    lmipro_bootstrap_svc(&th,&ss,-47,false);
+    arm_saved_state_t ss=start(), ipc=in_flight(ss,false);enabled=false;
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);
     assert(!th.machine.DebugData && !lmipro_bootstrap_report(buf,sizeof(buf)));
-    ss=start();seconds=299;lmipro_bootstrap_svc(&th,&ss,-47,false);
-    assert(lmb_live.phase==LMB_IDLE);
-    ss=start();proc.p_lflag=P_LNOATTACH;lmipro_bootstrap_svc(&th,&ss,-47,false);
+    ss=start();ipc=in_flight(ss,false);from_seconds=300;seconds=299;
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);
+    assert(lmb_live.phase==LMB_IDLE && !th.machine.DebugData);
+    ss=start();ipc=in_flight(ss,false);ipc.pc+=4;
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);
+    assert(lmb_live.phase==LMB_IDLE && !th.machine.DebugData);
+    ss=start();ipc=in_flight(ss,false);proc.p_lflag=P_LNOATTACH;
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);
     assert(lmb_live.phase==LMB_REFUSED && lmb_live.diagnostic==EPERM && !th.machine.DebugData);
-    ss=start();bad_word=true;lmipro_bootstrap_svc(&th,&ss,-47,false);
+    ss=start();ipc=in_flight(ss,false);bad_word=true;
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);
     assert(lmb_live.phase==LMB_REFUSED && lmb_live.diagnostic==ENOEXEC && !th.machine.DebugData);
-    ss=start();th.machine.DebugData=&deb;lmipro_bootstrap_svc(&th,&ss,-47,false);
+    ss=start();ipc=in_flight(ss,false);th.machine.DebugData=&deb;
+    lmipro_bootstrap_svc(&th,&ipc,-47,false);
     assert(lmb_live.phase==LMB_REFUSED && th.machine.DebugData==&deb);
     ss=start();enter(ss);assert(!strcmp(lmb_live.name,"com.apple.fixture"));
-    arm_saved_state_t ipc=ss;ipc.pc=LMB_MACH2+lmb_live.slide;ipc.x[0]=0;
-    lmipro_bootstrap_svc(&th,&ipc,-47,false);
+    ipc=in_flight(ss,false);ipc.x[0]=0;
     lmipro_bootstrap_report(buf,sizeof(buf));assert(strstr(buf,"run=3 mach=1/0/0"));
     lmipro_bootstrap_svc(&th,&ipc,-47,true);finish(ss,1102);
     lmipro_bootstrap_report(buf,sizeof(buf));assert(strstr(buf,"ret1/1102 store0 port0/0"));
@@ -180,6 +186,8 @@ int main(void) {
     ss=start();enter(ss);store(ss);finish(ss,0);
     assert(lmb_live.phase==LMB_RETURNED && lmb_live.result==0 && lmb_live.port_check==2 && lmb_live.port==fixture_port);
     assert(reads==1 && right_checks==1 && name_reads==1);
+    ipc=in_flight(ss,false);lmipro_bootstrap_svc(&th,&ipc,-47,false);
+    assert(lmb_live.phase==LMB_RETURNED && !th.machine.DebugData && name_reads==1);
     ss=start();enter(ss);store(ss);finish(ss,1102);assert(!reads && !right_checks && !lmb_live.port);
     ss=start();enter(ss);store(ss);bad_right=true;finish(ss,0);
     assert(lmb_live.port_check==1 && lmb_live.port==0);
@@ -188,19 +196,20 @@ int main(void) {
     ss=start();enter(ss);ss.sp-=16;finish(ss,0);assert(lmb_live.phase==LMB_MISMATCH && !reads);
     ss=start();ipc=in_flight(ss,true);
     lmipro_bootstrap_svc(&th,&ipc,-47,false);
-    assert(lmb_live.phase==LMB_ARMED && lmb_live.chain_checked==1 && !name_reads);
+    assert(lmb_live.phase==LMB_SCANNING && lmb_live.chain_checked==1 && lmb_live.chain_depth==4);
+    assert(!th.machine.DebugData && !name_reads);
     ipc=in_flight(ss,false);seconds=309;
     lmipro_bootstrap_svc(&th,&ipc,-47,false);
-    assert(lmb_live.phase==LMB_ENTERED && lmb_live.chain_checked==2 && lmb_live.source==2);
-    assert(lmb_live.armed_seconds==300 && lmb_live.at_seconds==309 && lmb_live.mach_in && lmb_live.caller==ss.lr);
+    assert(lmb_live.phase==LMB_ENTERED && lmb_live.chain_checked==2 && lmb_live.chain_depth==7);
+    assert(lmb_live.ready_seconds==40 && lmb_live.at_seconds==309 && lmb_live.mach_in && lmb_live.caller==ss.lr);
     assert(lmb_sp==ss.sp && lmb_out==ss.x[2] && !strcmp(lmb_live.name,"com.apple.fixture"));
     lmipro_bootstrap_svc(&th,&ipc,-47,true);
     store(ss);finish(ss,0);
     assert(lmb_live.phase==LMB_RETURNED && lmb_live.mach_out && lmb_live.port_check==2);
-    lmipro_bootstrap_report(buf,sizeof(buf));assert(strstr(buf,"arm=300 via=2 chains=2"));
+    lmipro_bootstrap_report(buf,sizeof(buf));assert(strstr(buf,"ready=40 checks=2 depth=7"));
     ss=start();ipc=in_flight(ss,false);
     lmipro_bootstrap_svc(&th,&ipc,-47,false);
-    assert(lmb_live.phase==LMB_ENTERED && lmb_live.source==2 && lmb_live.chain_checked==1);
+    assert(lmb_live.phase==LMB_ENTERED && lmb_live.chain_checked==1 && lmb_live.at_seconds==40);
     puts("PASS: exact XNU probe body: opt-in/ABI gates, untouched debugger, Mach pending vs wrapper failure, observed output store, real send right and pairing");
 }
 '''

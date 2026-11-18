@@ -98,8 +98,8 @@ diff --git a/osfmk/arm64/lmipro_bootstrap_probe.h b/osfmk/arm64/lmipro_bootstrap
 new file mode 100644
 --- /dev/null
 +++ b/osfmk/arm64/lmipro_bootstrap_probe.h
-@@ -0,0 +1,412 @@
-+/* Opt-in one-shot user breakpoint probe for the pinned 21H461 ARM64 cache.
+@@ -0,0 +1,397 @@
++/* Opt-in one-shot lookup probe for the pinned 21H461 ARM64 cache.
 + * Uses the existing XNU per-thread debug state machinery. No writes to EL0
 + * memory, changes to saved registers, debug entitlements, or IPC semantics. */
 +#define LMB_ENTRY UINT64_C(0x1dd67d1c4)
@@ -113,11 +113,11 @@ new file mode 100644
 +static const uint8_t lmb_uuid[16] = {
 +	0x59,0x0d,0x83,0x9a,0x82,0xd2,0x30,0xf1,0xa1,0x7d,0x0c,0xc0,0x53,0x42,0x0f,0x73
 +};
-+enum { LMB_IDLE, LMB_ARMED, LMB_ENTERED, LMB_RETURNED, LMB_REFUSED, LMB_MISMATCH, LMB_QUALIFYING };
++enum { LMB_IDLE, LMB_SCANNING, LMB_ENTERED, LMB_RETURNED, LMB_REFUSED, LMB_MISMATCH, LMB_QUALIFYING };
 +struct lmb_record {
-+	unsigned phase, slide, name_error, port_check, stored, source, chain_checked;
++	unsigned phase, slide, name_error, port_check, stored, chain_checked, chain_depth;
 +	int pid, diagnostic, result, mach_status;
-+	uint64_t tid, enter, end, at_seconds, caller, parent, main_base, mach_in, mach_out, armed_seconds;
++	uint64_t tid, enter, end, at_seconds, caller, parent, main_base, mach_in, mach_out, ready_seconds;
 +	mach_port_name_t port;
 +	char name[96];
 +};
@@ -231,8 +231,8 @@ new file mode 100644
 +
 +/* Recover only the exact already-observed 21H461 wrapper chain at its Mach
 + * trap. The frame of __xpc_interface_routine saves the lookup's x19 (name)
-+ * at FP-8 and x23 (output pointer) at FP-40. A matching chain can be in
-+ * flight before the wrapper-entry breakpoint was installed. */
++ * at FP-8 and x23 (output pointer) at FP-40. Breakpoints are installed
++ * only after recovering this exact chain, to observe store and return. */
 +static bool
 +lmb_inflight(thread_t th, const arm_saved_state_t *ss)
 +{
@@ -241,8 +241,7 @@ new file mode 100644
 +		0x1dd669a90, 0x1dd67cb20, 0x1dd67d1f4,
 +	};
 +	const uint64_t slide = lmb_live.slide;
-+	if (get_saved_state_pc(ss) != LMB_MACH2 + slide || !lmb_can_read() ||
-+	    !lmb_owned(th, LMB_ENTRY + slide)) {
++	if (get_saved_state_pc(ss) != LMB_MACH2 + slide || !lmb_can_read()) {
 +		return false;
 +	}
 +	uint64_t fp = get_saved_state_fp(ss), sp = get_saved_state_sp(ss);
@@ -252,6 +251,9 @@ new file mode 100644
 +		    copyin((user_addr_t)fp, frame, sizeof(frame)) != 0 || frame[1] != returns[i] + slide ||
 +		    frame[0] <= fp) {
 +			return false;
++		}
++		if (lmb_live.chain_depth < i + 1) {
++			lmb_live.chain_depth = i + 1;
 +		}
 +		if (i == 5) {
 +			xpc_fp = fp;
@@ -273,7 +275,6 @@ new file mode 100644
 +	lmb_sp = fp + sizeof(frame);
 +	lmb_out = slots[0];
 +	lmb_live.caller = frame[1];
-+	lmb_live.source = 2; /* already in flight, not a directly observed wrapper entry */
 +	lmb_live.enter = lmb_live.mach_in = mach_absolute_time();
 +	lmb_live.at_seconds = lmipro_ui_stack_seconds();
 +	lmb_name(slots[4]);
@@ -282,8 +283,24 @@ new file mode 100644
 +	    !(frame[1] & 3) && lmb_ptr(frame[1], sizeof(uint32_t))) {
 +		lmb_live.parent = frame[1];
 +	}
-+	lmb_live.diagnostic = lmb_set(th, LMB_RET + slide, LMB_STORE + slide);
-+	__atomic_store_n(&lmb_live.phase, LMB_ENTERED, __ATOMIC_RELEASE);
++	int status = 0;
++	if (!lmipro_bootstrap_debug_allowed() || th->machine.DebugData) {
++		status = EPERM;
++	} else if (arm_debug_info()->num_breakpoint_pairs < 2) {
++		status = ENOTSUP;
++	} else {
++		status = lmb_set(th, LMB_RET + slide, LMB_STORE + slide);
++		lmb_owner = th->machine.DebugData;
++		if (!status && (!lmb_owned(th, LMB_RET + slide) || !lmb_owned(th, LMB_STORE + slide))) {
++			status = EIO;
++		}
++		if (status && lmb_owner != NULL) {
++			(void)lmb_set(th, 0, 0);
++			lmb_owner = NULL;
++		}
++	}
++	lmb_live.diagnostic = status;
++	__atomic_store_n(&lmb_live.phase, status ? LMB_REFUSED : LMB_ENTERED, __ATOMIC_RELEASE);
 +	lmb_publish();
 +	return true;
 +}
@@ -310,15 +327,16 @@ new file mode 100644
 +		}
 +		return;
 +	}
-+	if (phase == LMB_ARMED && !returning && trap == -47 && lmb_live.tid == thread_tid(th) &&
-+	    get_saved_state_pc(ss) == LMB_MACH2 + lmb_live.slide && lmb_live.chain_checked < 4096) {
++	if (phase == LMB_SCANNING && !returning && trap == -47 && lmb_live.tid == thread_tid(th) &&
++	    get_saved_state_pc(ss) == LMB_MACH2 + lmb_live.slide && lmb_can_read() &&
++	    lmb_live.chain_checked < 4096) {
 +		++lmb_live.chain_checked;
 +		if (!lmb_inflight(th, ss)) {
 +			lmb_publish();
 +		}
 +		return;
 +	}
-+	if (returning || phase != LMB_IDLE || !lmb_can_read() ||
++	if (returning || trap != -47 || phase != LMB_IDLE || !lmb_can_read() ||
 +	    lmipro_ui_stack_seconds() < config - 2) {
 +		return;
 +	}
@@ -329,7 +347,7 @@ new file mode 100644
 +	}
 +	task_t task = current_task();
 +	uint32_t slide = task->task_shared_region_slide;
-+	if (slide == UINT32_MAX) {
++	if (slide == UINT32_MAX || get_saved_state_pc(ss) != LMB_MACH2 + slide) {
 +		return; /* dyld has not published the cache yet */
 +	}
 +	unsigned idle = LMB_IDLE;
@@ -341,28 +359,16 @@ new file mode 100644
 +	lmb_live.tid = thread_tid(th);
 +	lmb_live.slide = slide;
 +	lmb_live.main_base = task->mach_header_vm_address;
-+	lmb_live.armed_seconds = lmipro_ui_stack_seconds();
++	lmb_live.ready_seconds = lmipro_ui_stack_seconds();
 +	int status = 0;
-+	if (!lmipro_bootstrap_debug_allowed() || th->machine.DebugData) {
-+		status = EPERM;
-+	} else if (arm_debug_info()->num_breakpoint_pairs < 2) {
-+		status = ENOTSUP;
-+	} else if (memcmp(task->task_shared_region_uuid, lmb_uuid, sizeof(lmb_uuid)) ||
++	if (memcmp(task->task_shared_region_uuid, lmb_uuid, sizeof(lmb_uuid)) ||
 +	    (slide & 0xfff) || !lmb_word(LMB_ENTRY + slide, 0xd100c3ff) ||
 +	    !lmb_word(LMB_STORE + slide, 0xb90002f9) || !lmb_word(LMB_RET + slide, 0xd65f03c0)) {
 +		status = ENOEXEC;
-+	} else {
-+		status = lmb_set(th, LMB_ENTRY + slide, 0);
-+		lmb_owner = th->machine.DebugData;
-+		if (!status && !lmb_owned(th, LMB_ENTRY + slide)) {
-+			(void)lmb_set(th, 0, 0);
-+			lmb_owner = NULL;
-+			status = EIO;
-+		}
 +	}
 +	lmb_live.diagnostic = status;
-+	__atomic_store_n(&lmb_live.phase, status ? LMB_REFUSED : LMB_ARMED, __ATOMIC_RELEASE);
-+	if (!status && trap == -47 && get_saved_state_pc(ss) == LMB_MACH2 + slide) {
++	__atomic_store_n(&lmb_live.phase, status ? LMB_REFUSED : LMB_SCANNING, __ATOMIC_RELEASE);
++	if (!status) {
 +		++lmb_live.chain_checked;
 +		if (lmb_inflight(th, ss)) {
 +			return;
@@ -376,7 +382,7 @@ new file mode 100644
 +{
 +	const uint64_t pc = get_saved_state_pc(ss);
 +	unsigned phase = __atomic_load_n(&lmb_live.phase, __ATOMIC_ACQUIRE);
-+	if ((phase != LMB_ARMED && phase != LMB_ENTERED) || lmb_live.tid != thread_tid(th) ||
++	if (phase != LMB_ENTERED || lmb_live.tid != thread_tid(th) ||
 +	    !lmb_owned(th, pc)) {
 +		return false;
 +	}
@@ -384,28 +390,7 @@ new file mode 100644
 +	const uint64_t caller = get_saved_state_lr(ss);
 +	const uint64_t sp = get_saved_state_sp(ss);
 +	const uint64_t *regs = const_saved_state64(ss)->x;
-+	if (phase == LMB_ARMED && pc == LMB_ENTRY + slide && lmb_can_read()) {
-+		lmb_sp = sp;
-+		lmb_out = regs[2];
-+		lmb_live.caller = caller;
-+		lmb_live.source = 1;
-+		lmb_live.enter = mach_absolute_time();
-+		lmb_live.at_seconds = lmipro_ui_stack_seconds();
-+		lmb_name(regs[1]);
-+		uint64_t frame[2] = {};
-+		uint64_t fp = get_saved_state_fp(ss);
-+		if (!(fp & 7) && lmb_ptr(fp, sizeof(frame)) &&
-+		    copyin((user_addr_t)fp, frame, sizeof(frame)) == 0 &&
-+		    !(frame[1] & 3) && lmb_ptr(frame[1], sizeof(uint32_t))) {
-+			lmb_live.parent = frame[1];
-+		}
-+		lmb_live.diagnostic = lmb_set(th, LMB_RET + slide, LMB_STORE + slide);
-+		if (!lmb_live.diagnostic) {
-+			__atomic_store_n(&lmb_live.phase, LMB_ENTERED, __ATOMIC_RELEASE);
-+			lmb_publish();
-+			return true;
-+		}
-+	} else if (phase == LMB_ENTERED && pc == LMB_STORE + slide && lmb_can_read() &&
++	if (pc == LMB_STORE + slide && lmb_can_read() &&
 +	    lmb_sp >= 0x90 && sp == lmb_sp - 0x90 && regs[23] == lmb_out) {
 +		/* The next instruction is the original _bootstrap_look_up3 store.
 +		 * Disable this breakpoint before letting that instruction run. */
@@ -461,7 +446,7 @@ new file mode 100644
 +		return 0;
 +	}
 +	if (!__sync_bool_compare_and_swap(&lmb_guard, 0, 1)) {
-+		return (unsigned)snprintf(out, cap, "SB lookup/v1 snapshot busy\n");
++		return (unsigned)snprintf(out, cap, "SB lookup/v3 snapshot busy\n");
 +	}
 +	struct lmb_record row = lmb_snapshot;
 +	__sync_lock_release(&lmb_guard);
@@ -495,11 +480,11 @@ new file mode 100644
 +		absolutetime_to_nanoseconds((row.mach_out ? row.mach_out : mach_absolute_time()) - row.mach_in, &mms);
 +	}
 +	return (unsigned)snprintf(out, cap,
-+	    "SB lookup/v2 from%u phase%u diag%d p%d t%llu lost%u\n"
++	    "SB lookup/v3 from%u phase%u diag%d p%d t%llu lost%u\n"
 +	    "name=%s err%u ret%u/%d store%u port%u/%x\n"
 +	    "lr=%llx parent=%llx main=%llx cache=%llx xpc=%llx\n"
 +	    "at=%llu ticks=%llx ageMs=%llu run=%d mach=%u/%u/%x ageMs=%llu\n"
-+	    "arm=%llu via=%u chains=%u\n",
++	    "ready=%llu checks=%u depth=%u\n",
 +	    config - 2, row.phase, row.diagnostic, row.pid, (unsigned long long)row.tid,
 +	    __atomic_load_n(&lmb_lost, __ATOMIC_RELAXED), row.name[0] ? row.name : "?", row.name_error,
 +	    (unsigned)(row.phase == LMB_RETURNED), row.result, row.stored, row.port_check, row.port,
@@ -508,6 +493,6 @@ new file mode 100644
 +	    row.phase ? (unsigned long long)(LMB_XPC + row.slide) : 0ULL,
 +	    (unsigned long long)row.at_seconds, (unsigned long long)row.enter, (unsigned long long)(ms / UINT64_C(1000000)), run_state,
 +	    (unsigned)(row.mach_in != 0), (unsigned)(row.mach_out != 0), (unsigned)row.mach_status, (unsigned long long)(mms / UINT64_C(1000000)),
-+	    (unsigned long long)row.armed_seconds, row.source, row.chain_checked);
++	    (unsigned long long)row.ready_seconds, row.chain_checked, row.chain_depth);
 +}
 +
