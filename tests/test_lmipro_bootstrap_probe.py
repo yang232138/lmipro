@@ -62,7 +62,6 @@ static void proc_selfname(char *out,int n) {snprintf(out,n,"SpringBoard");}
 static int proc_selfpid(void) {return 27;}
 static uint64_t thread_tid(thread_t t) {return t==&th ? 295 : 296;}
 static unsigned thread_get_tag(thread_t t) {return t==&th ? THREAD_TAG_MAINTHREAD : 0;}
-static proc_t proc_self(void) {return &proc;}
 static task_t current_task(void) {return &task;}
 static unsigned ml_get_interrupts_enabled(void) {return 1;}
 static unsigned preemption_enabled(void) {return 1;}
@@ -101,10 +100,8 @@ static int machine_thread_set_state(thread_t t,int f,void *s,unsigned n) {
 static int mach_port_type(void *space,mach_port_name_t name,mach_port_type_t *type) {
     (void)space;assert(name==fixture_port);++right_checks;*type=bad_right?0:MACH_PORT_TYPE_SEND;return 0;
 }
-static proc_t proc_find(int pid) {return pid==27 ? &proc:NULL;}
-static task_t proc_task(proc_t p) {assert(p==&proc);return &task;}
-static void proc_rele(proc_t p) {assert(p==&proc);}
-static thread_t task_findtid(task_t t,uint64_t id) {assert(t==&task && id==295);return &th;}
+bool lmipro_bootstrap_debug_allowed(void) {return !(proc.p_lflag&(P_LTRACED|P_LNOATTACH));}
+thread_t lmipro_bootstrap_report_thread(int pid,uint64_t id) {assert(pid==27 && id==295);return &th;}
 static void thread_deallocate(thread_t t) {assert(t==&th);}
 static int thread_info_internal(thread_t t,int f,void *info,mach_msg_type_number_t *n) {
     assert(t==&th && f==THREAD_BASIC_INFO && *n==THREAD_BASIC_INFO_COUNT);

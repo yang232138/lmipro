@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
-@@ -77,6 +77,16 @@
+@@ -77,6 +77,14 @@
  #include <kperf/kperf.h>
  
  #include <kern/policy_internal.h>
@@ -10,14 +10,12 @@
 +#include <mach/mach_port.h>
 +#include <mach/thread_info.h>
 +#include <pexpert/pexpert.h>
-+#include <sys/proc_internal.h>
-+#include <sys/systm.h>
 +#include "lmipro_bootstrap_probe.h"
 +#endif
  #if CONFIG_TELEMETRY
  #include <kern/telemetry.h>
  #endif
-@@ -871,6 +881,11 @@
+@@ -871,6 +879,11 @@
  
  	case ESR_EC_BKPT_REG_MATCH_EL0:
  		if (FSC_DEBUG_FAULT == ISS_SSDE_FSC(esr)) {
@@ -29,7 +27,7 @@
  			handle_breakpoint(state, esr);
  		}
  		panic("Unsupported Class %u event code. state=%p class=%u esr=%u far=%p",
-@@ -1955,6 +1970,9 @@
+@@ -1955,6 +1968,9 @@
  	}
  
  	current_cached_proc_cred_update();
@@ -39,7 +37,7 @@
  	LMIPRO_USER_EVENT(1, trap_no, get_saved_state_pc(state),
  	    saved_state64(state)->x[0], saved_state64(state)->x[1]);
  
-@@ -1980,6 +1998,9 @@
+@@ -1980,6 +1996,9 @@
  
  		unix_syscall(state, thread, p);
  	}
@@ -49,7 +47,7 @@
  	LMIPRO_USER_EVENT(2, trap_no, get_saved_state_pc(state),
  	    saved_state64(state)->x[0], get_saved_state_cpsr(state));
  }
-@@ -2348,6 +2369,9 @@
+@@ -2348,6 +2367,9 @@
  
  	assert(is_saved_state64(state));
  	saved_state64(state)->x[0] = error;
@@ -59,11 +57,48 @@
  	LMIPRO_USER_EVENT(2, get_saved_state_svc_number(state), get_saved_state_pc(state),
  	    saved_state64(state)->x[0], get_saved_state_cpsr(state));
  
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -3631,3 +3631,34 @@
+ 	return exit_with_reason(p, W_EXITCODE(0, SIGKILL), (int *)NULL, FALSE, FALSE,
+ 	           0, reason);
+ }
++
++#if defined(LMIPRO_USER_TRACE) && LMIPRO_USER_TRACE
++bool lmipro_bootstrap_debug_allowed(void);
++thread_t lmipro_bootstrap_report_thread(int, uint64_t);
++
++bool
++lmipro_bootstrap_debug_allowed(void)
++{
++	proc_t p = current_proc();
++	if (!p) {
++		return false;
++	}
++	proc_lock(p);
++	bool allowed = !(p->p_lflag & (P_LNOATTACH | P_LTRACED));
++	proc_unlock(p);
++	return allowed;
++}
++
++thread_t
++lmipro_bootstrap_report_thread(int pid, uint64_t tid)
++{
++	proc_t p = proc_find(pid);
++	if (!p) {
++		return THREAD_NULL;
++	}
++	task_t task = proc_task(p);
++	thread_t th = task ? task_findtid(task, tid) : THREAD_NULL;
++	proc_rele(p);
++	return th;
++}
++#endif
 diff --git a/osfmk/arm64/lmipro_bootstrap_probe.h b/osfmk/arm64/lmipro_bootstrap_probe.h
 new file mode 100644
 --- /dev/null
 +++ b/osfmk/arm64/lmipro_bootstrap_probe.h
-@@ -0,0 +1,337 @@
+@@ -0,0 +1,335 @@
 +/* Opt-in one-shot user breakpoint probe for the pinned 21H461 ARM64 cache.
 + * Uses the existing XNU per-thread debug state machinery. No writes to EL0
 + * memory, changes to saved registers, debug entitlements, or IPC semantics. */
@@ -188,7 +223,11 @@ new file mode 100644
 +	memcpy(lmb_live.name, name, done);
 +}
 +
++extern int proc_selfpid(void);
++extern void proc_selfname(char *, int);
 +extern uint64_t lmipro_ui_stack_seconds(void);
++bool lmipro_bootstrap_debug_allowed(void);
++thread_t lmipro_bootstrap_report_thread(int, uint64_t);
 +
 +static __attribute__((noinline)) void
 +lmipro_bootstrap_svc(thread_t th, arm_saved_state_t *ss, int trap, bool returning)
@@ -222,7 +261,6 @@ new file mode 100644
 +		return;
 +	}
 +	task_t task = current_task();
-+	proc_t proc = proc_self();
 +	uint32_t slide = task->task_shared_region_slide;
 +	if (slide == UINT32_MAX) {
 +		return; /* dyld has not published the cache yet */
@@ -237,7 +275,7 @@ new file mode 100644
 +	lmb_live.slide = slide;
 +	lmb_live.main_base = task->mach_header_vm_address;
 +	int status = 0;
-+	if (!proc || (proc->p_lflag & (P_LNOATTACH | P_LTRACED)) || th->machine.DebugData) {
++	if (!lmipro_bootstrap_debug_allowed() || th->machine.DebugData) {
 +		status = EPERM;
 +	} else if (arm_debug_info()->num_breakpoint_pairs < 2) {
 +		status = ENOTSUP;
@@ -354,19 +392,14 @@ new file mode 100644
 +	__sync_lock_release(&lmb_guard);
 +	int run_state = -1;
 +	if (row.phase == LMB_ENTERED) {
-+		proc_t p = proc_find(row.pid);
-+		if (p) {
-+			task_t task = proc_task(p);
-+			thread_t th = task ? task_findtid(task, row.tid) : THREAD_NULL;
-+			if (th != THREAD_NULL) {
-+				thread_basic_info_data_t basic = {};
-+				mach_msg_type_number_t n = THREAD_BASIC_INFO_COUNT;
-+				if (thread_info_internal(th, THREAD_BASIC_INFO, (thread_info_t)&basic, &n) == KERN_SUCCESS) {
-+					run_state = basic.run_state;
-+				}
-+				thread_deallocate(th);
++		thread_t th = lmipro_bootstrap_report_thread(row.pid, row.tid);
++		if (th != THREAD_NULL) {
++			thread_basic_info_data_t basic = {};
++			mach_msg_type_number_t n = THREAD_BASIC_INFO_COUNT;
++			if (thread_info_internal(th, THREAD_BASIC_INFO, (thread_info_t)&basic, &n) == KERN_SUCCESS) {
++				run_state = basic.run_state;
 +			}
-+			proc_rele(p);
++			thread_deallocate(th);
 +		}
 +	}
 +	/* If the wrapper returned during the task/thread lookup, prefer its
@@ -388,7 +421,7 @@ new file mode 100644
 +	}
 +	return (unsigned)snprintf(out, cap,
 +	    "SB lookup/v1 from%u phase%u diag%d p%d t%llu lost%u\n"
-+	    "name=%s err%d ret%u/%d store%u port%u/%x\n"
++	    "name=%s err%u ret%u/%d store%u port%u/%x\n"
 +	    "lr=%llx parent=%llx main=%llx cache=%llx xpc=%llx\n"
 +	    "at=%llu ticks=%llx ageMs=%llu run=%d mach=%u/%u/%x ageMs=%llu\n",
 +	    config - 2, row.phase, row.diagnostic, row.pid, (unsigned long long)row.tid,
