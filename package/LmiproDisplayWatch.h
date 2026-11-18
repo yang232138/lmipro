@@ -101,8 +101,8 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
   char callers[1668] = {};
   char renderIPC[480] = {};
   char springMain[240] = {};
-  char lookup[416] = {};
 #if defined(LMIPRO_DISPLAY_BOARD) && LMIPRO_DISPLAY_BOARD
+  char lookup[416] = {};
   lmipro_display_report(detail,sizeof(detail));
   lmipro_display_callers_report(callers,sizeof(callers));
   lmipro_ui_trace_report(ui,sizeof(ui));
