@@ -98,7 +98,7 @@ diff --git a/osfmk/arm64/lmipro_bootstrap_probe.h b/osfmk/arm64/lmipro_bootstrap
 new file mode 100644
 --- /dev/null
 +++ b/osfmk/arm64/lmipro_bootstrap_probe.h
-@@ -0,0 +1,1042 @@
+@@ -0,0 +1,1238 @@
 +/* Opt-in one-shot lookup probe for the pinned 21H461 ARM64 cache.
 + * Uses the existing XNU per-thread debug state machinery. No writes to EL0
 + * memory, changes to saved registers, debug entitlements, or IPC semantics. */
@@ -276,12 +276,31 @@ new file mode 100644
 +#define LMJ_FB_OUT UINT64_C(0x1cfa38d60)
 +#define LMJ_UI_IN  UINT64_C(0x18a4637d4)
 +#define LMJ_UI_OUT UINT64_C(0x1cfa38df4)
++#define LMJ_DISPATCH_SEND_RETURN UINT64_C(0x18f589444)
++#define LMJ_DISPATCH_RECV_RETURN UINT64_C(0x18f589538)
++#define LMJ_DISPATCH_SEND_TRAP_RETURN UINT64_C(0x18f58cf6c)
++#define LMJ_MACH2_RETURN UINT64_C(0x1cb784224)
++#define LMJ_MACH_SEND 1u
++#define LMJ_MACH_RECV 2u
++#define LMJ_RCV_SYNC_WAIT 0x4000u
 +enum { LMJ_NONE, LMJ_ARMED, LMJ_FB_ENTERED, LMJ_FB_RETURNED, LMJ_UI_ENTERED, LMJ_UI_RETURNED };
++struct lmj_ipc {
++	uint32_t reply, sync_port, id, remote, header_reply, send_msgr, send_options;
++	unsigned header, matched, send_returned, depth;
++	uint64_t callers[8];
++};
++struct lmj_send {
++	uint64_t frame, message, trap_frame;
++	uint32_t reply, remote, id, options, result;
++	bool returned;
++};
++static struct lmj_send lmj_send;
 +struct lmj_record {
 +	unsigned sequence, stage, slide, object, argc, pending;
 +	int pid, diag, ui_result, trap;
 +	uint64_t tid, main, ready, fb_in, fb_out, fb_lr, ui_in, ui_out, ui_lr;
 +	uint64_t wait_at, wait_pc, wait_lr, wait_frames[3];
++	struct lmj_ipc ipc;
 +};
 +static struct lmj_record lmj_live, lmj_snapshot;
 +static unsigned lmj_config, lmj_claim, lmj_sequence;
@@ -294,10 +313,10 @@ new file mode 100644
 +	if (!config) {
 +		unsigned value = 0;
 +		config = PE_parse_boot_argn("lmipro-frontboard-boundaries", &value, sizeof(value)) &&
-+		    value == 1 ? 2 : 1;
++		    value >= 1 && value <= 2 ? value + 1 : 1;
 +		__atomic_store_n(&lmj_config, config, __ATOMIC_RELEASE);
 +	}
-+	return config == 2;
++	return config >= 2;
 +}
 +
 +static uint64_t
@@ -339,6 +358,161 @@ new file mode 100644
 +	}
 +}
 +
++static bool
++lmj_ipc_read(uint64_t address, void *value, size_t size)
++{
++	return lmb_ptr(address, size) && copyin((user_addr_t)address, value, size) == 0;
++}
++
++/* A saved LR is the instruction after the call. Hand back the caller's FP. */
++static uint64_t
++lmj_ipc_frame(uint64_t *fp, uint64_t sp)
++{
++	uint64_t frame[2];
++	if ((*fp & 15) || *fp < sp || *fp - sp > 0x8000 ||
++	    !lmj_ipc_read(*fp, frame, sizeof(frame)) || frame[0] <= *fp ||
++	    (frame[1] & 3) || !lmb_ptr(frame[1], sizeof(uint32_t))) {
++		return 0;
++	}
++	*fp = frame[0];
++	return frame[1];
++}
++
++/* This mode is pinned to the ARMv8.1 libdispatch path observed in 21H461. */
++static bool
++lmj_ipc_abi(uint64_t slide)
++{
++	return lmb_word(LMB_MACH2 + slide - 4, 0xd4001001) &&
++	    lmb_word(LMJ_MACH2_RETURN + slide - 4, 0x97fff24c) &&
++	    lmb_word(0x1cb7841e8 + slide, 0xa9044ff4) &&
++	    lmb_word(LMJ_DISPATCH_SEND_TRAP_RETURN + slide - 4, 0x954bd9c6) &&
++	    lmb_word(0x18f58cc00 + slide, 0xaa0103f4) &&
++	    lmb_word(LMJ_DISPATCH_SEND_RETURN + slide - 4, 0x97ffff00) &&
++	    lmb_word(LMJ_DISPATCH_RECV_RETURN + slide - 4, 0x954be850) &&
++	    lmb_word(0x18f589428 + slide, 0xa932d7bf) &&
++	    lmb_word(0x18f589398 + slide, 0xb9404828) &&
++	    lmb_word(0x18f5893a8 + slide, 0xf9400269);
++}
++
++static void
++lmj_ipc_send(const arm_saved_state_t *ss, uint64_t fp, uint64_t sp, uint64_t slide)
++{
++	const uint64_t *x = const_saved_state64(ss)->x;
++	const uint64_t trap_frame = fp;
++	uint64_t message;
++	const uint32_t reply = (uint32_t)(x[3] >> 32);
++	if (!MACH_PORT_VALID(reply) || fp < sp + 0x10 ||
++	    lmj_ipc_frame(&fp, sp) != LMJ_DISPATCH_SEND_TRAP_RETURN + slide ||
++	    !lmj_ipc_read(trap_frame - 0x10, &message, sizeof(message)) ||
++	    !lmb_ptr(message, 0x60)) {
++		return;
++	}
++	for (unsigned i = 0; i < 12; ++i) {
++		uint64_t lr = lmj_ipc_frame(&fp, sp);
++		if (!lr) {
++			return;
++		}
++		if (lr == LMJ_DISPATCH_SEND_RETURN + slide) {
++			lmj_send = (struct lmj_send){
++				.frame = fp, .message = message, .trap_frame = trap_frame,
++				.reply = reply, .remote = (uint32_t)x[3],
++				.id = (uint32_t)(x[4] >> 32), .options = (uint32_t)x[1],
++			};
++			return;
++		}
++	}
++}
++
++static void
++lmj_ipc_receive(const arm_saved_state_t *ss, uint64_t fp, uint64_t sp, uint64_t slide)
++{
++	static const uint64_t frames[] = {0x1cb7841b0, 0x1cb783fb8, LMJ_DISPATCH_RECV_RETURN};
++	const uint64_t *x = const_saved_state64(ss)->x;
++	uint32_t reply = (uint32_t)(x[5] >> 32);
++	if (!MACH_PORT_VALID(reply)) {
++		return;
++	}
++	for (unsigned i = 0; i < sizeof(frames) / sizeof(frames[0]); ++i) {
++		if (lmj_ipc_frame(&fp, sp) != frames[i] + slide) {
++			return;
++		}
++	}
++
++	struct lmj_ipc *ipc = &lmj_live.ipc;
++	*ipc = (struct lmj_ipc){.reply = reply};
++	if (x[1] & LMJ_RCV_SYNC_WAIT) {
++		ipc->sync_port = (uint32_t)x[3];
++	}
++
++	/* Read only the request header and verify that it names this reply port. */
++	uint64_t message;
++	if (fp >= sp + 0xd0 && lmj_ipc_read(fp - 0xd0, &message, sizeof(message)) &&
++	    lmb_ptr(message, 0x60)) {
++		uint64_t address = message + 0x58;
++		uint32_t indirect, header[6];
++		if (lmj_ipc_read(message + 0x48, &indirect, sizeof(indirect)) &&
++		    (!indirect || lmj_ipc_read(address, &address, sizeof(address))) &&
++		    lmj_ipc_read(address, header, sizeof(header)) && header[3] == reply) {
++			ipc->header = 1;
++			ipc->remote = header[2];
++			ipc->header_reply = header[3];
++			ipc->id = header[5];
++			if (lmj_send.frame == fp && lmj_send.message == message &&
++			    lmj_send.reply == reply && lmj_send.id == ipc->id) {
++				ipc->matched = 1;
++				ipc->send_returned = lmj_send.returned;
++				ipc->send_msgr = lmj_send.result;
++				ipc->send_options = lmj_send.options;
++				ipc->remote = lmj_send.remote;
++			}
++		}
++	}
++
++	for (unsigned i = 0; i < sizeof(ipc->callers) / sizeof(ipc->callers[0]); ++i) {
++		uint64_t lr = lmj_ipc_frame(&fp, sp);
++		if (!lr) {
++			break;
++		}
++		ipc->callers[ipc->depth++] = lr;
++	}
++}
++
++static void
++lmj_ipc_svc(const arm_saved_state_t *ss, int trap, bool returning)
++{
++	if (trap != -47 || lmj_live.stage != LMJ_FB_ENTERED ||
++	    __atomic_load_n(&lmj_config, __ATOMIC_RELAXED) != 3) {
++		return;
++	}
++	const uint64_t slide = lmj_live.slide;
++	if (get_saved_state_pc(ss) != LMB_MACH2 + slide ||
++	    get_saved_state_lr(ss) != LMJ_MACH2_RETURN + slide) {
++		return;
++	}
++	uint64_t fp = get_saved_state_fp(ss);
++	const uint64_t *x = const_saved_state64(ss)->x;
++	if (returning) {
++		if (lmj_live.ipc.reply) {
++			/* After receive return the frame may be reused for another message. */
++			lmj_send = (struct lmj_send){};
++		} else if (lmj_send.trap_frame == fp && !lmj_send.returned) {
++			lmj_send.result = (uint32_t)x[0];
++			lmj_send.returned = true;
++		}
++		return;
++	}
++	if (!lmb_can_read()) {
++		return;
++	}
++	uint64_t sp = get_saved_state_sp(ss);
++	uint32_t direction = (uint32_t)x[1] & (LMJ_MACH_SEND | LMJ_MACH_RECV);
++	if (direction == LMJ_MACH_SEND) {
++		lmj_ipc_send(ss, fp, sp, slide);
++	} else if (direction == LMJ_MACH_RECV) {
++		lmj_ipc_receive(ss, fp, sp, slide);
++	}
++}
++
 +static __attribute__((noinline)) void
 +lmj_svc(thread_t th, const arm_saved_state_t *ss, int trap, bool returning)
 +{
@@ -374,7 +548,8 @@ new file mode 100644
 +		    !lmb_word(LMJ_FB_OUT + slide, 0xaa1d03fd) ||
 +		    !lmb_word(LMJ_UI_IN + slide, 0xd10243ff) ||
 +		    !lmb_word(LMJ_UI_OUT - 4 + slide, 0x95453ec2) ||
-+		    !lmb_word(LMJ_UI_OUT + slide, 0xf85883a8)) {
++		    !lmb_word(LMJ_UI_OUT + slide, 0xf85883a8) ||
++		    (__atomic_load_n(&lmj_config, __ATOMIC_RELAXED) == 3 && !lmj_ipc_abi(slide))) {
 +			lmj_live.diag = ENOEXEC;
 +		} else {
 +			lmj_program(th, LMJ_FB_IN + slide);
@@ -391,11 +566,15 @@ new file mode 100644
 +	}
 +	if (returning) {
 +		if (lmj_live.pending) {
++			lmj_ipc_svc(ss, trap, true);
 +			lmj_live.pending = 0;
 +			lmj_publish();
 +		}
 +		return;
 +	}
++	lmj_live.ipc.reply = 0;
++	lmj_send.trap_frame = 0;
++	lmj_ipc_svc(ss, trap, false);
 +	lmj_live.pending = 1;
 +	lmj_live.trap = trap;
 +	lmj_live.wait_at = lmj_now();
@@ -491,7 +670,7 @@ new file mode 100644
 +	}
 +	const bool stable = row.sequence == __atomic_load_n(&lmj_sequence, __ATOMIC_ACQUIRE);
 +	const bool pending = stable && row.pending;
-+	return (unsigned)snprintf(out, cap,
++	unsigned used = (unsigned)snprintf(out, cap,
 +	    "SB handoff/v1 p%d t%llu s%u e%d at%llu cache%llx main%llx stable%u\n"
 +	    "FB in%llu out%llu lr%llx obj%u UI in%llu out%llu lr%llx argc%u ret%d\n"
 +	    "wait open%u run%d trap%d at%llu pc%llx lr%llx stk%llx/%llx/%llx\n",
@@ -507,6 +686,24 @@ new file mode 100644
 +	    (unsigned long long)(pending ? row.wait_frames[0] : 0),
 +	    (unsigned long long)(pending ? row.wait_frames[1] : 0),
 +	    (unsigned long long)(pending ? row.wait_frames[2] : 0));
++	if (!pending || !row.ipc.reply || used >= cap) {
++		return used;
++	}
++	const struct lmj_ipc *ipc = &row.ipc;
++	used += (unsigned)snprintf(out + used, cap - used,
++	    "SB ipc/v1 reply%x sync%x hdr%u id%d remote%x local%x pair%u sret%u/%x opt%x\n"
++	    "caller%u", ipc->reply, ipc->sync_port, ipc->header, (int32_t)ipc->id,
++	    ipc->remote, ipc->header_reply, ipc->matched, ipc->send_returned, ipc->send_msgr,
++	    ipc->send_options, ipc->depth);
++	for (unsigned i = 0; i < ipc->depth && used < cap; ++i) {
++		used += (unsigned)snprintf(out + used, cap - used, " %llx",
++		    (unsigned long long)ipc->callers[i]);
++	}
++	if (used + 1 < cap) {
++		out[used++] = '\n';
++		out[used] = '\0';
++	}
++	return used;
 +}
 +
 +/* Recover only the exact already-observed 21H461 wrapper chain at its Mach
@@ -1140,4 +1337,3 @@ new file mode 100644
 +	    (unsigned)(row.mach_in != 0), (unsigned)(row.mach_out != 0), (unsigned)row.mach_status, (unsigned long long)(mms / UINT64_C(1000000)),
 +	    (unsigned long long)row.ready_seconds, row.chain_checked, row.chain_depth);
 +}
-+

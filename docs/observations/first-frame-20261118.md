@@ -122,3 +122,28 @@ Run 44416270360 confirmed the BKS shell initializer returned a nonnull object in
 The 21H461 SpringBoard executable branches into `_SBSystemAppMain`. Its call at `0x1cfa38d5c` targets `_FBSystemShellInitialize` and returns to `0x1cfa38d60`. Its call at `0x1cfa38df0` targets `UIApplicationMain` and returns to `0x1cfa38df4`. The former returns an Objective-C object. The latter takes argc, argv and two class names and returns an integer.
 
 The boot argument `lmipro-frontboard-boundaries=1` selects the paired handoff observer. `SB handoff/v1` reports stages 0 through 5 for no confirmed arm, arm, FrontBoard entry, FrontBoard return, UIKit entry and UIKit return. The two pairs carry observed caller addresses and millisecond timestamps. A stable pending syscall accompanied by state 3 or 4 records the sampled user-side wait location, with up to three saved callers. A dropped or raced snapshot suppresses the pending result. An arm without an observed entry is inconclusive.
+
+Run 44439589463 captured the main thread waiting at the ARMv8.1 libdispatch
+receive call at `0x18f589534` before FrontBoard returned. The saved stack ends
+at libdispatch. The separate LaunchServices sample belongs to a port-reference
+operation and does not identify the outstanding request.
+
+The opt-in `lmipro-frontboard-boundaries=2` mode adds one `SB ipc/v1` record to
+that existing checkpoint. It requires the matching 21H461 cache, verified
+instructions and exact wait stack while the FrontBoard boundary remains open.
+The `caller` values continue the live frame chain above libdispatch. They are
+runtime return addresses. Subtract the cache slide and four bytes to find each
+call instruction.
+
+`reply` is the Mach receive name. `sync` is the destination name supplied for
+synchronous priority inheritance, when present. `pair1` establishes an observed
+send-only trap on the same call frame and dispatch message object, with the
+matching message ID and reply port.
+Its `id`, `remote` and `local` are the arguments submitted to Mach.
+`sret1/<status>` records the inline send attempt's kernel result. For an
+unpaired send, `hdr1` means those three fields are a user-side header snapshot
+with a matching reply port. A deferred send may have run on another thread.
+Its transport result, receiver identity and delivery remain unknown. A
+successful inline send alone does not prove server receipt or reply delivery.
+
+No functional fix or new boot image has been made for this request.

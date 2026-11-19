@@ -48,7 +48,8 @@ static struct task task;
 static struct thread th;
 static struct proc proc;
 static arm_debug_state_t deb;
-static bool enabled, bad_word, bad_right, display_case, handoff_enabled;
+static bool enabled, bad_word, bad_right, display_case;
+static unsigned handoff_mode;
 static unsigned from_seconds, seconds, reads, name_reads, right_checks;
 static uint64_t tick;
 static uint32_t fixture_port;
@@ -58,8 +59,8 @@ static struct {int num_breakpoint_pairs;} caps = {2};
 static unsigned PE_parse_boot_argn(const char *name,void *dst,unsigned n) {
     if(!strcmp(name,"lmipro-frontboard-boundaries")) {
         assert(n==sizeof(unsigned));
-        *(unsigned *)dst=handoff_enabled ? 1 : 0;
-        return handoff_enabled;
+        *(unsigned *)dst=handoff_mode;
+        return handoff_mode != 0;
     }
     assert(!strcmp(name,"lmipro-bootstrap-at") && n==sizeof(unsigned));
     *(unsigned *)dst=from_seconds; return enabled;
@@ -120,6 +121,16 @@ static int copyin(user_addr_t a,void *out,size_t n) {
     else if(a==0x18a4637d4ULL)op=0xd10243ff;
     else if(a==0x1cfa38df0ULL)op=0x95453ec2;
     else if(a==0x1cfa38df4ULL)op=0xf85883a8;
+    else if(a==0x1cb780b54ULL)op=0xd4001001;
+    else if(a==0x1cb784220ULL)op=0x97fff24c;
+    else if(a==0x1cb7841e8ULL)op=0xa9044ff4;
+    else if(a==0x18f58cf68ULL)op=0x954bd9c6;
+    else if(a==0x18f58cc00ULL)op=0xaa0103f4;
+    else if(a==0x18f589440ULL)op=0x97ffff00;
+    else if(a==0x18f589534ULL)op=0x954be850;
+    else if(a==0x18f589428ULL)op=0xa932d7bf;
+    else if(a==0x18f589398ULL)op=0xb9404828;
+    else if(a==0x18f5893a8ULL)op=0xf9400269;
     else if(a+task.task_shared_region_slide==0x5000) {op=fixture_port;++reads;}
     else return EFAULT;
     if(n!=4)return EFAULT;
@@ -367,7 +378,7 @@ int main(void) {
     lmipro_bootstrap_report(buf,sizeof(buf));
     assert(strstr(buf,"LS store/v1 s4 e0 trap1/0 xpc1 store1 db1"));
     /* Arm at a qualifying dyld syscall return and pair the two live frames. */
-    handoff_enabled=true;lmj_config=0;
+    handoff_mode=1;lmj_config=0;
     arm_saved_state_t app={.sp=0x9100,.fp=0x9150};
     lmipro_bootstrap_svc(&th,&app,1,true);
     assert(lmj_live.stage==LMJ_ARMED && lmb_owned(&th,LMJ_FB_IN+slide));
@@ -394,6 +405,59 @@ int main(void) {
     assert(lmipro_bootstrap_break(&th,&app) && lmj_live.stage==LMJ_UI_RETURNED && lmj_live.ui_result==-1);
     assert(lmj_live.fb_in<lmj_live.fb_out && lmj_live.fb_out<lmj_live.ui_in && lmj_live.ui_in<lmj_live.ui_out);
     assert(!th.machine.DebugData);
+
+    /* Pin the original send-only Mach call and a distinct receive. */
+    handoff_mode=2;lmj_config=lmj_claim=0;
+    lmj_live=(struct lmj_record){0};lmj_send=(struct lmj_send){0};
+    memset(user_stack,0,sizeof(user_stack));
+    app.pc=0;app.lr=0;
+    lmipro_bootstrap_svc(&th,&app,1,true);
+    assert(lmj_live.stage==LMJ_ARMED && lmj_config==3);
+    app.pc=LMJ_FB_IN+slide;app.lr=LMJ_FB_OUT+slide;
+    assert(lmipro_bootstrap_break(&th,&app));
+    const uint32_t reply=0x1203, remote=0x2103, id=40122, failure=0x10000004;
+    const uint64_t message=0x9200, dispatch_frame=0x9050;
+    arm_saved_state_t send={.sp=0x8d00,.fp=0x8d50,.pc=LMB_MACH2+slide,.lr=LMJ_MACH2_RETURN+slide};
+    send.x[1]=LMJ_MACH_SEND;send.x[3]=((uint64_t)reply<<32)|remote;send.x[4]=(uint64_t)id<<32;
+    stack_word(send.fp-0x10,message);
+    stack_word(0x8d50,0x8e40);stack_word(0x8d58,LMJ_DISPATCH_SEND_TRAP_RETURN+slide);
+    stack_word(0x8e40,0x8e80);stack_word(0x8e48,0x18f58919cULL+slide);
+    stack_word(0x8e80,dispatch_frame);stack_word(0x8e88,LMJ_DISPATCH_SEND_RETURN+slide);
+    lmipro_bootstrap_svc(&th,&send,-47,false);
+    assert(lmj_send.frame==dispatch_frame && lmj_send.message==message && !lmj_send.returned);
+    send.x[0]=failure;
+    lmipro_bootstrap_svc(&th,&send,-47,true);
+    send.x[0]=0;
+    lmipro_bootstrap_svc(&th,&send,-47,true);
+    assert(lmj_send.returned && lmj_send.result==failure);
+    arm_saved_state_t recv={.sp=0x8d00,.fp=0x8d70,.pc=LMB_MACH2+slide,.lr=LMJ_MACH2_RETURN+slide};
+    recv.x[1]=LMJ_MACH_RECV|LMJ_RCV_SYNC_WAIT;recv.x[3]=remote;recv.x[5]=(uint64_t)reply<<32;
+    stack_word(0x8d70,0x8db0);stack_word(0x8d78,0x1cb7841b0ULL+slide);
+    stack_word(0x8db0,0x8de0);stack_word(0x8db8,0x1cb783fb8ULL+slide);
+    stack_word(0x8de0,dispatch_frame);stack_word(0x8de8,LMJ_DISPATCH_RECV_RETURN+slide);
+    stack_word(dispatch_frame-0xd0,message);
+    uint32_t sent_header[6]={0,24,remote,reply,0,id};
+    memcpy(user_stack+(message+0x58-0x8d00),sent_header,sizeof(sent_header));
+    stack_word(dispatch_frame,0x9080);stack_word(dispatch_frame+8,0x18f5898d4ULL+slide);
+    stack_word(0x9080,0x90c0);stack_word(0x9088,0x1dd6736f0ULL+slide);
+    lmipro_bootstrap_svc(&th,&recv,-47,false);
+    assert(lmj_live.ipc.matched && lmj_live.ipc.send_returned && lmj_live.ipc.send_msgr==failure);
+    assert(lmj_live.ipc.id==id && lmj_live.ipc.remote==remote && lmj_live.ipc.reply==reply);
+    assert(lmj_live.ipc.depth==2 && lmj_live.ipc.callers[1]==0x1dd6736f0ULL+slide);
+    lmipro_bootstrap_report(buf,sizeof(buf));
+    assert(strstr(buf,"reply1203 sync2103 hdr1 id40122 remote2103 local1203 pair1 sret1/10000004"));
+    lmipro_bootstrap_svc(&th,&recv,-47,true);
+    assert(!lmj_send.frame);
+    /* Reused frame and port may report a header, never the old send. */
+    uint32_t new_header[6]={0,24,remote+1,reply,0,id+1};
+    memcpy(user_stack+(message+0x58-0x8d00),new_header,sizeof(new_header));
+    lmipro_bootstrap_svc(&th,&recv,-47,false);
+    assert(lmj_live.ipc.header && !lmj_live.ipc.matched && !lmj_live.ipc.send_returned);
+    assert(lmj_live.ipc.id==id+1 && lmj_live.ipc.remote==remote+1);
+    lmipro_bootstrap_svc(&th,&recv,-47,true);
+    stack_word(0x8de8,LMJ_DISPATCH_RECV_RETURN+slide+4);
+    lmipro_bootstrap_svc(&th,&recv,-47,false);
+    assert(!lmj_live.ipc.reply);
     puts("PASS: exact XNU probe body: opt-in/ABI gates, original IPC results, shell and LaunchServices return pairing");
 }
 '''
