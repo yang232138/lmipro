@@ -48,7 +48,7 @@ static struct task task;
 static struct thread th;
 static struct proc proc;
 static arm_debug_state_t deb;
-static bool enabled, bad_word, bad_right, display_case;
+static bool enabled, bad_word, bad_right, display_case, handoff_enabled;
 static unsigned from_seconds, seconds, reads, name_reads, right_checks;
 static uint64_t tick;
 static uint32_t fixture_port;
@@ -56,6 +56,11 @@ static uint8_t user_stack[0x700];
 static struct {int num_breakpoint_pairs;} caps = {2};
 #define arm_debug_info() (&caps)
 static unsigned PE_parse_boot_argn(const char *name,void *dst,unsigned n) {
+    if(!strcmp(name,"lmipro-frontboard-boundaries")) {
+        assert(n==sizeof(unsigned));
+        *(unsigned *)dst=handoff_enabled ? 1 : 0;
+        return handoff_enabled;
+    }
     assert(!strcmp(name,"lmipro-bootstrap-at") && n==sizeof(unsigned));
     *(unsigned *)dst=from_seconds; return enabled;
 }
@@ -109,6 +114,12 @@ static int copyin(user_addr_t a,void *out,size_t n) {
     else if(a==0x187cd3cc4ULL)op=0xaa0003fb;
     else if(a==0x187c8d2d4ULL)op=0x340009e0;
     else if(a==0x187c8d2f0ULL)op=0xaa0003f8;
+    else if(a==0x1a70f830cULL)op=0xd10303ff;
+    else if(a==0x1cfa38d5cULL)op=0x95453a0a;
+    else if(a==0x1cfa38d60ULL)op=0xaa1d03fd;
+    else if(a==0x18a4637d4ULL)op=0xd10243ff;
+    else if(a==0x1cfa38df0ULL)op=0x95453ec2;
+    else if(a==0x1cfa38df4ULL)op=0xf85883a8;
     else if(a+task.task_shared_region_slide==0x5000) {op=fixture_port;++reads;}
     else return EFAULT;
     if(n!=4)return EFAULT;
@@ -355,6 +366,34 @@ int main(void) {
     assert(lmipro_bootstrap_break(&th,&ls) && lmb_live.ls_stage==4 && !th.machine.DebugData);
     lmipro_bootstrap_report(buf,sizeof(buf));
     assert(strstr(buf,"LS store/v1 s4 e0 trap1/0 xpc1 store1 db1"));
+    /* Arm at a qualifying dyld syscall return and pair the two live frames. */
+    handoff_enabled=true;lmj_config=0;
+    arm_saved_state_t app={.sp=0x9100,.fp=0x9150};
+    lmipro_bootstrap_svc(&th,&app,1,true);
+    assert(lmj_live.stage==LMJ_ARMED && lmb_owned(&th,LMJ_FB_IN+slide));
+    app.pc=LMJ_FB_IN+slide;app.lr=LMJ_FB_OUT+slide;
+    assert(lmipro_bootstrap_break(&th,&app) && lmj_live.stage==LMJ_FB_ENTERED);
+    arm_saved_state_t wait=app;
+    wait.pc=LMB_MACH2+slide;wait.lr=0x1cb7841b0ULL+slide;
+    stack_word(0x9150,0x9170);stack_word(0x9158,0x1cb783fb8ULL+slide);
+    stack_word(0x9170,0);stack_word(0x9178,0x1dd68b7ecULL+slide);
+    lmipro_bootstrap_svc(&th,&wait,-47,false);
+    lmipro_bootstrap_report(buf,sizeof(buf));
+    assert(strstr(buf,"SB handoff/v1") && strstr(buf,"wait open1 run3 trap-47"));
+    assert(lmj_live.wait_frames[0]==0x1cb783fb8ULL+slide);
+    lmb_guard=1;
+    lmipro_bootstrap_svc(&th,&wait,-47,true);
+    lmb_guard=0;
+    lmipro_bootstrap_report(buf,sizeof(buf));
+    assert(strstr(buf,"stable0") && strstr(buf,"wait open0 run-1"));
+    app.pc=LMJ_FB_OUT+slide;app.x[0]=0x4000;
+    assert(lmipro_bootstrap_break(&th,&app) && lmj_live.stage==LMJ_FB_RETURNED && lmj_live.object);
+    app.pc=LMJ_UI_IN+slide;app.lr=LMJ_UI_OUT+slide;app.x[0]=2;
+    assert(lmipro_bootstrap_break(&th,&app) && lmj_live.stage==LMJ_UI_ENTERED && lmj_live.argc==2);
+    app.pc=LMJ_UI_OUT+slide;app.x[0]=(uint32_t)-1;
+    assert(lmipro_bootstrap_break(&th,&app) && lmj_live.stage==LMJ_UI_RETURNED && lmj_live.ui_result==-1);
+    assert(lmj_live.fb_in<lmj_live.fb_out && lmj_live.fb_out<lmj_live.ui_in && lmj_live.ui_in<lmj_live.ui_out);
+    assert(!th.machine.DebugData);
     puts("PASS: exact XNU probe body: opt-in/ABI gates, original IPC results, shell and LaunchServices return pairing");
 }
 '''

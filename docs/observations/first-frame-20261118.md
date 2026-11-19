@@ -114,3 +114,11 @@ The matched return address `0x1a2bf5ef4` resolves to `-[BKSSystemShellService in
 Run 44408703079 observed the nonnull BKS shell initializer return at second 204, to `-[FBSystemShell _initWithOptions:] + 0x2fc` in 21H461. The SpringBoard main thread ran later and the sample at second 334 resolved to `mach_port_mod_refs` inside `-[NSXPCConnection initWithListenerEndpoint:]`, called by `_LSCopyServerStore`. The trap returned zero. The XPC object, store response and database creation remained unobserved, and no swap or copied frame was observed by 600 seconds.
 
 The next checkpoint follows one live call for the same main thread after a successful shell initializer. It matches the observed Mach trap stack and verifies the three paired return sites. In `LS store/v1`, stage 1 records the matched reference-count operation, stage 2 the XPC constructor result, stage 3 the boolean store return, and stage 4 the database object. Interpret the result fields only once their corresponding stage has been reported.
+
+### FrontBoard-to-UIKit handoff
+
+Run 44416270360 confirmed the BKS shell initializer returned a nonnull object into `-[FBSystemShell _initWithOptions:]`. The LaunchServices observer never matched. The same-second main-thread sample was a bootstrap Mach trap with a successful transport return. It retained no service or wrapper result.
+
+The 21H461 SpringBoard executable branches into `_SBSystemAppMain`. Its call at `0x1cfa38d5c` targets `_FBSystemShellInitialize` and returns to `0x1cfa38d60`. Its call at `0x1cfa38df0` targets `UIApplicationMain` and returns to `0x1cfa38df4`. The former returns an Objective-C object. The latter takes argc, argv and two class names and returns an integer.
+
+The boot argument `lmipro-frontboard-boundaries=1` selects the paired handoff observer. `SB handoff/v1` reports stages 0 through 5 for no confirmed arm, arm, FrontBoard entry, FrontBoard return, UIKit entry and UIKit return. The two pairs carry observed caller addresses and millisecond timestamps. A stable pending syscall accompanied by state 3 or 4 records the sampled user-side wait location, with up to three saved callers. A dropped or raced snapshot suppresses the pending result. An arm without an observed entry is inconclusive.

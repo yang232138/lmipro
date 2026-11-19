@@ -98,7 +98,7 @@ diff --git a/osfmk/arm64/lmipro_bootstrap_probe.h b/osfmk/arm64/lmipro_bootstrap
 new file mode 100644
 --- /dev/null
 +++ b/osfmk/arm64/lmipro_bootstrap_probe.h
-@@ -0,0 +1,794 @@
+@@ -0,0 +1,1042 @@
 +/* Opt-in one-shot lookup probe for the pinned 21H461 ARM64 cache.
 + * Uses the existing XNU per-thread debug state machinery. No writes to EL0
 + * memory, changes to saved registers, debug entitlements, or IPC semantics. */
@@ -270,6 +270,244 @@ new file mode 100644
 +extern uint64_t lmipro_ui_stack_seconds(void);
 +bool lmipro_bootstrap_debug_allowed(void);
 +thread_t lmipro_bootstrap_report_thread(int, uint64_t);
++
++/* Exact 21H461 _SBSystemAppMain call/return pairs. */
++#define LMJ_FB_IN  UINT64_C(0x1a70f830c)
++#define LMJ_FB_OUT UINT64_C(0x1cfa38d60)
++#define LMJ_UI_IN  UINT64_C(0x18a4637d4)
++#define LMJ_UI_OUT UINT64_C(0x1cfa38df4)
++enum { LMJ_NONE, LMJ_ARMED, LMJ_FB_ENTERED, LMJ_FB_RETURNED, LMJ_UI_ENTERED, LMJ_UI_RETURNED };
++struct lmj_record {
++	unsigned sequence, stage, slide, object, argc, pending;
++	int pid, diag, ui_result, trap;
++	uint64_t tid, main, ready, fb_in, fb_out, fb_lr, ui_in, ui_out, ui_lr;
++	uint64_t wait_at, wait_pc, wait_lr, wait_frames[3];
++};
++static struct lmj_record lmj_live, lmj_snapshot;
++static unsigned lmj_config, lmj_claim, lmj_sequence;
++static uint64_t lmj_sp, lmj_fp;
++
++static bool
++lmj_enabled(void)
++{
++	unsigned config = __atomic_load_n(&lmj_config, __ATOMIC_ACQUIRE);
++	if (!config) {
++		unsigned value = 0;
++		config = PE_parse_boot_argn("lmipro-frontboard-boundaries", &value, sizeof(value)) &&
++		    value == 1 ? 2 : 1;
++		__atomic_store_n(&lmj_config, config, __ATOMIC_RELEASE);
++	}
++	return config == 2;
++}
++
++static uint64_t
++lmj_now(void)
++{
++	uint64_t ns;
++	absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
++	return ns / UINT64_C(1000000);
++}
++
++static void
++lmj_publish(void)
++{
++	/* A concurrent reader must never treat a dropped return as a pending call. */
++	lmj_live.sequence = __atomic_add_fetch(&lmj_sequence, 1, __ATOMIC_RELEASE);
++	if (__sync_bool_compare_and_swap(&lmb_guard, 0, 1)) {
++		lmj_snapshot = lmj_live;
++		__sync_lock_release(&lmb_guard);
++	}
++}
++
++static void
++lmj_program(thread_t th, uint64_t pc)
++{
++	arm_debug_state_t *previous = lmb_owner;
++	lmj_live.diag = lmb_set(th, pc, 0);
++	if (lmj_live.diag) {
++		if (previous && th->machine.DebugData == previous) {
++			(void)lmb_set(th, 0, 0);
++		}
++		lmb_owner = NULL;
++		return;
++	}
++	lmb_owner = th->machine.DebugData;
++	if (pc && !lmb_owned(th, pc)) {
++		lmj_live.diag = EIO;
++		(void)lmb_set(th, 0, 0);
++		lmb_owner = NULL;
++	}
++}
++
++static __attribute__((noinline)) void
++lmj_svc(thread_t th, const arm_saved_state_t *ss, int trap, bool returning)
++{
++	if (!(thread_get_tag(th) & THREAD_TAG_MAINTHREAD)) {
++		return;
++	}
++	if (!__atomic_load_n(&lmj_claim, __ATOMIC_ACQUIRE)) {
++		if (!lmb_can_read()) {
++			return;
++		}
++		char name[17] = {};
++		proc_selfname(name, sizeof(name));
++		task_t task = current_task();
++		const uint32_t slide = task->task_shared_region_slide;
++		if (strcmp(name, "SpringBoard") || slide == UINT32_MAX || (slide & 0xfff) ||
++		    memcmp(task->task_shared_region_uuid, lmb_uuid, sizeof(lmb_uuid))) {
++			return;
++		}
++		unsigned empty = 0;
++		if (!__atomic_compare_exchange_n(&lmj_claim, &empty, 1, false,
++		    __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
++			return;
++		}
++		lmj_live.pid = proc_selfpid();
++		lmj_live.tid = thread_tid(th);
++		lmj_live.slide = slide;
++		lmj_live.main = task->mach_header_vm_address;
++		lmj_live.ready = lmj_now();
++		if (!lmipro_bootstrap_debug_allowed() || th->machine.DebugData) {
++			lmj_live.diag = EPERM;
++		} else if (!lmb_word(LMJ_FB_IN + slide, 0xd10303ff) ||
++		    !lmb_word(LMJ_FB_OUT - 4 + slide, 0x95453a0a) ||
++		    !lmb_word(LMJ_FB_OUT + slide, 0xaa1d03fd) ||
++		    !lmb_word(LMJ_UI_IN + slide, 0xd10243ff) ||
++		    !lmb_word(LMJ_UI_OUT - 4 + slide, 0x95453ec2) ||
++		    !lmb_word(LMJ_UI_OUT + slide, 0xf85883a8)) {
++			lmj_live.diag = ENOEXEC;
++		} else {
++			lmj_program(th, LMJ_FB_IN + slide);
++			if (!lmj_live.diag) {
++				lmj_live.stage = LMJ_ARMED;
++			}
++		}
++		lmj_publish();
++		return;
++	}
++	if (lmj_live.tid != thread_tid(th) || lmj_live.pid != proc_selfpid() ||
++	    !lmj_live.stage || lmj_live.stage == LMJ_UI_RETURNED || lmj_live.diag) {
++		return;
++	}
++	if (returning) {
++		if (lmj_live.pending) {
++			lmj_live.pending = 0;
++			lmj_publish();
++		}
++		return;
++	}
++	lmj_live.pending = 1;
++	lmj_live.trap = trap;
++	lmj_live.wait_at = lmj_now();
++	lmj_live.wait_pc = get_saved_state_pc(ss);
++	lmj_live.wait_lr = get_saved_state_lr(ss);
++	memset(lmj_live.wait_frames, 0, sizeof(lmj_live.wait_frames));
++	if (lmb_can_read()) {
++		uint64_t fp = get_saved_state_fp(ss), sp = get_saved_state_sp(ss);
++		for (unsigned i = 0; i < sizeof(lmj_live.wait_frames) / sizeof(lmj_live.wait_frames[0]); ++i) {
++			uint64_t frame[2];
++			if ((fp & 15) || fp < sp || fp - sp > 0x8000 || !lmb_ptr(fp, sizeof(frame)) ||
++			    copyin((user_addr_t)fp, frame, sizeof(frame)) || (frame[1] & 3) ||
++			    !lmb_ptr(frame[1], sizeof(uint32_t))) {
++				break;
++			}
++			lmj_live.wait_frames[i] = frame[1];
++			if (frame[0] <= fp) {
++				break;
++			}
++			fp = frame[0];
++		}
++	}
++	lmj_publish();
++}
++
++static __attribute__((noinline)) bool
++lmj_break(thread_t th, const arm_saved_state_t *ss)
++{
++	const uint64_t pc = get_saved_state_pc(ss);
++	if (lmj_live.tid != thread_tid(th) || !lmb_owned(th, pc)) {
++		return false;
++	}
++	const uint64_t sp = get_saved_state_sp(ss), fp = get_saved_state_fp(ss);
++	const uint64_t lr = get_saved_state_lr(ss), slide = lmj_live.slide;
++	const uint64_t value = const_saved_state64(ss)->x[0];
++	uint64_t next = 0;
++	if (lmj_live.stage == LMJ_ARMED && pc == LMJ_FB_IN + slide && lr == LMJ_FB_OUT + slide) {
++		lmj_live.fb_in = lmj_now();
++		lmj_live.fb_lr = lr;
++		lmj_sp = sp;
++		lmj_fp = fp;
++		lmj_live.stage = LMJ_FB_ENTERED;
++		next = LMJ_FB_OUT + slide;
++	} else if (lmj_live.stage == LMJ_FB_ENTERED && pc == LMJ_FB_OUT + slide && sp == lmj_sp && fp == lmj_fp) {
++		lmj_live.fb_out = lmj_now();
++		lmj_live.object = value != 0;
++		lmj_live.stage = LMJ_FB_RETURNED;
++		next = LMJ_UI_IN + slide;
++	} else if (lmj_live.stage == LMJ_FB_RETURNED && pc == LMJ_UI_IN + slide && lr == LMJ_UI_OUT + slide &&
++	    sp == lmj_sp && fp == lmj_fp) {
++		lmj_live.ui_in = lmj_now();
++		lmj_live.ui_lr = lr;
++		lmj_live.argc = (uint32_t)value;
++		lmj_live.stage = LMJ_UI_ENTERED;
++		next = LMJ_UI_OUT + slide;
++	} else if (lmj_live.stage == LMJ_UI_ENTERED && pc == LMJ_UI_OUT + slide && sp == lmj_sp && fp == lmj_fp) {
++		lmj_live.ui_out = lmj_now();
++		lmj_live.ui_result = (int)value;
++		lmj_live.stage = LMJ_UI_RETURNED;
++	} else {
++		(void)lmb_set(th, 0, 0);
++		lmb_owner = NULL;
++		lmj_live.diag = EINVAL;
++		lmj_live.pending = 0;
++		lmj_publish();
++		return true;
++	}
++	lmj_live.pending = 0;
++	lmj_program(th, next);
++	lmj_publish();
++	return true;
++}
++
++static __attribute__((noinline)) unsigned
++lmj_report(char *out, unsigned cap)
++{
++	if (!__sync_bool_compare_and_swap(&lmb_guard, 0, 1)) {
++		return (unsigned)snprintf(out, cap, "SB handoff/v1 snapshot busy\n");
++	}
++	struct lmj_record row = lmj_snapshot;
++	__sync_lock_release(&lmb_guard);
++	int run_state = -1;
++	if (row.pending) {
++		thread_t th = lmipro_bootstrap_report_thread(row.pid, row.tid);
++		if (th != THREAD_NULL) {
++			thread_basic_info_data_t basic = {};
++			mach_msg_type_number_t n = THREAD_BASIC_INFO_COUNT;
++			if (thread_info_internal(th, THREAD_BASIC_INFO, (thread_info_t)&basic, &n) == KERN_SUCCESS) {
++				run_state = basic.run_state;
++			}
++			thread_deallocate(th);
++		}
++	}
++	const bool stable = row.sequence == __atomic_load_n(&lmj_sequence, __ATOMIC_ACQUIRE);
++	const bool pending = stable && row.pending;
++	return (unsigned)snprintf(out, cap,
++	    "SB handoff/v1 p%d t%llu s%u e%d at%llu cache%llx main%llx stable%u\n"
++	    "FB in%llu out%llu lr%llx obj%u UI in%llu out%llu lr%llx argc%u ret%d\n"
++	    "wait open%u run%d trap%d at%llu pc%llx lr%llx stk%llx/%llx/%llx\n",
++	    row.pid, (unsigned long long)row.tid, row.stage, row.diag, (unsigned long long)row.ready,
++	    row.pid ? (unsigned long long)(LMB_CACHE + row.slide) : 0ULL,
++	    (unsigned long long)row.main, (unsigned)stable,
++	    (unsigned long long)row.fb_in, (unsigned long long)row.fb_out, (unsigned long long)row.fb_lr,
++	    row.object, (unsigned long long)row.ui_in, (unsigned long long)row.ui_out,
++	    (unsigned long long)row.ui_lr, row.argc, row.ui_result,
++	    (unsigned)pending, pending ? run_state : -1, pending ? row.trap : 0,
++	    (unsigned long long)(pending ? row.wait_at : 0), (unsigned long long)(pending ? row.wait_pc : 0),
++	    (unsigned long long)(pending ? row.wait_lr : 0),
++	    (unsigned long long)(pending ? row.wait_frames[0] : 0),
++	    (unsigned long long)(pending ? row.wait_frames[1] : 0),
++	    (unsigned long long)(pending ? row.wait_frames[2] : 0));
++}
 +
 +/* Recover only the exact already-observed 21H461 wrapper chain at its Mach
 + * trap. The frame of __xpc_interface_routine saves the lookup's x19 (name)
@@ -446,6 +684,10 @@ new file mode 100644
 +static __attribute__((noinline)) void
 +lmipro_bootstrap_svc(thread_t th, arm_saved_state_t *ss, int trap, bool returning)
 +{
++	if (lmj_enabled()) {
++		lmj_svc(th, ss, trap, returning);
++		return;
++	}
 +	const unsigned config = lmb_setting();
 +	if (config <= 1 || !(thread_get_tag(th) & THREAD_TAG_MAINTHREAD)) {
 +		return;
@@ -718,6 +960,9 @@ new file mode 100644
 +static __attribute__((noinline)) bool
 +lmipro_bootstrap_break(thread_t th, const arm_saved_state_t *ss)
 +{
++	if (lmj_enabled()) {
++		return lmj_break(th, ss);
++	}
 +	const uint64_t pc = get_saved_state_pc(ss);
 +	unsigned phase = __atomic_load_n(&lmb_live.phase, __ATOMIC_ACQUIRE);
 +	if (lmb_live.tid != thread_tid(th) || !lmb_owned(th, pc)) {
@@ -808,6 +1053,9 @@ new file mode 100644
 +		return 0;
 +	}
 +	out[0] = 0;
++	if (lmj_enabled()) {
++		return lmj_report(out, cap);
++	}
 +	const unsigned config = lmb_setting();
 +	if (config <= 1) {
 +		return 0;
