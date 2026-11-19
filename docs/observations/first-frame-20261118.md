@@ -200,3 +200,22 @@ result, callback identity, and send result pairing. The validation goal for
 a dedicated boot is to locate the first server milestone that remains open.
 Data volume and database investigation requires evidence that the database
 wait or read actually blocks.
+
+Run 44523044611 reached the checkpoint with `arm13 reject0 setup0 p0 t0`.
+No handler hit was attributed. The linked pthread upcall paths can bypass
+the syscall-return admission used for per-thread breakpoints.
+
+Mode `lmipro-ls-server=2` adds a single matched transport record. The client
+observer verifies the blocking store call and the Foundation selector on the
+21H461 synchronous XPC path. It associates the exact user buffer on the
+SpringBoard main thread with the kernel message created from it. The receiver
+path follows that allocated message before its header is translated into the
+receiver's namespace. The key is cleared when the kernel releases the message.
+The report prints no pointers or payload contents.
+
+`LS wire/v1` stage 1 is client breakpoint installation, 2 is the blocking
+store call, 3 is the matched transport buffer, and 4 is its kernel copy-in.
+`send1` means the original Mach send returned. `recv1` means copyout started
+in the reported process and thread. `recv2` means copyout to that task
+returned, with its original return value. `free1` means the key was
+retired. Later method and reply events need their own matching evidence.

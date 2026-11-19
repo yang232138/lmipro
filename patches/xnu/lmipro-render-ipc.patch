@@ -1,18 +1,20 @@
 --- a/osfmk/ipc/mach_msg.c
 +++ b/osfmk/ipc/mach_msg.c
-@@ -275,6 +275,11 @@
+@@ -275,6 +275,13 @@
   *      MACH_RCV_INVALID_NOTIFY Bad notify port.
   *      MACH_RCV_HEADER_ERROR
   */
 +#if defined(LMIPRO_RENDER_IPC) && LMIPRO_RENDER_IPC
 +extern void lmipro_render_ipc_receive(mach_msg_id_t, int, mach_msg_return_t);
 +extern void lmipro_render_ipc_send(mach_msg_id_t, mach_port_name_t, mach_msg_return_t, unsigned int);
++extern bool lmipro_ls_wire_copyin(uint64_t, uintptr_t);
++extern void lmipro_ls_wire_send_result(unsigned);
 +#endif
 +
  mach_msg_return_t
  mach_msg_receive_results(
  	mach_msg_recv_result_t *msgr_out)
-@@ -347,6 +352,16 @@
+@@ -347,6 +354,16 @@
  	/* auto redeem the voucher in the message */
  	ipc_voucher_receive_postprocessing(kmsg, options);
  
@@ -29,7 +31,7 @@
  	/* Save destination port context for the trailer before copyout */
  	msgr.msgr_context = ikm_header(kmsg)->msgh_remote_port->ip_context;
  
-@@ -376,6 +391,11 @@
+@@ -376,6 +393,11 @@
  		    options, map, mr);
  	}
  	/* kmsg freed */
@@ -41,7 +43,7 @@
  
  out:
  	if (msgr_out) {
-@@ -669,15 +689,32 @@
+@@ -669,15 +691,32 @@
  	mach_msg_return_t mr;
  
  	assert(options & MACH64_SEND_MSG);
@@ -74,7 +76,7 @@
  		return MACH_SEND_TOO_LARGE;
  	}
  	/*
-@@ -686,11 +723,13 @@
+@@ -686,11 +725,13 @@
  	 */
  	if (send_uctx->send_header.msgh_bits & MACH_MSGH_BITS_COMPLEX) {
  		if (send_uctx->send_msg_size < sizeof(mach_msg_user_base_t)) {
@@ -88,7 +90,7 @@
  			return MACH_SEND_MSG_TOO_SMALL;
  		}
  	} else if (send_uctx->send_dsc_count != 0) {
-@@ -701,6 +740,7 @@
+@@ -701,6 +742,7 @@
  		 * since desc_count is passed as its own trap argument.
  		 */
  		assert(options & MACH64_MACH_MSG2);
@@ -96,7 +98,7 @@
  		return MACH_SEND_TOO_LARGE;
  	}
  
-@@ -711,6 +751,7 @@
+@@ -711,6 +753,7 @@
  	kmsg = ipc_kmsg_alloc(send_uctx->send_msg_size, send_uctx->send_aux_size,
  	    send_uctx->send_dsc_count, IPC_KMSG_ALLOC_USER);
  	if (kmsg == IKM_NULL) {
@@ -104,21 +106,90 @@
  		return MACH_SEND_NO_BUFFER;
  	}
  
-@@ -725,6 +766,7 @@
+@@ -725,8 +768,14 @@
  	mr = ipc_kmsg_copyin_from_user(kmsg, send_uctx, space, map, priority, &options);
  	if (mr != MACH_MSG_SUCCESS) {
  		ipc_kmsg_free(kmsg);
 +		LMIPRO_SEND_RESULT(mr);
  		return mr;
  	}
++
++#if defined(LMIPRO_RENDER_IPC) && LMIPRO_RENDER_IPC
++	bool lmipro_ls_wire_sent = send_uctx->send_header.msgh_id == 0x40000000 &&
++	    lmipro_ls_wire_copyin(send_uctx->send_msg_addr, (uintptr_t)kmsg);
++#endif
  
-@@ -735,7 +777,9 @@
+ 	mr = ipc_kmsg_send(kmsg, options, msg_timeout);
+ 
+@@ -735,7 +784,14 @@
  		/* kmsg is freed */
  	}
  
++#if defined(LMIPRO_RENDER_IPC) && LMIPRO_RENDER_IPC
++	if (lmipro_ls_wire_sent) {
++		lmipro_ls_wire_send_result((unsigned)mr);
++	}
++#endif
 +	LMIPRO_SEND_RESULT(mr);
  	return mr;
 +#undef LMIPRO_SEND_RESULT
  }
  
  /*
+--- a/osfmk/ipc/ipc_kmsg.c
++++ b/osfmk/ipc/ipc_kmsg.c
+@@ -1029,10 +1029,28 @@
+  *	Conditions:
+  *		Nothing locked.
+  */
++#if defined(LMIPRO_RENDER_IPC) && LMIPRO_RENDER_IPC
++extern uintptr_t lmipro_ls_wire_message;
++extern void lmipro_ls_wire_copyout(uintptr_t, uint32_t, int);
++extern void lmipro_ls_wire_put(uintptr_t, unsigned);
++extern void lmipro_ls_wire_free(uintptr_t);
++
++static bool
++lmipro_ls_wire_matches(ipc_kmsg_t kmsg)
++{
++	return __atomic_load_n(&lmipro_ls_wire_message, __ATOMIC_ACQUIRE) == (uintptr_t)kmsg;
++}
++#endif
++
+ void
+ ipc_kmsg_free(
+ 	ipc_kmsg_t      kmsg)
+ {
++#if defined(LMIPRO_RENDER_IPC) && LMIPRO_RENDER_IPC
++	if (lmipro_ls_wire_matches(kmsg)) {
++		lmipro_ls_wire_free((uintptr_t)kmsg);
++	}
++#endif
+ 	assert(!IP_VALID(ipc_kmsg_get_voucher_port(kmsg)));
+ 
+ 	KDBG(MACHDBG_CODE(DBG_MACH_IPC, MACH_IPC_KMSG_FREE) | DBG_FUNC_NONE,
+@@ -4330,6 +4348,12 @@
+ 	mach_msg_return_t  mr;
+ 
+ 	dsc_count = ipc_kmsg_validate_signature(kmsg);
++#if defined(LMIPRO_RENDER_IPC) && LMIPRO_RENDER_IPC
++	if (lmipro_ls_wire_matches(kmsg) && map == current_map()) {
++		int sender = (int)ipc_kmsg_get_trailer(kmsg)->msgh_audit.val[5];
++		lmipro_ls_wire_copyout((uintptr_t)kmsg, (uint32_t)hdr->msgh_id, sender);
++	}
++#endif
+ 
+ 	mr = ipc_kmsg_copyout_header(kmsg, hdr, space, option);
+ 	if (mr != MACH_MSG_SUCCESS) {
+@@ -4945,6 +4969,12 @@
+ 	KERNEL_DEBUG_CONSTANT(MACHDBG_CODE(DBG_MACH_IPC, MACH_IPC_KMSG_LINK) | DBG_FUNC_NONE,
+ 	    recv_bufs->recv_msg_addr, VM_KERNEL_ADDRPERM((uintptr_t)kmsg),
+ 	    /* this is on the receive/copyout path */ 1, 0, 0);
++
++#if defined(LMIPRO_RENDER_IPC) && LMIPRO_RENDER_IPC
++	if (lmipro_ls_wire_matches(kmsg)) {
++		lmipro_ls_wire_put((uintptr_t)kmsg, (unsigned)mr);
++	}
++#endif
+ 
+ 	ipc_kmsg_free(kmsg);
+ 
