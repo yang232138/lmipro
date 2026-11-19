@@ -49,7 +49,9 @@ static struct thread th;
 static struct proc proc;
 static arm_debug_state_t deb;
 static bool enabled, bad_word, bad_right, display_case;
-static unsigned handoff_mode;
+static unsigned handoff_mode, server_mode;
+static bool server_process;
+static int server_peer = 27;
 static unsigned from_seconds, seconds, reads, name_reads, right_checks;
 static uint64_t tick;
 static uint32_t fixture_port;
@@ -57,6 +59,11 @@ static uint8_t user_stack[0x700];
 static struct {int num_breakpoint_pairs;} caps = {2};
 #define arm_debug_info() (&caps)
 static unsigned PE_parse_boot_argn(const char *name,void *dst,unsigned n) {
+    if(!strcmp(name,"lmipro-ls-server")) {
+        assert(n==sizeof(unsigned));
+        *(unsigned *)dst=server_mode;
+        return server_mode != 0;
+    }
     if(!strcmp(name,"lmipro-frontboard-boundaries")) {
         assert(n==sizeof(unsigned));
         *(unsigned *)dst=handoff_mode;
@@ -65,8 +72,9 @@ static unsigned PE_parse_boot_argn(const char *name,void *dst,unsigned n) {
     assert(!strcmp(name,"lmipro-bootstrap-at") && n==sizeof(unsigned));
     *(unsigned *)dst=from_seconds; return enabled;
 }
-static void proc_selfname(char *out,int n) {snprintf(out,n,"SpringBoard");}
-static int proc_selfpid(void) {return 27;}
+static void proc_selfname(char *out,int n) {snprintf(out,n,"%s",server_process?"lsd":"SpringBoard");}
+static int proc_selfpid(void) {return server_process?52:27;}
+void proc_name(int pid,char *out,int n) {snprintf(out,n,"%s",pid==server_peer?"SpringBoard":"other");}
 static uint64_t thread_tid(thread_t t) {return t==&th ? 295 : 296;}
 static unsigned thread_get_tag(thread_t t) {return t==&th ? THREAD_TAG_MAINTHREAD : 0;}
 static task_t current_task(void) {return &task;}
@@ -131,6 +139,25 @@ static int copyin(user_addr_t a,void *out,size_t n) {
     else if(a==0x18f589428ULL)op=0xa932d7bf;
     else if(a==0x18f589398ULL)op=0xb9404828;
     else if(a==0x18f5893a8ULL)op=0xf9400269;
+    else if(a==0x187d7c9c8ULL)op=0xd101c3ff;
+    else if(a==0x187d7cad4ULL)op=0x94017ec3;
+    else if(a==0x187d7cb04ULL)op=0x94017eb7;
+    else if(a==0x187d7cad8ULL)op=0x9573d754;
+    else if(a==0x187d7cb08ULL)op=0x9573d748;
+    else if(a==0x187d7ca84ULL)op=0x97fd2386;
+    else if(a==0x187cc6c3cULL)op=0xaa0003f6;
+    else if(a==0x187cc6d20ULL || a==0x187cc6da4ULL || a==0x187cc6dc0ULL)op=0xd63f0100;
+    else if(a==0x186e7ccbcULL)op=0x95afc894;
+    else if(a==0x186ed0a84ULL)op=0x95ae7922;
+    else if(a==0x1ed7731b4ULL)op=8;
+    else if(a==0x186ed7614ULL)op=0x91009008;
+    else if(a==0x186ed761cULL)op=0x37300068;
+    else if(a==0x186ed7620ULL)op=0xf9400400;
+    else if(a==0x1dd67418cULL)op=0xb9407660;
+    else if(a==0x1dd679aa0ULL)op=0xb9401c08;
+    else if(a==0x1dd679ab8ULL)op=0x91018013;
+    else if(a==0x1dd6677d4ULL)op=0x39404008;
+    else if(a==0x1dd6677dcULL)op=0xb9400008;
     else if(a+task.task_shared_region_slide==0x5000) {op=fixture_port;++reads;}
     else return EFAULT;
     if(n!=4)return EFAULT;
@@ -458,7 +485,56 @@ int main(void) {
     stack_word(0x8de8,LMJ_DISPATCH_RECV_RETURN+slide+4);
     lmipro_bootstrap_svc(&th,&recv,-47,false);
     assert(!lmj_live.ipc.reply);
-    puts("PASS: exact XNU probe body: opt-in/ABI gates, original IPC results, shell and LaunchServices return pairing");
+    /* Select only the SpringBoard peer and record one bounded server reply. */
+    assert(lmb_set(&th,0,0)==0);
+    lsr_config=0;server_mode=1;server_process=true;
+    memset(user_stack,0,sizeof(user_stack));
+    arm_saved_state_t server={.pc=LSR_ENTRY+slide,.sp=0x8d00,.fp=0x8d20};
+    const uint32_t server_reply=0x706, reply_id=0x40000000;
+    server.x[0]=0x8e00;server.x[2]=0x9100;
+    stack_word(0x8e08,0x8f00);stack_word(0x8f08,0x9000);
+    stack_word(0x9074,28);
+    stack_word(0x9110,0x186ed0e20ULL+slide);
+    lmipro_bootstrap_svc(&th,&server,-47,true);
+    assert(lmipro_bootstrap_break(&th,&server) && !lsr_selected && !th.machine.DebugData);
+    stack_word(0x9074,27);
+    lmipro_bootstrap_svc(&th,&server,-47,true);
+    assert(lmipro_bootstrap_break(&th,&server) && lsr_live.peer==27 && lsr_live.pid==52);
+    server.pc=LSR_SEED_WAIT+slide;server.x[1]=UINT64_MAX;
+    assert(lmipro_bootstrap_break(&th,&server) && lsr_live.wait_in && !lsr_live.wait_out);
+    server.pc+=4;server.x[0]=0;
+    assert(lmipro_bootstrap_break(&th,&server) && lsr_live.wait_out);
+    server.pc=LSR_SYNC_READ+slide;
+    assert(lmipro_bootstrap_break(&th,&server) && lsr_live.sync_read && !lsr_live.read);
+    server.pc=LSR_COPY_RETURN+slide;server.x[0]=0x9300;
+    assert(lmipro_bootstrap_break(&th,&server) && lsr_live.read && lsr_live.database);
+    server.pc=0x186ed0e20ULL+slide;server.lr=0x187cc6d24ULL+slide;
+    server.x[0]=0x9100;server.x[1]=0x9300;server.x[2]=0x9400;server.x[3]=0;
+    assert(lmipro_bootstrap_break(&th,&server) && lsr_live.callback && lsr_live.arguments==3);
+    server.pc=LSR_XPC_FULL+slide;server.x[0]=0x9000;server.x[1]=0x9200;
+    stack_word(0x921c,2);stack_word(0x9260,server_reply);
+    assert(lmipro_bootstrap_break(&th,&server) && lsr_live.handoff && lsr_live.reply_port==server_reply);
+    assert(!th.machine.DebugData && !lsr_live.mach_in);
+    server.pc=LMB_MACH2+slide;
+    server.x[1]=LMJ_MACH_SEND;server.x[2]=LSR_MOVE_SEND_ONCE;
+    server.x[3]=server_reply+1;server.x[4]=(uint64_t)reply_id<<32;
+    lmipro_bootstrap_svc(&th,&server,-47,false);
+    assert(!lsr_live.mach_in);
+    server.x[3]=server_reply;
+    lmipro_bootstrap_svc(&th,&server,-47,false);
+    assert(lsr_live.mach_in && !lsr_live.mach_out && lsr_live.mach_id==reply_id);
+    server.fp+=16;
+    lmipro_bootstrap_svc(&th,&server,-47,true);
+    assert(!lsr_live.mach_out);
+    server.fp-=16;server.x[0]=failure;
+    lmipro_bootstrap_svc(&th,&server,-47,true);
+    server.x[0]=0;
+    lmipro_bootstrap_svc(&th,&server,-47,true);
+    assert(lsr_live.mach_out && lsr_live.mach_result==failure);
+    assert(lsr_report(buf,sizeof(buf))<sizeof(buf));
+    assert(strstr(buf,"seed 1/1 ret0 manual0 read1/1 db1 cb1 args3"));
+    assert(strstr(buf,"reply xpc1 port706 mach1/1 ret10000004 id40000000"));
+    puts("PASS: bootstrap, handoff, and bounded LaunchServices server transaction");
 }
 '''
 with tempfile.TemporaryDirectory() as directory:

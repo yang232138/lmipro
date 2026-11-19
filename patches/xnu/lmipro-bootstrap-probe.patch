@@ -98,7 +98,7 @@ diff --git a/osfmk/arm64/lmipro_bootstrap_probe.h b/osfmk/arm64/lmipro_bootstrap
 new file mode 100644
 --- /dev/null
 +++ b/osfmk/arm64/lmipro_bootstrap_probe.h
-@@ -0,0 +1,1238 @@
+@@ -0,0 +1,1582 @@
 +/* Opt-in one-shot lookup probe for the pinned 21H461 ARM64 cache.
 + * Uses the existing XNU per-thread debug state machinery. No writes to EL0
 + * memory, changes to saved registers, debug entitlements, or IPC semantics. */
@@ -225,12 +225,18 @@ new file mode 100644
 +}
 +
 +static bool
-+lmb_owned(thread_t th, uint64_t pc)
++lmb_owned_by(thread_t th, const arm_debug_state_t *owner, uint64_t pc)
 +{
 +	arm_debug_state_t *d = th->machine.DebugData;
-+	return lmb_owner != NULL && d == lmb_owner && d->dsh.flavor == ARM_DEBUG_STATE64 &&
++	return owner != NULL && d == owner && d->dsh.flavor == ARM_DEBUG_STATE64 &&
 +	    (((d->uds.ds64.bcr[0] & ARM_DBG_CR_ENABLE_ENABLE) && d->uds.ds64.bvr[0] == pc) ||
 +	    ((d->uds.ds64.bcr[1] & ARM_DBG_CR_ENABLE_ENABLE) && d->uds.ds64.bvr[1] == pc));
++}
++
++static bool
++lmb_owned(thread_t th, uint64_t pc)
++{
++	return lmb_owned_by(th, lmb_owner, pc);
 +}
 +
 +static bool
@@ -878,9 +884,341 @@ new file mode 100644
 +	return true;
 +}
 +
++/* One server-side LaunchServices request, using the matched 21H461 cache. */
++#define LSR_ENTRY UINT64_C(0x187d7c9c8)
++#define LSR_MANUAL_WAIT UINT64_C(0x187d7cad4)
++#define LSR_SEED_WAIT UINT64_C(0x187d7cb04)
++#define LSR_SYNC_READ UINT64_C(0x187d7ca84)
++#define LSR_COPY_RETURN UINT64_C(0x187cc6c3c)
++#define LSR_XPC_SHORT UINT64_C(0x186e7ccbc)
++#define LSR_XPC_FULL UINT64_C(0x186ed0a84)
++#define LSR_MOVE_SEND_ONCE 18u
++#define LSR_SLOT_COUNT 16
++
++extern void proc_name(int, char *, int);
++
++struct lsr_slot {
++	uint64_t tid;
++	arm_debug_state_t *owner;
++	unsigned attempts;
++};
++struct lsr_record {
++	uint64_t tid;
++	int pid, peer, error, wait_result;
++	unsigned wait_in, wait_out, manual, sync_read, read, database, callback, arguments;
++	unsigned handoff, mach_in, mach_out, mach_result;
++	uint32_t reply_port, mach_id;
++};
++static struct lsr_slot lsr_slots[LSR_SLOT_COUNT];
++static struct lsr_record lsr_live, lsr_snapshot;
++static unsigned lsr_config, lsr_armed, lsr_unmatched, lsr_setup_error;
++static unsigned lsr_guard, lsr_sequence, lsr_saved_sequence;
++static uint64_t lsr_selected, lsr_slide, lsr_peer_connection, lsr_reply_block, lsr_invoke;
++static uint64_t lsr_wait_pc, lsr_wait_sp, lsr_wait_fp, lsr_mach_fp;
++
++static bool
++lsr_enabled(void)
++{
++	unsigned config = __atomic_load_n(&lsr_config, __ATOMIC_ACQUIRE);
++	if (!config) {
++		unsigned value = 0;
++		config = PE_parse_boot_argn("lmipro-ls-server", &value, sizeof(value)) && value == 1 ? 2 : 1;
++		__atomic_store_n(&lsr_config, config, __ATOMIC_RELEASE);
++	}
++	return config == 2;
++}
++
++static bool
++lsr_verify(uint64_t slide)
++{
++	static const struct { uint64_t address; uint32_t word; } sites[] = {
++		{LSR_ENTRY, 0xd101c3ff}, {LSR_MANUAL_WAIT, 0x94017ec3},
++		{LSR_SEED_WAIT, 0x94017eb7}, {LSR_MANUAL_WAIT + 4, 0x9573d754},
++		{LSR_SEED_WAIT + 4, 0x9573d748}, {LSR_SYNC_READ, 0x97fd2386},
++		{LSR_COPY_RETURN, 0xaa0003f6},
++		{0x187cc6d20, 0xd63f0100}, {0x187cc6da4, 0xd63f0100}, {0x187cc6dc0, 0xd63f0100},
++		{LSR_XPC_SHORT, 0x95afc894}, {LSR_XPC_FULL, 0x95ae7922},
++		{0x1ed7731b4, 8}, {0x186ed7614, 0x91009008},
++		{0x186ed761c, 0x37300068}, {0x186ed7620, 0xf9400400},
++		{0x1dd67418c, 0xb9407660}, {0x1dd679aa0, 0xb9401c08},
++		{0x1dd679ab8, 0x91018013}, {0x1dd6677d4, 0x39404008},
++		{0x1dd6677dc, 0xb9400008}, {LMB_MACH2 - 4, 0xd4001001},
++	};
++	for (unsigned i = 0; i < sizeof(sites) / sizeof(sites[0]); ++i) {
++		if (!lmb_word(sites[i].address + slide, sites[i].word)) {
++			return false;
++		}
++	}
++	return true;
++}
++
++static struct lsr_slot *
++lsr_slot(uint64_t tid, bool claim)
++{
++	for (unsigned i = 0; i < LSR_SLOT_COUNT; ++i) {
++		struct lsr_slot *slot = &lsr_slots[i];
++		uint64_t owner_tid = __atomic_load_n(&slot->tid, __ATOMIC_ACQUIRE);
++		if (owner_tid == tid || (claim && !owner_tid &&
++		    __atomic_compare_exchange_n(&slot->tid, &owner_tid, tid, false,
++		    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))) {
++			return slot;
++		}
++	}
++	return NULL;
++}
++
++static void
++lsr_publish(void)
++{
++	const unsigned seq = __atomic_add_fetch(&lsr_sequence, 1, __ATOMIC_RELEASE);
++	if (__sync_bool_compare_and_swap(&lsr_guard, 0, 1)) {
++		lsr_snapshot = lsr_live;
++		lsr_saved_sequence = seq;
++		__sync_lock_release(&lsr_guard);
++	}
++}
++
++static int
++lsr_program(thread_t th, struct lsr_slot *slot, uint64_t first, uint64_t second)
++{
++	int rc = lmb_set(th, first, second);
++	if (!rc) {
++		slot->owner = first ? th->machine.DebugData : NULL;
++		if (first && (!lmb_owned_by(th, slot->owner, first) ||
++		    (second && !lmb_owned_by(th, slot->owner, second)))) {
++			rc = EIO;
++		}
++	}
++	if (rc && slot->owner && th->machine.DebugData == slot->owner) {
++		(void)lmb_set(th, 0, 0);
++		slot->owner = NULL;
++	}
++	return rc;
++}
++
++static int
++lsr_peer(uint64_t object, uint64_t *peer_connection)
++{
++	uint64_t connection, xpc;
++	uint32_t flags, pid;
++	char name[17] = {};
++	/* Pinned LSDatabaseBlockingFetchClient._connection and Foundation's local XPC path. */
++	if (!lmb_ptr(object, 16) ||
++	    !lmj_ipc_read(object + 8, &connection, sizeof(connection)) ||
++	    !lmb_ptr(connection, 0x28) ||
++	    !lmj_ipc_read(connection + 0x24, &flags, sizeof(flags)) || (flags & (1u << 6)) ||
++	    !lmj_ipc_read(connection + 8, &xpc, sizeof(xpc)) || !lmb_ptr(xpc, 0x78) ||
++	    !lmj_ipc_read(xpc + 0x74, &pid, sizeof(pid)) || pid <= 1 || pid > 0x7fffffff) {
++		return 0;
++	}
++	proc_name((int)pid, name, sizeof(name));
++	name[sizeof(name) - 1] = 0;
++	if (strcmp(name, "SpringBoard")) {
++		return 0;
++	}
++	*peer_connection = xpc;
++	return (int)pid;
++}
++
++static uint64_t
++lsr_reply_invoke(uint64_t block, uint64_t slide)
++{
++	static const uint64_t sites[] = {
++		0x186ece3e4, 0x186ed061c, 0x186ed06d0, 0x186ed078c, 0x186ed0848,
++		0x186ed0908, 0x186ed0acc, 0x186ed0ca8, 0x186ed0e20, 0x186ed0fbc,
++	};
++	uint64_t invoke;
++	if (!lmb_ptr(block, 24) || !lmj_ipc_read(block + 16, &invoke, sizeof(invoke))) {
++		return 0;
++	}
++	for (unsigned i = 0; i < sizeof(sites) / sizeof(sites[0]); ++i) {
++		if (invoke == sites[i] + slide) {
++			return invoke;
++		}
++	}
++	return 0;
++}
++
++static void
++lsr_send(const arm_saved_state_t *ss, int trap, bool returning)
++{
++	if (!lsr_live.reply_port || lsr_live.mach_out || trap != -47 ||
++	    get_saved_state_pc(ss) != LMB_MACH2 + lsr_slide) {
++		return;
++	}
++	const uint64_t *x = const_saved_state64(ss)->x;
++	if (returning) {
++		if (!lsr_live.mach_in || lsr_mach_fp != get_saved_state_fp(ss)) {
++			return;
++		}
++		lsr_live.mach_out = 1;
++		lsr_live.mach_result = (uint32_t)x[0];
++	} else {
++		if (lsr_live.mach_in || (x[1] & (LMJ_MACH_SEND | LMJ_MACH_RECV)) != LMJ_MACH_SEND ||
++		    (x[2] & 0x1f) != LSR_MOVE_SEND_ONCE || (uint32_t)x[3] != lsr_live.reply_port) {
++			return;
++		}
++		lsr_mach_fp = get_saved_state_fp(ss);
++		lsr_live.mach_in = 1;
++		lsr_live.mach_id = (uint32_t)(x[4] >> 32);
++	}
++	lsr_publish();
++}
++
++static __attribute__((noinline)) void
++lsr_svc(thread_t th, const arm_saved_state_t *ss, int trap, bool returning)
++{
++	const uint64_t tid = thread_tid(th);
++	const uint64_t selected = __atomic_load_n(&lsr_selected, __ATOMIC_ACQUIRE);
++	if (selected) {
++		if (selected == tid) {
++			lsr_send(ss, trap, returning);
++		}
++		return;
++	}
++	if (!returning || !lmb_can_read() || th->machine.DebugData) {
++		return;
++	}
++	char name[17] = {};
++	proc_selfname(name, sizeof(name));
++	task_t task = current_task();
++	const uint64_t slide = task->task_shared_region_slide;
++	if (strcmp(name, "lsd") || slide == UINT32_MAX || (slide & 0xfff) ||
++	    memcmp(task->task_shared_region_uuid, lmb_uuid, sizeof(lmb_uuid))) {
++		return;
++	}
++	struct lsr_slot *slot = lsr_slot(tid, true);
++	if (!slot || slot->attempts >= 2) {
++		return;
++	}
++	int rc = 0;
++	const bool first_attempt = slot->attempts++ == 0;
++	if (first_attempt && (!lmipro_bootstrap_debug_allowed() ||
++	    arm_debug_info()->num_breakpoint_pairs < 2 || !lsr_verify(slide))) {
++		slot->attempts = 2;
++		rc = ENOEXEC;
++	} else {
++		rc = lsr_program(th, slot, LSR_ENTRY + slide, 0);
++	}
++	if (rc) {
++		__atomic_store_n(&lsr_setup_error, (unsigned)rc, __ATOMIC_RELAXED);
++	} else {
++		__atomic_fetch_add(&lsr_armed, 1, __ATOMIC_RELAXED);
++	}
++}
++
++static __attribute__((noinline)) bool
++lsr_break(thread_t th, const arm_saved_state_t *ss)
++{
++	const uint64_t tid = thread_tid(th), pc = get_saved_state_pc(ss);
++	struct lsr_slot *slot = lsr_slot(tid, false);
++	if (!slot || !lmb_owned_by(th, slot->owner, pc)) {
++		return false;
++	}
++	const uint64_t slide = current_task()->task_shared_region_slide, site = pc - slide;
++	const uint64_t caller = get_saved_state_lr(ss) - slide;
++	const uint64_t *x = const_saved_state64(ss)->x;
++	uint64_t first = 0, second = 0;
++	if (site == LSR_ENTRY) {
++		uint64_t peer_connection = 0;
++		const int peer = lmb_can_read() ? lsr_peer(x[0], &peer_connection) : 0;
++		uint64_t empty = 0;
++		if (!peer || !__atomic_compare_exchange_n(&lsr_selected, &empty, tid, false,
++		    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
++			__atomic_fetch_add(&lsr_unmatched, 1, __ATOMIC_RELAXED);
++			(void)lsr_program(th, slot, 0, 0);
++			return true;
++		}
++		lsr_slide = slide;
++		lsr_live.tid = tid;
++		lsr_live.pid = proc_selfpid();
++		lsr_live.peer = peer;
++		lsr_peer_connection = peer_connection;
++		lsr_reply_block = x[2];
++		lsr_invoke = lsr_reply_invoke(lsr_reply_block, slide);
++		first = LSR_SEED_WAIT + slide;
++		second = LSR_MANUAL_WAIT + slide;
++	} else if ((site == LSR_SEED_WAIT || site == LSR_MANUAL_WAIT) && x[1] == UINT64_MAX) {
++		lsr_live.wait_in = 1;
++		lsr_live.manual = site == LSR_MANUAL_WAIT;
++		lsr_wait_sp = get_saved_state_sp(ss);
++		lsr_wait_fp = get_saved_state_fp(ss);
++		lsr_wait_pc = pc + 4;
++		first = lsr_wait_pc;
++	} else if (pc == lsr_wait_pc && lsr_wait_sp == get_saved_state_sp(ss) &&
++	    lsr_wait_fp == get_saved_state_fp(ss)) {
++		lsr_live.wait_out = 1;
++		lsr_live.wait_result = (int)x[0];
++		first = LSR_SYNC_READ + slide;
++	} else if (site == LSR_SYNC_READ) {
++		lsr_live.sync_read = 1;
++		first = LSR_COPY_RETURN + slide;
++		second = lsr_invoke;
++	} else if (site == LSR_COPY_RETURN) {
++		lsr_live.read = 1;
++		lsr_live.database = x[0] != 0;
++		first = lsr_invoke;
++		/* The completion block must be called by the selected store routine. */
++	} else if (pc == lsr_invoke && x[0] == lsr_reply_block &&
++	    (caller == 0x187cc6d24 || caller == 0x187cc6da8 || caller == 0x187cc6dc4)) {
++		lsr_live.callback = 1;
++		lsr_live.arguments = (x[1] != 0) | ((x[2] != 0) << 1) | ((x[3] != 0) << 2);
++		first = LSR_XPC_SHORT + slide;
++		second = LSR_XPC_FULL + slide;
++	} else if ((site == LSR_XPC_SHORT || site == LSR_XPC_FULL) && x[0] == lsr_peer_connection) {
++		lsr_live.handoff = 1;
++		uint32_t kind, port;
++		uint8_t transport;
++		/* Foundation is handing a local XPC reply dictionary to libxpc. */
++		if (lmb_can_read() && lmb_ptr(x[1], 0x71) &&
++		    lmj_ipc_read(x[1] + 0x1c, &kind, sizeof(kind)) && (kind & 3) == 2 &&
++		    lmj_ipc_read(x[1] + 0x70, &transport, sizeof(transport)) && !(transport & 1) &&
++		    lmj_ipc_read(x[1] + 0x60, &port, sizeof(port)) && MACH_PORT_VALID(port)) {
++			lsr_live.reply_port = port;
++		}
++	} else {
++		lsr_live.error = EINVAL;
++	}
++	const int rc = lsr_program(th, slot, first, second);
++	if (rc) {
++		lsr_live.error = rc;
++	}
++	lsr_publish();
++	return true;
++}
++
++static __attribute__((noinline)) unsigned
++lsr_report(char *out, unsigned cap)
++{
++	if (!__sync_bool_compare_and_swap(&lsr_guard, 0, 1)) {
++		return (unsigned)snprintf(out, cap, "LS server/v1 snapshot busy\n");
++	}
++	const struct lsr_record row = lsr_snapshot;
++	const unsigned seq = lsr_saved_sequence;
++	__sync_lock_release(&lsr_guard);
++	if (seq != __atomic_load_n(&lsr_sequence, __ATOMIC_ACQUIRE)) {
++		return (unsigned)snprintf(out, cap, "LS server/v1 snapshot changing\n");
++	}
++	return (unsigned)snprintf(out, cap,
++	    "LS server/v1 arm%u reject%u setup%u p%d t%llu peer%d e%d\n"
++	    "seed %u/%u ret%d manual%u read%u/%u db%u cb%u args%x\n"
++	    "reply xpc%u port%x mach%u/%u ret%x id%x\n",
++	    __atomic_load_n(&lsr_armed, __ATOMIC_RELAXED),
++	    __atomic_load_n(&lsr_unmatched, __ATOMIC_RELAXED),
++	    __atomic_load_n(&lsr_setup_error, __ATOMIC_RELAXED),
++	    row.pid, (unsigned long long)row.tid, row.peer, row.error,
++	    row.wait_in, row.wait_out, row.wait_result, row.manual, row.sync_read, row.read, row.database,
++	    row.callback, row.arguments, row.handoff, row.reply_port, row.mach_in, row.mach_out,
++	    row.mach_result, row.mach_id);
++}
++
 +static __attribute__((noinline)) void
 +lmipro_bootstrap_svc(thread_t th, arm_saved_state_t *ss, int trap, bool returning)
 +{
++	if (lsr_enabled()) {
++		lsr_svc(th, ss, trap, returning);
++		return;
++	}
 +	if (lmj_enabled()) {
 +		lmj_svc(th, ss, trap, returning);
 +		return;
@@ -1157,6 +1495,9 @@ new file mode 100644
 +static __attribute__((noinline)) bool
 +lmipro_bootstrap_break(thread_t th, const arm_saved_state_t *ss)
 +{
++	if (lsr_enabled()) {
++		return lsr_break(th, ss);
++	}
 +	if (lmj_enabled()) {
 +		return lmj_break(th, ss);
 +	}
@@ -1250,6 +1591,9 @@ new file mode 100644
 +		return 0;
 +	}
 +	out[0] = 0;
++	if (lsr_enabled()) {
++		return lsr_report(out, cap);
++	}
 +	if (lmj_enabled()) {
 +		return lmj_report(out, cap);
 +	}

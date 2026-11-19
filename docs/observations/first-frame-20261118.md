@@ -155,3 +155,48 @@ The faulting store at `0xfffffff0072a98c8` is in `__doprnt`. Its saved SP plus
 Both checkpoint formats already print at most 210 display-detail bytes. The
 source now allocates 211 bytes for that buffer, including the terminator,
 instead of 2560. The transaction observer and report formats are unchanged.
+
+### LaunchServices blocking store server
+
+Run 44457519648 captured the paired SpringBoard send and pending receive. The
+request reaches `_LSCopyServerStore` and calls
+`getServerStoreBlockingWithCompletionHandler:` through an anonymous listener
+endpoint. The Mach request ID is `0x40000000`. The client namespace names
+`0x580f` for the destination and `0x1e03` for the reply. The paired send
+returned zero. The checkpoint does not identify a server PID or record server
+receipt, wait completion, a store result, or a reply.
+
+In the 21H461 cache, `LSDatabaseBlockingFetchServer` exports an
+`LSDatabaseBlockingFetchClient` on accepted connections. The handler at
+`0x187d7c9c8` selects an unbounded database seeding or manual-rebuild group
+wait. It calls `syncRead:` at `0x187d7ca84` after that wait returns. The
+read callback calls `__LSServer_GetServerStoreForConnectionWithCompletionHandler`.
+This routine can call the XPC completion block with a store, node and error.
+These control-flow facts are from the pinned cache and do not describe the
+unobserved server execution in run 44457519648.
+
+`lmipro-ls-server=1` selects one request handled by a matching-cache `lsd`
+thread whose local NSXPC connection names a SpringBoard peer. The report at
+the existing checkpoint contains three bounded lines.
+
+- `LS server/v1` reports arming, rejected handler entries, setup status, the
+  actual receiving PID and TID, the peer PID, and a diagnostic error.
+- `seed in/out` reports entry and matched return for the selected group wait.
+  `ret` is valid with `out=1`. `manual1` identifies the manual-rebuild
+  branch. `read in/out` reports entry to `syncRead:` and an observed database
+  copy return. `db1` means that copy returned a nonnull object.
+  `cb1` means the original reply block ran from a verified store call site.
+  `args` bits 0, 1 and 2 represent nonnull store, node and error arguments.
+- `reply xpc1` means Foundation handed a reply to libxpc for the selected
+  connection. `port` is an extracted local server-side send-once name.
+  `mach in/out` and `ret` report a matching send and its kernel result.
+  The ports in the client and server prints are in different namespaces.
+  A successful server send does not establish that SpringBoard consumed
+  the message.
+
+The observer follows the selected server thread. Unobserved or cross-thread
+work remains unknown. A host test checks admission, wait pairing, database
+result, callback identity, and send result pairing. The validation goal for
+a dedicated boot is to locate the first server milestone that remains open.
+Data volume and database investigation requires evidence that the database
+wait or read actually blocks.
