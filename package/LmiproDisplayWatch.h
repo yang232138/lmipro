@@ -94,7 +94,8 @@ static __attribute__((noinline)) void lmiproDisplayCheckpoint(unsigned seconds, 
 #endif
   char display[576];
   lmiproFormatDisplaySnapshot(display, sizeof(display));
-  char detail[2560] = {};
+  // Both checkpoint formats print only the first 210 bytes of this report.
+  char detail[211] = {};
   char ui[1600] = {};
   char stacks[1536] = {};
   char exits[576] = {};

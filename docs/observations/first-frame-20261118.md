@@ -147,3 +147,11 @@ Its transport result, receiver identity and delivery remain unknown. A
 successful inline send alone does not prove server receipt or reply delivery.
 
 No functional fix or new boot image has been made for this request.
+
+Run 44452864617 reached the 600-second checkpoint on the handset. The
+checkpoint exhausted the kernel stack while formatting the first Swap line.
+The faulting store at `0xfffffff0072a98c8` is in `__doprnt`. Its saved SP plus
+`0x90` equals the fault address. The handset photo contains no IPC snapshot.
+Both checkpoint formats already print at most 210 display-detail bytes. The
+source now allocates 211 bytes for that buffer, including the terminator,
+instead of 2560. The transaction observer and report formats are unchanged.

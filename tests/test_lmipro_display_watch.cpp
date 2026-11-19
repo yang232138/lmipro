@@ -76,6 +76,7 @@ extern "C" unsigned lmipro_ui_trace_report(char *out,unsigned capacity) {
   return snprintf(out,capacity,"UI snapshot fixture\n");
 }
 extern "C" unsigned lmipro_display_report(char *out,unsigned capacity) {
+  assert(capacity==211);
   ++boardReports;return snprintf(out,capacity,"board snapshot fixture\n");
 }
 #endif
