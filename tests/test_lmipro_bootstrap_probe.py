@@ -46,6 +46,8 @@ struct task {uint32_t task_shared_region_slide; uint8_t task_shared_region_uuid[
 typedef struct task *task_t;
 static struct task task;
 static struct thread th;
+static struct thread worker;
+static thread_t fixture_current = &th;
 static struct proc proc;
 static arm_debug_state_t deb;
 static bool enabled, bad_word, bad_right, display_case;
@@ -75,6 +77,7 @@ static unsigned PE_parse_boot_argn(const char *name,void *dst,unsigned n) {
 static void proc_selfname(char *out,int n) {snprintf(out,n,"%s",server_process?"lsd":"SpringBoard");}
 static int proc_selfpid(void) {return server_process?52:27;}
 void proc_name(int pid,char *out,int n) {snprintf(out,n,"%s",pid==server_peer?"SpringBoard":"other");}
+static thread_t current_thread(void) {return fixture_current;}
 static uint64_t thread_tid(thread_t t) {return t==&th ? 295 : 296;}
 static unsigned thread_get_tag(thread_t t) {return t==&th ? THREAD_TAG_MAINTHREAD : 0;}
 static task_t current_task(void) {return &task;}
@@ -93,6 +96,10 @@ static int copyin(user_addr_t a,void *out,size_t n) {
         memcpy(out,user_stack+(a-0x8d00),n);return 0;
     }
     a-=task.task_shared_region_slide;
+    if(a==0x1e64b7a78ULL && n==8) {
+        const uint64_t selector=0x11223344;
+        memcpy(out,&selector,n);return 0;
+    }
     uint32_t op=0;
     if(a==0x1dd67d1c4ULL)op=0xd100c3ff;
     else if(a==0x1dd67cb70ULL)op=0xb90002f9;
@@ -158,6 +165,9 @@ static int copyin(user_addr_t a,void *out,size_t n) {
     else if(a==0x1dd679ab8ULL)op=0x91018013;
     else if(a==0x1dd6677d4ULL)op=0x39404008;
     else if(a==0x1dd6677dcULL)op=0xb9400008;
+    else if(a==0x187d68b28ULL)op=0x9404000e;
+    else if(a==0x1dd673decULL)op=0x9400a696;
+    else if(a==0x186e7cd68ULL)op=0xf9003fe6;
     else if(a+task.task_shared_region_slide==0x5000) {op=fixture_port;++reads;}
     else return EFAULT;
     if(n!=4)return EFAULT;
@@ -534,6 +544,48 @@ int main(void) {
     assert(lsr_report(buf,sizeof(buf))<sizeof(buf));
     assert(strstr(buf,"seed 1/1 ret0 manual0 read1/1 db1 cb1 args3"));
     assert(strstr(buf,"reply xpc1 port706 mach1/1 ret10000004 id40000000"));
+    assert(!strstr(buf,"LS wire/v1"));
+
+    /* Join the exact client buffer to one kernel message, then a different thread. */
+    lsr_config=0;lsr_selected=0;server_mode=2;server_process=false;
+    memset(user_stack,0,sizeof(user_stack));
+    server.pc=LSR_WIRE_CLIENT+slide;server.sp=0x8d00;server.fp=0x8de0;
+    lmipro_bootstrap_svc(&th,&server,-47,true);
+    assert(lsr_wire_stage==1);
+    assert(lmipro_bootstrap_break(&th,&server) && lsr_wire_stage==2);
+    server.pc=LSR_WIRE_SEND+slide;server.x[1]=0x9100;
+    stack_word(0x8de0,0x8e20);stack_word(0x8de8,0x186e80d10ULL+slide);
+    stack_word(0x8e20,0x9700);stack_word(0x8e28,0x186e7d528ULL+slide);
+    stack_word(0x9700-0x998,0x11223344);
+    stack_word(0x9158+20,LSR_WIRE_ID);
+    assert(lmipro_bootstrap_break(&th,&server) && lsr_wire_stage==3 && !th.machine.DebugData);
+    const uintptr_t kmsg=0x2000;
+    assert(!lmipro_ls_wire_copyin(0x9150,kmsg));
+    assert(lmipro_ls_wire_copyin(0x9158,kmsg) && lsr_wire_stage==4);
+    assert(!lmipro_ls_wire_copyin(0x9158,kmsg+8));
+    lmipro_ls_wire_copyout(kmsg,LSR_WIRE_ID,27);
+    assert(!lsr_wire_copy); /* Same-process delivery cannot be the server. */
+    server_process=true;
+    fixture_current=&worker;
+    lmipro_ls_wire_copyout(kmsg+8,LSR_WIRE_ID,27);
+    lmipro_ls_wire_copyout(kmsg,LSR_WIRE_ID,28);
+    assert(!lsr_wire_copy);
+    lmipro_ls_wire_put(kmsg,0);
+    assert(!lsr_wire_copy);
+    lmipro_ls_wire_copyout(kmsg,LSR_WIRE_ID,27);
+    assert(lsr_wire_copy==1 && lsr_wire_receiver==52 && lsr_wire_receive_tid==296);
+    fixture_current=&th;
+    lmipro_ls_wire_put(kmsg,0);
+    assert(lsr_wire_copy==1);
+    fixture_current=&worker;
+    lmipro_ls_wire_put(kmsg,0);
+    lmipro_ls_wire_free(kmsg);
+    lmipro_ls_wire_send_result(0); /* The receiver can run before send returns. */
+    assert(lsr_wire_copy==2 && lsr_wire_released && !lmipro_ls_wire_message);
+    lmipro_ls_wire_copyout(kmsg,LSR_WIRE_ID,27);
+    assert(lsr_wire_copy==2);
+    lmipro_bootstrap_report(buf,sizeof(buf));
+    assert(strstr(buf,"LS wire/v1 s4 e0 p27 id40000000 send1/0 recv2 p52 t296 lsd ret0 free1"));
     puts("PASS: bootstrap, handoff, and bounded LaunchServices server transaction");
 }
 '''

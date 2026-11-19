@@ -98,7 +98,7 @@ diff --git a/osfmk/arm64/lmipro_bootstrap_probe.h b/osfmk/arm64/lmipro_bootstrap
 new file mode 100644
 --- /dev/null
 +++ b/osfmk/arm64/lmipro_bootstrap_probe.h
-@@ -0,0 +1,1582 @@
+@@ -0,0 +1,1763 @@
 +/* Opt-in one-shot lookup probe for the pinned 21H461 ARM64 cache.
 + * Uses the existing XNU per-thread debug state machinery. No writes to EL0
 + * memory, changes to saved registers, debug entitlements, or IPC semantics. */
@@ -894,6 +894,10 @@ new file mode 100644
 +#define LSR_XPC_FULL UINT64_C(0x186ed0a84)
 +#define LSR_MOVE_SEND_ONCE 18u
 +#define LSR_SLOT_COUNT 16
++#define LSR_WIRE_CLIENT UINT64_C(0x187d68b28)
++#define LSR_WIRE_SEND UINT64_C(0x1dd673dec)
++#define LSR_WIRE_SELECTOR UINT64_C(0x1e64b7a78)
++#define LSR_WIRE_ID UINT32_C(0x40000000)
 +
 +extern void proc_name(int, char *, int);
 +
@@ -922,10 +926,17 @@ new file mode 100644
 +	unsigned config = __atomic_load_n(&lsr_config, __ATOMIC_ACQUIRE);
 +	if (!config) {
 +		unsigned value = 0;
-+		config = PE_parse_boot_argn("lmipro-ls-server", &value, sizeof(value)) && value == 1 ? 2 : 1;
++		config = PE_parse_boot_argn("lmipro-ls-server", &value, sizeof(value)) &&
++		    value >= 1 && value <= 2 ? value + 1 : 1;
 +		__atomic_store_n(&lsr_config, config, __ATOMIC_RELEASE);
 +	}
-+	return config == 2;
++	return config >= 2;
++}
++
++static bool
++lsr_wire_enabled(void)
++{
++	return __atomic_load_n(&lsr_config, __ATOMIC_ACQUIRE) == 3;
 +}
 +
 +static bool
@@ -1065,6 +1076,153 @@ new file mode 100644
 +	lsr_publish();
 +}
 +
++/* A kmsg address is valid as an identity only until ipc_kmsg_free. */
++static struct lsr_slot lsr_wire_client;
++static uint64_t lsr_wire_slide, lsr_wire_user_header;
++uintptr_t lmipro_ls_wire_message;
++static unsigned lsr_wire_stage, lsr_wire_error, lsr_wire_sent, lsr_wire_send_result;
++static unsigned lsr_wire_copy, lsr_wire_result, lsr_wire_released;
++static int lsr_wire_sender, lsr_wire_receiver;
++static char lsr_wire_receiver_name[17];
++static uint64_t lsr_wire_receive_tid;
++
++bool lmipro_ls_wire_copyin(uint64_t, uintptr_t);
++void lmipro_ls_wire_send_result(unsigned);
++void lmipro_ls_wire_copyout(uintptr_t, uint32_t, int);
++void lmipro_ls_wire_put(uintptr_t, unsigned);
++void lmipro_ls_wire_free(uintptr_t);
++
++static void
++lsr_wire_arm(thread_t th, uint64_t slide)
++{
++	uint64_t empty = 0, tid = thread_tid(th);
++	if (!lsr_wire_enabled() || !(thread_get_tag(th) & THREAD_TAG_MAINTHREAD) ||
++	    !__atomic_compare_exchange_n(&lsr_wire_client.tid, &empty, tid, false,
++	    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
++		return;
++	}
++	int error = ENOEXEC;
++	if (lmipro_bootstrap_debug_allowed() && arm_debug_info()->num_breakpoint_pairs &&
++	    lmb_word(LSR_WIRE_CLIENT + slide, 0x9404000e) &&
++	    lmb_word(LSR_WIRE_SEND + slide, 0x9400a696) &&
++	    lmb_word(0x186e7cd68 + slide, 0xf9003fe6) &&
++	    lmb_word(0x18f589398 + slide, 0xb9404828) &&
++	    lmb_word(0x18f5893a8 + slide, 0xf9400269)) {
++		lsr_wire_slide = slide;
++		error = lsr_program(th, &lsr_wire_client, LSR_WIRE_CLIENT + slide, 0);
++		if (!error) {
++			__atomic_store_n(&lsr_wire_stage, 1, __ATOMIC_RELEASE);
++		}
++	}
++	__atomic_store_n(&lsr_wire_error, (unsigned)error, __ATOMIC_RELAXED);
++}
++
++static bool
++lsr_wire_break(thread_t th, const arm_saved_state_t *ss)
++{
++	const uint64_t pc = get_saved_state_pc(ss);
++	if (!lsr_wire_enabled() ||
++	    thread_tid(th) != __atomic_load_n(&lsr_wire_client.tid, __ATOMIC_ACQUIRE) ||
++	    !lmb_owned_by(th, lsr_wire_client.owner, pc)) {
++		return false;
++	}
++	const uint64_t slide = lsr_wire_slide;
++	unsigned stage = 0;
++	int error = 0;
++	if (pc == LSR_WIRE_CLIENT + slide) {
++		error = lsr_program(th, &lsr_wire_client, LSR_WIRE_SEND + slide, 0);
++		stage = 2;
++	} else {
++		uint64_t fp = get_saved_state_fp(ss), selector, expected, header;
++		const uint64_t sp = get_saved_state_sp(ss);
++		const uint64_t message = const_saved_state64(ss)->x[1];
++		uint32_t indirect, id;
++		/* Two frame reads establish the Foundation wrapper and its saved SEL. */
++		if (pc == LSR_WIRE_SEND + slide && lmb_can_read() &&
++		    lmj_ipc_frame(&fp, sp) == 0x186e80d10 + slide &&
++		    lmj_ipc_frame(&fp, sp) == 0x186e7d528 + slide &&
++		    fp >= sp + 0x998 && lmj_ipc_read(fp - 0x998, &selector, sizeof(selector)) &&
++		    lmj_ipc_read(LSR_WIRE_SELECTOR + slide, &expected, sizeof(expected)) &&
++		    expected && selector == expected && lmb_ptr(message, 0x70) &&
++		    lmj_ipc_read(message + 0x48, &indirect, sizeof(indirect))) {
++			header = message + 0x58;
++			if ((!indirect || lmj_ipc_read(header, &header, sizeof(header))) &&
++			    lmb_ptr(header, 24) &&
++			    lmj_ipc_read(header + 20, &id, sizeof(id)) && id == LSR_WIRE_ID) {
++				lsr_wire_user_header = header;
++				lsr_wire_sender = proc_selfpid();
++				stage = 3;
++			}
++		}
++		error = lsr_program(th, &lsr_wire_client, 0, 0);
++		if (!stage && !error) {
++			error = EINVAL;
++		}
++	}
++	if (error) {
++		__atomic_store_n(&lsr_wire_error, (unsigned)error, __ATOMIC_RELAXED);
++	} else {
++		__atomic_store_n(&lsr_wire_stage, stage, __ATOMIC_RELEASE);
++	}
++	return true;
++}
++
++bool
++lmipro_ls_wire_copyin(uint64_t header, uintptr_t kmsg)
++{
++	if (!kmsg || __atomic_load_n(&lsr_wire_stage, __ATOMIC_ACQUIRE) != 3 ||
++	    header != lsr_wire_user_header ||
++	    thread_tid(current_thread()) != __atomic_load_n(&lsr_wire_client.tid, __ATOMIC_RELAXED)) {
++		return false;
++	}
++	__atomic_store_n(&lmipro_ls_wire_message, kmsg, __ATOMIC_RELEASE);
++	__atomic_store_n(&lsr_wire_stage, 4, __ATOMIC_RELEASE);
++	return true;
++}
++
++void
++lmipro_ls_wire_send_result(unsigned result)
++{
++	lsr_wire_send_result = result;
++	__atomic_store_n(&lsr_wire_sent, 1, __ATOMIC_RELEASE);
++}
++
++void
++lmipro_ls_wire_copyout(uintptr_t kmsg, uint32_t id, int sender)
++{
++	if (!kmsg || id != LSR_WIRE_ID || __atomic_load_n(&lsr_wire_copy, __ATOMIC_RELAXED) ||
++	    kmsg != __atomic_load_n(&lmipro_ls_wire_message, __ATOMIC_ACQUIRE) ||
++	    sender != lsr_wire_sender || proc_selfpid() == sender) {
++		return;
++	}
++	lsr_wire_receiver = proc_selfpid();
++	lsr_wire_receive_tid = thread_tid(current_thread());
++	proc_selfname(lsr_wire_receiver_name, sizeof(lsr_wire_receiver_name));
++	lsr_wire_receiver_name[sizeof(lsr_wire_receiver_name) - 1] = 0;
++	__atomic_store_n(&lsr_wire_copy, 1, __ATOMIC_RELEASE);
++}
++
++void
++lmipro_ls_wire_put(uintptr_t kmsg, unsigned result)
++{
++	if (kmsg == __atomic_load_n(&lmipro_ls_wire_message, __ATOMIC_ACQUIRE) &&
++	    __atomic_load_n(&lsr_wire_copy, __ATOMIC_ACQUIRE) == 1 &&
++	    lsr_wire_receive_tid == thread_tid(current_thread())) {
++		lsr_wire_result = result;
++		__atomic_store_n(&lsr_wire_copy, 2, __ATOMIC_RELEASE);
++	}
++}
++
++void
++lmipro_ls_wire_free(uintptr_t kmsg)
++{
++	if (__atomic_load_n(&lmipro_ls_wire_message, __ATOMIC_RELAXED) == kmsg &&
++	    __atomic_compare_exchange_n(&lmipro_ls_wire_message, &kmsg, 0, false,
++	    __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
++		__atomic_store_n(&lsr_wire_released, 1, __ATOMIC_RELEASE);
++	}
++}
++
 +static __attribute__((noinline)) void
 +lsr_svc(thread_t th, const arm_saved_state_t *ss, int trap, bool returning)
 +{
@@ -1083,8 +1241,14 @@ new file mode 100644
 +	proc_selfname(name, sizeof(name));
 +	task_t task = current_task();
 +	const uint64_t slide = task->task_shared_region_slide;
-+	if (strcmp(name, "lsd") || slide == UINT32_MAX || (slide & 0xfff) ||
++	if (slide == UINT32_MAX || (slide & 0xfff) ||
 +	    memcmp(task->task_shared_region_uuid, lmb_uuid, sizeof(lmb_uuid))) {
++		return;
++	}
++	if (strcmp(name, "lsd")) {
++		if (!strcmp(name, "SpringBoard")) {
++			lsr_wire_arm(th, slide);
++		}
 +		return;
 +	}
 +	struct lsr_slot *slot = lsr_slot(tid, true);
@@ -1110,6 +1274,9 @@ new file mode 100644
 +static __attribute__((noinline)) bool
 +lsr_break(thread_t th, const arm_saved_state_t *ss)
 +{
++	if (lsr_wire_break(th, ss)) {
++		return true;
++	}
 +	const uint64_t tid = thread_tid(th), pc = get_saved_state_pc(ss);
 +	struct lsr_slot *slot = lsr_slot(tid, false);
 +	if (!slot || !lmb_owned_by(th, slot->owner, pc)) {
@@ -1199,7 +1366,7 @@ new file mode 100644
 +	if (seq != __atomic_load_n(&lsr_sequence, __ATOMIC_ACQUIRE)) {
 +		return (unsigned)snprintf(out, cap, "LS server/v1 snapshot changing\n");
 +	}
-+	return (unsigned)snprintf(out, cap,
++	unsigned used = (unsigned)snprintf(out, cap,
 +	    "LS server/v1 arm%u reject%u setup%u p%d t%llu peer%d e%d\n"
 +	    "seed %u/%u ret%d manual%u read%u/%u db%u cb%u args%x\n"
 +	    "reply xpc%u port%x mach%u/%u ret%x id%x\n",
@@ -1210,6 +1377,20 @@ new file mode 100644
 +	    row.wait_in, row.wait_out, row.wait_result, row.manual, row.sync_read, row.read, row.database,
 +	    row.callback, row.arguments, row.handoff, row.reply_port, row.mach_in, row.mach_out,
 +	    row.mach_result, row.mach_id);
++	if (lsr_wire_enabled() && used < cap) {
++		const unsigned stage = __atomic_load_n(&lsr_wire_stage, __ATOMIC_ACQUIRE);
++		const unsigned sent = __atomic_load_n(&lsr_wire_sent, __ATOMIC_ACQUIRE);
++		const unsigned copy = __atomic_load_n(&lsr_wire_copy, __ATOMIC_ACQUIRE);
++		used += (unsigned)snprintf(out + used, cap - used,
++		    "LS wire/v1 s%u e%u p%d id%x send%u/%x recv%u p%d t%llu %s ret%x free%u\n",
++		    stage, __atomic_load_n(&lsr_wire_error, __ATOMIC_RELAXED),
++		    stage >= 3 ? lsr_wire_sender : 0, stage >= 3 ? LSR_WIRE_ID : 0,
++		    sent, sent ? lsr_wire_send_result : 0, copy, copy ? lsr_wire_receiver : 0,
++		    (unsigned long long)(copy ? lsr_wire_receive_tid : 0),
++		    copy ? lsr_wire_receiver_name : "-",
++		    copy == 2 ? lsr_wire_result : 0, __atomic_load_n(&lsr_wire_released, __ATOMIC_ACQUIRE));
++	}
++	return used;
 +}
 +
 +static __attribute__((noinline)) void
